@@ -1,0 +1,36 @@
+// Disposable calibration script — NOT part of the test suite. Run with
+// `node debug-tune.js` while `node server.js` is running in another
+// terminal (or start it inline, see run_selftest pattern in SKILL.md).
+// Sweeps a raw parameter (here, launch power) across fresh page loads and
+// logs where it actually landed / what it scored, so you can pick real
+// constants instead of guessing. This is exactly the script that found the
+// working power range documented in main.js.example — delete this file (or
+// keep it around for future re-tuning) once you've copied the good values
+// into your real game code.
+const { chromium } = require('playwright');
+
+// Match this to playwright.config.js's launchOptions.executablePath.
+const EXECUTABLE_PATH = '/opt/pw-browsers/chromium';
+
+(async () => {
+  const browser = await chromium.launch({ executablePath: EXECUTABLE_PATH });
+
+  for (let power = 15; power <= 35; power += 1) {
+    const page = await browser.newPage();
+    await page.goto('http://localhost:4173/');
+    await page.waitForFunction(() => window.__game && window.__game.ready);
+
+    const result = await page.evaluate(async (p) => {
+      // fireRawPowerForTest bypasses the ratio-to-power mapping entirely,
+      // so you're sweeping the actual physical units the trajectory math
+      // uses, not an abstract 0-1 charge ratio.
+      const score = await window.__game.fireRawPowerForTest(p);
+      return { score, state: window.__game.getState() };
+    }, power);
+
+    console.log('power', power, '->', JSON.stringify(result));
+    await page.close();
+  }
+
+  await browser.close();
+})();

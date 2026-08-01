@@ -1,0 +1,15 @@
+{
+  "name": "web-darts-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "phaser": "^3.80.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0"
+  }
+}

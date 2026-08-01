@@ -1,0 +1,71 @@
+const { test, expect } = require('@playwright/test');
+
+test.beforeEach(async ({ page }) => {
+  await page.goto('/');
+  await page.waitForFunction(() => window.__game && window.__game.ready);
+});
+
+// One test drives the real input path (pointer down/hold/up) to prove the
+// charge-and-release interaction itself works end to end, not just the
+// underlying physics function.
+test('holding and releasing a tap on the canvas fires a shot and advances the round', async ({ page }) => {
+  const canvas = page.locator('canvas');
+  const box = await canvas.boundingBox();
+
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(300);
+  await page.mouse.up();
+
+  await page.waitForFunction(() => window.__game.getState().round === 2, null, { timeout: 5000 });
+  const state = await page.evaluate(() => window.__game.getState());
+  expect(state.round).toBe(2);
+  expect(state.score).toBeGreaterThanOrEqual(0);
+});
+
+// The rest use fireActionForTest for deterministic, fast checks — no timing
+// races, no guessing how long a hold needs to be. Note this uses a
+// mid-range ratio, not 1 (full power): the tuned power range deliberately
+// overshoots the target at max charge, same as a real throw — see the
+// comment above MIN_POWER/MAX_POWER in main.js for the actual sweep data.
+test('a well-timed throw lands on the target and scores points', async ({ page }) => {
+  const score = await page.evaluate(() => window.__game.fireActionForTest(0.35));
+  expect(score).toBeGreaterThan(0);
+
+  const state = await page.evaluate(() => window.__game.getState());
+  expect(state.score).toBe(score);
+  expect(state.round).toBe(2);
+});
+
+test('game ends after the configured number of rounds', async ({ page }) => {
+  for (let i = 0; i < 5; i++) {
+    await page.evaluate((ratio) => window.__game.fireActionForTest(ratio), 0.6);
+  }
+
+  const state = await page.evaluate(() => window.__game.getState());
+  expect(state.gameOver).toBe(true);
+
+  const roundText = await page.locator('#round').textContent();
+  expect(roundText).toContain('Finished');
+});
+
+// This specifically exercises the collision-pair bug described in
+// references/common-bugs.md: firing several shots in a row means old,
+// already-landed bodies stay in the physics world, so later collisions can
+// involve two same-labeled bodies at once. If this test times out instead of
+// completing, that's the symptom to look for.
+test('firing multiple shots in a row never hangs', async ({ page }) => {
+  for (let i = 0; i < 3; i++) {
+    const score = await page.evaluate((ratio) => window.__game.fireActionForTest(ratio), 0.5);
+    expect(score === null || typeof score === 'number').toBe(true);
+  }
+});
+
+test('firing while a shot is still in flight is ignored', async ({ page }) => {
+  const firstThrow = page.evaluate(() => window.__game.fireActionForTest(0.05));
+  await page.waitForTimeout(20);
+  const secondResult = await page.evaluate(() => window.__game.fireActionForTest(1));
+
+  expect(secondResult).toBeNull();
+  await firstThrow;
+});

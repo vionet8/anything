@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Game Prototype</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #202020; overflow: hidden; }
+  #ui {
+    position: absolute; top: 10px; left: 10px; color: white;
+    font-family: sans-serif; font-size: 20px; line-height: 1.4;
+  }
+  #power-bar-bg {
+    position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+    width: 300px; height: 24px; background: rgba(0,0,0,0.4); border: 1px solid #555;
+  }
+  #power-bar-fill { width: 0%; height: 100%; background: #ffd400; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="score">Score: 0</div>
+  <div id="round">Round: 1</div>
+</div>
+<div id="power-bar-bg"><div id="power-bar-fill"></div></div>
+<script src="node_modules/phaser/dist/phaser.min.js"></script>
+<script src="src/main.js"></script>
+</body>
+</html>
