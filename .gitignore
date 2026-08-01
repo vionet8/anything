@@ -1,0 +1,7 @@
+node_modules/
+test-results/
+playwright-report/
+
+# skill-creator eval workspaces are scratch/generated evaluation output
+# (subagent runs, npm installs, etc.), not skill source — keep them local.
+.claude/skills/*-workspace/

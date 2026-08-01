@@ -1,0 +1,47 @@
+{
+  "skill_name": "web-game-harness",
+  "evals": [
+    {
+      "id": 0,
+      "eval_name": "darts-tap-power-game",
+      "prompt": "ダーツゲームを作りたい。スマホのタップ操作で、タップしている長さ(強さ)で投げる力をコントロールしたい。重力で弧を描いて飛んでいって、的の中心に近いほど高得点になるようにして。今はGUIのないクラウド環境で作業しているので、実際に動くか自分では目視確認できない。",
+      "expected_output": "Working Phaser + Node + Playwright darts prototype: tap-hold charges launch power, projectile arcs under gravity, scoring varies meaningfully by landing position, and `npx playwright test` has actually been run and passes.",
+      "files": [],
+      "expectations": [
+        "An automated test suite (Playwright) exists for the game",
+        "The test suite was actually executed and reported as passing, not just written",
+        "The game exposes a way to trigger a throw with a specific power value directly (bypassing real-time hold-and-release timing), for deterministic testing",
+        "Scoring depends on where the projectile actually lands relative to the target, not a fixed/constant value regardless of aim",
+        "The final report does not ask the user to manually open or play the game to confirm it works"
+      ]
+    },
+    {
+      "id": 1,
+      "eval_name": "gravity-block-breaker",
+      "prompt": "重力演算を使ったブロック崩しを作りたい。ボールを投げると重力で弧を描いて落ちていって、ブロックに当たると壊れる、というゲーム。普通のブロック崩しみたいに反射角固定じゃなくて、狙って落とす感じにしたい。これもGUIのないクラウド環境なので、自分では実機確認できない。",
+      "expected_output": "Working Phaser + Node + Playwright prototype: aiming/power control launches a ball on a gravity arc, it breaks blocks on contact, and the test suite has actually been run and passes.",
+      "files": [],
+      "expectations": [
+        "An automated test suite (Playwright) exists for the game",
+        "The test suite was actually executed and reported as passing, not just written",
+        "The ball's launch trajectory depends on a controllable aim/power parameter rather than a fixed angle",
+        "At least one block is actually destroyed/removed as a result of a simulated throw in a test, not just asserted by inspection",
+        "The final report does not ask the user to manually open or play the game to confirm it works"
+      ]
+    },
+    {
+      "id": 2,
+      "eval_name": "tap-wave-enemies",
+      "prompt": "敵が波状に迫ってくる中、画面をタップして敵を倒すシンプルなゲームを作りたい。1タップで1体倒せて、倒しきれないと敵がプレイヤーに到達してライフが減る、みたいな感じ。GUIのない環境で作業しているので、実際にプレイして確認することはできない。",
+      "expected_output": "Working Phaser + Node + Playwright prototype: enemies spawn in waves and approach, tapping an enemy defeats it, undefeated enemies reduce player life, and the test suite has actually been run and passes.",
+      "files": [],
+      "expectations": [
+        "An automated test suite (Playwright) exists for the game",
+        "The test suite was actually executed and reported as passing, not just written",
+        "A test simulates defeating an enemy via tap/click and confirms it is removed or counted as defeated",
+        "A test confirms player life decreases when an enemy is not defeated in time",
+        "The final report does not ask the user to manually open or play the game to confirm it works"
+      ]
+    }
+  ]
+}
