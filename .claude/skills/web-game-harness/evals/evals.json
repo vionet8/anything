@@ -8,11 +8,11 @@
       "expected_output": "Working Phaser + Node + Playwright darts prototype: tap-hold charges launch power, projectile arcs under gravity, scoring varies meaningfully by landing position, and `npx playwright test` has actually been run and passes.",
       "files": [],
       "expectations": [
-        "An automated test suite (Playwright) exists for the game",
-        "The test suite was actually executed and reported as passing, not just written",
-        "The game exposes a way to trigger a throw with a specific power value directly (bypassing real-time hold-and-release timing), for deterministic testing",
-        "Scoring depends on where the projectile actually lands relative to the target, not a fixed/constant value regardless of aim",
-        "The final report does not ask the user to manually open or play the game to confirm it works"
+        "ゲームに自動テストスイート(Playwright)が存在する",
+        "そのテストスイートが実際に実行され、合格したと報告されている(書いただけではない)",
+        "決定的なテストのために、ゲームが特定のパワー値を直接指定して投げを発生させる方法(リアルタイムの長押し操作を経由しない)を提供している",
+        "得点が、狙いに関わらず常に一定の値ではなく、実際に弾が的のどこに着地したかに応じて変わる",
+        "最終報告が、動作確認のためにユーザー自身でゲームを開いてプレイするよう求めていない"
       ]
     },
     {
@@ -22,11 +22,11 @@
       "expected_output": "Working Phaser + Node + Playwright prototype: aiming/power control launches a ball on a gravity arc, it breaks blocks on contact, and the test suite has actually been run and passes.",
       "files": [],
       "expectations": [
-        "An automated test suite (Playwright) exists for the game",
-        "The test suite was actually executed and reported as passing, not just written",
-        "The ball's launch trajectory depends on a controllable aim/power parameter rather than a fixed angle",
-        "At least one block is actually destroyed/removed as a result of a simulated throw in a test, not just asserted by inspection",
-        "The final report does not ask the user to manually open or play the game to confirm it works"
+        "ゲームに自動テストスイート(Playwright)が存在する",
+        "そのテストスイートが実際に実行され、合格したと報告されている(書いただけではない)",
+        "ボールの発射軌道が、固定された角度ではなく、操作可能な狙い/パワーのパラメータに応じて変わる",
+        "テスト内でシミュレートした投球の結果として、少なくとも1つのブロックが実際に破壊・除去される(コードを目視しただけの確認ではない)",
+        "最終報告が、動作確認のためにユーザー自身でゲームを開いてプレイするよう求めていない"
       ]
     },
     {
@@ -36,11 +36,11 @@
       "expected_output": "Working Phaser + Node + Playwright prototype: enemies spawn in waves and approach, tapping an enemy defeats it, undefeated enemies reduce player life, and the test suite has actually been run and passes.",
       "files": [],
       "expectations": [
-        "An automated test suite (Playwright) exists for the game",
-        "The test suite was actually executed and reported as passing, not just written",
-        "A test simulates defeating an enemy via tap/click and confirms it is removed or counted as defeated",
-        "A test confirms player life decreases when an enemy is not defeated in time",
-        "The final report does not ask the user to manually open or play the game to confirm it works"
+        "ゲームに自動テストスイート(Playwright)が存在する",
+        "そのテストスイートが実際に実行され、合格したと報告されている(書いただけではない)",
+        "タップ/クリックで敵を倒す操作をテストがシミュレートし、その敵が除去される、または撃破としてカウントされることを確認している",
+        "敵を時間内に倒せなかった場合にプレイヤーのライフが減ることをテストが確認している",
+        "最終報告が、動作確認のためにユーザー自身でゲームを開いてプレイするよう求めていない"
       ]
     }
   ]
