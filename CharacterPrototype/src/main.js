@@ -339,20 +339,33 @@ function applyWave(dt) {
 function applyCrouch(dt) {
   actionCycle += dt * 3.2;
   const squat = (Math.sin(actionCycle - Math.PI / 2) + 1) / 2; // 0 -> 1 -> 0, starts at 0
-  // Measured against the actual bone matrices (not just eyeballed): on this
-  // rig, positive upperLeg.rotation.x swings the thigh BACKWARD, so a
-  // forward hip fold needs a negative angle; lowerLeg.rotation.x is the
-  // opposite (positive flexes the knee back under a forward-tilted thigh).
-  // The previous signs were both inverted, which folded the legs backward
-  // like a reversed knee instead of tracking the knee forward over the toes.
-  // hips.position.y's drop is solved so the ankle stays at its standing
-  // height (no floating/sinking) for this thigh/knee angle pair.
-  bones.leftUpperLeg.rotation.x = -squat * 1.6;
-  bones.rightUpperLeg.rotation.x = -squat * 1.6;
-  bones.leftLowerLeg.rotation.x = squat * 1.85;
-  bones.rightLowerLeg.rotation.x = squat * 1.85;
-  bones.hips.position.y = hipsBaseY - squat * 0.364;
-  bones.chest.rotation.x = squat * 0.6;
+  // Solved against the actual bone matrices rather than eyeballed, because
+  // two things were wrong by inspection alone:
+  //
+  // 1. Sign. On this rig positive upperLeg.rotation.x swings the thigh
+  //    BACKWARD, so a forward hip fold needs a negative angle; lowerLeg is
+  //    the opposite. Both were inverted before, folding the legs backward
+  //    like a reversed knee.
+  // 2. Balance. Even once the knee pointed forward, the pelvis sat ~0.23
+  //    behind the ankle — with the whole body's centre of mass behind the
+  //    heel, a real person would simply topple over backwards. The fix is
+  //    the pair below: the shin has to pitch the knee well forward of the
+  //    ankle, and the hips translate forward (position.z) as they drop, not
+  //    just straight down. That lands the mass centre near mid-foot.
+  //
+  // The y/z hip offsets are the exact translation that keeps the ankle at
+  // its standing height and position, so the feet stay planted instead of
+  // sliding or sinking. The y term on the upper legs turns the toes out so
+  // the feet track under the splayed knees.
+  const SPLAY = squat * 0.35;   // knees open outward (a squat with the thighs
+  const TOE_OUT = squat * 0.3;  // clamped shut reads stiff and unnatural)
+  bones.leftUpperLeg.rotation.set(-squat * 1.6, -TOE_OUT, SPLAY);
+  bones.rightUpperLeg.rotation.set(-squat * 1.6, TOE_OUT, -SPLAY);
+  bones.leftLowerLeg.rotation.x = squat * 2.3;
+  bones.rightLowerLeg.rotation.x = squat * 2.3;
+  bones.hips.position.y = hipsBaseY - squat * 0.471;
+  bones.hips.position.z = -squat * 0.144;
+  bones.chest.rotation.x = squat * 0.34;
   bones.leftUpperArm.rotation.set(-squat * 1.0, squat * 0.3, ARM_DOWN_Z);
   bones.rightUpperArm.rotation.set(-squat * 1.0, -squat * 0.3, -ARM_DOWN_Z);
   bones.leftLowerArm.rotation.set(0.12 + squat * 0.5, 0, 0);
