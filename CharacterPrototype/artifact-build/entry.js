@@ -177,6 +177,7 @@ function setAnimName(name) {
 
 let vrm = null;
 let bones = {};
+let hipsBaseY = 0;
 
 function base64ToArrayBuffer(base64) {
   const binary = atob(base64);
@@ -208,14 +209,21 @@ loader.parse(
 
     const names = [
       'hips', 'spine', 'chest', 'neck', 'head',
-      'leftUpperArm', 'leftLowerArm',
-      'rightUpperArm', 'rightLowerArm',
+      'leftUpperArm', 'leftLowerArm', 'leftHand',
+      'rightUpperArm', 'rightLowerArm', 'rightHand',
       'leftUpperLeg', 'leftLowerLeg',
       'rightUpperLeg', 'rightLowerLeg',
     ];
     for (const name of names) {
       bones[name] = vrm.humanoid.getNormalizedBoneNode(name);
     }
+
+    // The normalized hips bone's own rest position already encodes standing
+    // pelvis height above the ground (feet are at the model's local y=0, hips
+    // are not) — capture it so pose code can offset FROM it instead of
+    // overwriting it with world-origin (0,0,0), which was collapsing her
+    // pelvis reference down to ground level and sinking the whole lower body.
+    hipsBaseY = bones.hips.position.y;
 
     state.ready = true;
     window.__char.ready = true;
@@ -271,7 +279,9 @@ function resetLimbs() {
   bones.rightUpperArm.rotation.set(0, 0, -ARM_DOWN_Z);
   bones.leftLowerArm.rotation.set(0.12, 0, 0);
   bones.rightLowerArm.rotation.set(0.12, 0, 0);
-  bones.hips.position.set(0, 0, 0);
+  bones.leftHand.rotation.set(0, 0, 0);
+  bones.rightHand.rotation.set(0, 0, 0);
+  bones.hips.position.set(0, hipsBaseY, 0);
   bones.hips.rotation.set(0, 0, 0);
   bones.chest.rotation.set(0, 0, 0);
   bones.head.rotation.set(0, 0, 0);
@@ -310,7 +320,7 @@ function applyWalk(running, dt) {
 
   bones.hips.rotation.z = swing * hipSwayAmp;
   bones.hips.rotation.y = swing * hipSwayAmp * 0.35;
-  bones.hips.position.y = Math.abs(Math.sin(walkCycle * 2)) * bounceAmp;
+  bones.hips.position.y = hipsBaseY + Math.abs(Math.sin(walkCycle * 2)) * bounceAmp;
 
   bones.chest.rotation.x = 0.035 + (running ? 0.05 : 0);
   bones.chest.rotation.z = -swing * hipSwayAmp * 0.6;
@@ -319,11 +329,16 @@ function applyWalk(running, dt) {
 }
 
 function applyWave(dt) {
-  actionCycle += dt * 7.5;
-  bones.rightUpperArm.rotation.set(-1.7, 0.15, -0.15);
-  bones.rightLowerArm.rotation.set(-0.2, 0, Math.sin(actionCycle) * 0.5);
-  bones.chest.rotation.y = -0.06;
-  bones.head.rotation.y = -0.08;
+  actionCycle += dt * 6.5;
+  // Shoulder and elbow hold a raised position; the wave motion itself is a
+  // wrist flick on the hand bone, not the whole forearm swinging — that's
+  // what a real wave looks like, and swinging the forearm instead (the
+  // first version of this) read as flailing rather than waving.
+  bones.rightUpperArm.rotation.set(-1.5, 0.1, -0.55);
+  bones.rightLowerArm.rotation.set(-1.15, 0, 0.1);
+  bones.rightHand.rotation.set(0, 0, Math.sin(actionCycle) * 0.55);
+  bones.chest.rotation.y = -0.05;
+  bones.head.rotation.y = -0.06;
   setAnimName('wave');
 }
 
@@ -334,7 +349,7 @@ function applyCrouch(dt) {
   bones.rightUpperLeg.rotation.x = squat * 1.05;
   bones.leftLowerLeg.rotation.x = squat * 1.7;
   bones.rightLowerLeg.rotation.x = squat * 1.7;
-  bones.hips.position.y = -squat * 0.4;
+  bones.hips.position.y = hipsBaseY - squat * 0.4;
   bones.chest.rotation.x = squat * 0.2;
   setAnimName('crouch');
 }
