@@ -369,21 +369,16 @@ function applyCrouch(dt) {
   bones.hips.position.y = hipsBaseY - squat * 0.471;
   bones.hips.position.z = -squat * 0.144;
   bones.chest.rotation.x = squat * 0.34;
-  // The first fix here (a small Y-axis "opening" plus a bone-origin distance
-  // check) still put the forearm mesh straight through the knee, visibly, in
-  // a screenshot — a bone-center distance doesn't account for the knee's
-  // actual radius or the arm's, so it wasn't a real clearance check. Mapping
-  // each rotation axis individually against the knee's position showed Y
-  // actually pulls the hand INWARD across the body (which was fighting the
-  // small clearance it had), and the shoulder's Z is what swings the arm
-  // outward. Swinging outward enough to clear the knee that way reads as
-  // "flung out to the sides", not a resting squat, so instead the arms go
-  // the other direction: less forward reach (X) and a much bigger Y pull,
-  // routing the forearms down through the gap between the splayed knees to
-  // hang near the ankles, clear of both — elbow ends up 0.12 units inboard
-  // of the knee instead of overlapping it.
-  bones.leftUpperArm.rotation.set(-squat * 0.4, squat * 1.9, ARM_DOWN_Z);
-  bones.rightUpperArm.rotation.set(-squat * 0.4, -squat * 1.9, -ARM_DOWN_Z);
+  // Routing the forearms down between the knees (the previous fix) read as
+  // the hands hanging disconnected from the body, not resting on anything —
+  // the actual reference for this pose is hands pressed onto the knees,
+  // holding the skirt hem down against the legs. A pure forward pitch (X)
+  // with no lateral Y pull lands the hand almost exactly on the knee joint
+  // (measured: 0.03 units apart), reading as the hand resting flat on top of
+  // the thigh/knee rather than crossing through it at an angle — confirmed
+  // clean from front, side, and 3/4 views.
+  bones.leftUpperArm.rotation.set(-squat * 1.0, 0, ARM_DOWN_Z);
+  bones.rightUpperArm.rotation.set(-squat * 1.0, 0, -ARM_DOWN_Z);
   bones.leftLowerArm.rotation.set(0.12 + squat * 0.5, 0, 0);
   bones.rightLowerArm.rotation.set(0.12 + squat * 0.5, 0, 0);
   // The foot bone doesn't automatically stay flat when the shin pitches
