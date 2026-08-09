@@ -10,6 +10,8 @@
     --state-idle: #8b93a7;
     --state-walk: #7ee787;
     --state-run: #ff8a5c;
+    --state-wave: #ffd166;
+    --state-crouch: #7ec8e3;
   }
 
   * { box-sizing: border-box; }
@@ -115,6 +117,8 @@
   }
   #state-label[data-state="walk"] { color: var(--state-walk); }
   #state-label[data-state="run"] { color: var(--state-run); }
+  #state-label[data-state="wave"] { color: var(--state-wave); }
+  #state-label[data-state="crouch"] { color: var(--state-crouch); }
 
   #loading {
     position: fixed;
@@ -172,6 +176,18 @@
   <div class="keys">
     <span class="keycap">Shift</span>
     <span class="keys-label">ダッシュ</span>
+  </div>
+  <div class="keys">
+    <span class="keycap">E</span>
+    <span class="keys-label">手を振る</span>
+  </div>
+  <div class="keys">
+    <span class="keycap">C</span>
+    <span class="keys-label">屈伸</span>
+  </div>
+  <div class="keys">
+    <span class="keycap">Drag</span>
+    <span class="keys-label">カメラ回転</span>
   </div>
   <div class="status-row">
     <span class="status-key">State</span>

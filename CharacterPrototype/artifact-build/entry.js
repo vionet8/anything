@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
 const canvas = document.getElementById('scene');
@@ -109,8 +110,8 @@ for (let i = 0; i < 10; i++) {
 }
 
 // ---- Character (VRM) ----
-const MOVE_SPEED = 3.6;
-const RUN_SPEED = 7.4;
+const MOVE_SPEED = 3.2;
+const RUN_SPEED = 6.6;
 
 const state = {
   ready: false,
@@ -119,7 +120,7 @@ const state = {
   heading: 0,
 };
 
-const keys = { forward: false, back: false, left: false, right: false, run: false };
+const keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false };
 
 function onKey(e, down) {
   switch (e.code) {
@@ -142,6 +143,12 @@ function onKey(e, down) {
     case 'ShiftLeft':
     case 'ShiftRight':
       keys.run = down;
+      break;
+    case 'KeyE':
+      keys.wave = down;
+      break;
+    case 'KeyC':
+      keys.crouch = down;
       break;
   }
 }
@@ -170,7 +177,6 @@ function setAnimName(name) {
 
 let vrm = null;
 let bones = {};
-let walkCycle = 0; // radians, advances only while moving
 
 function base64ToArrayBuffer(base64) {
   const binary = atob(base64);
@@ -221,64 +227,123 @@ loader.parse(
   }
 );
 
-camera.position.set(0, 3.0, -5.5);
+// ---- Camera: orbit around the character, drag to look from any angle ----
+// (this is also how you can actually see her face — the old fixed
+// behind-the-back follow camera never showed it).
+camera.position.set(0, 2.6, -4.5);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.1, 0);
+controls.minDistance = 1.8;
+controls.maxDistance = 12;
+controls.maxPolarAngle = Math.PI * 0.49;
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.update();
 
 function updateCamera() {
-  const behind = new THREE.Vector3(Math.sin(state.heading) * -5.5, 3.0, Math.cos(state.heading) * -5.5);
-  const target = state.position.clone().add(behind);
-  camera.position.lerp(target, 0.12);
-  const lookAt = state.position.clone().add(new THREE.Vector3(0, 1.3, 0));
-  camera.lookAt(lookAt);
+  controls.target.lerp(state.position.clone().add(new THREE.Vector3(0, 1.1, 0)), 0.15);
+  controls.update();
 }
 
-// ---- Procedural locomotion ----
+// ---- Procedural animation ----
 // This VRM avatar ships with a humanoid skeleton but no animation clips
-// (unlike Mixamo-style rigs), so idle/walk/run are hand-authored bone
-// rotations applied every frame rather than played from baked clips.
+// (unlike Mixamo-style rigs), so every pose here is hand-authored bone
+// rotation applied every frame rather than played from a baked clip.
+//
 // VRM's normalized rest pose is a T-pose (arms straight out to the sides) —
 // that's the whole point of "normalized" bones, a shared reference frame
 // across avatars with different bind poses. It's not a natural standing
-// pose, so the arms need an explicit down rotation before anything else is
-// layered on top.
+// pose, so the arms need an explicit down rotation as a baseline, with
+// every other pose layered on top of it.
 const ARM_DOWN_Z = -1.3;
 
-function applyPose(moving, running, dt) {
-  if (!bones.hips) return;
+let walkCycle = 0;
+let actionCycle = 0;
+let prevAction = 'idle';
+let facing = 0; // smoothed heading used only for the idle "face the camera" turn
 
-  bones.leftUpperArm.rotation.z = ARM_DOWN_Z;
-  bones.rightUpperArm.rotation.z = -ARM_DOWN_Z;
+function resetLimbs() {
+  bones.leftUpperLeg.rotation.set(0, 0, 0);
+  bones.rightUpperLeg.rotation.set(0, 0, 0);
+  bones.leftLowerLeg.rotation.set(0, 0, 0);
+  bones.rightLowerLeg.rotation.set(0, 0, 0);
+  bones.leftUpperArm.rotation.set(0, 0, ARM_DOWN_Z);
+  bones.rightUpperArm.rotation.set(0, 0, -ARM_DOWN_Z);
+  bones.leftLowerArm.rotation.set(0.12, 0, 0);
+  bones.rightLowerArm.rotation.set(0.12, 0, 0);
+  bones.hips.position.set(0, 0, 0);
+  bones.hips.rotation.set(0, 0, 0);
+  bones.chest.rotation.set(0, 0, 0);
+  bones.head.rotation.set(0, 0, 0);
+}
 
-  const freq = running ? 9.0 : 6.0;
-  const legAmp = running ? 0.9 : 0.55;
-  const armAmp = running ? 0.7 : 0.4;
-  const bounceAmp = running ? 0.09 : 0.035;
-
-  if (moving) {
-    walkCycle += dt * freq;
-  } else {
-    // Ease back toward a neutral cycle position instead of snapping, so the
-    // stop doesn't look like a freeze-frame mid-stride.
-    walkCycle += dt * 2.0;
-  }
-
+function applyWalk(running, dt) {
+  walkCycle += dt * (running ? 8.2 : 5.6);
   const swing = Math.sin(walkCycle);
-  const targetLeg = moving ? legAmp : 0;
-  const targetArm = moving ? armAmp : 0;
-  const targetBounce = moving ? bounceAmp : 0;
 
-  bones.leftUpperLeg.rotation.x = swing * targetLeg;
-  bones.rightUpperLeg.rotation.x = -swing * targetLeg;
-  bones.leftLowerLeg.rotation.x = Math.max(0, -swing) * targetLeg * 0.9;
-  bones.rightLowerLeg.rotation.x = Math.max(0, swing) * targetLeg * 0.9;
+  // Kept deliberately gentler than a generic/masculine stride: a narrower
+  // leg swing, a smaller arm swing held close to the body, and a light
+  // side-to-side hip sway with a counter-sway at the shoulders — the combo
+  // that reads as a "cute"/feminine walk rather than a wide marching gait.
+  const legAmp = running ? 0.5 : 0.3;
+  const kneeAmp = running ? 0.85 : 0.5;
+  const armAmp = running ? 0.3 : 0.16;
+  const hipSwayAmp = running ? 0.05 : 0.09;
+  const bounceAmp = running ? 0.075 : 0.028;
 
-  bones.leftUpperArm.rotation.x = -swing * targetArm;
-  bones.rightUpperArm.rotation.x = swing * targetArm;
+  bones.leftUpperLeg.rotation.x = swing * legAmp;
+  bones.rightUpperLeg.rotation.x = -swing * legAmp;
 
-  bones.hips.position.y = Math.abs(Math.sin(walkCycle * 2)) * targetBounce;
-  bones.chest.rotation.x = moving ? 0.05 + (running ? 0.08 : 0) : Math.sin(walkCycle * 0.6) * 0.015;
-  bones.head.rotation.y = moving ? 0 : Math.sin(walkCycle * 0.35) * 0.05;
+  // Smooth knee bend that peaks mid-swing (leg lifting off the ground) and
+  // eases to straight at the front/back of the stride, instead of a hard
+  // clamp that snaps — that snap was a big part of what read as "not
+  // regular bipedal walking."
+  const leftKnee = Math.max(0, Math.sin(walkCycle - 0.5));
+  const rightKnee = Math.max(0, Math.sin(walkCycle + Math.PI - 0.5));
+  bones.leftLowerLeg.rotation.x = leftKnee * kneeAmp;
+  bones.rightLowerLeg.rotation.x = rightKnee * kneeAmp;
 
-  setAnimName(!moving ? 'idle' : running ? 'run' : 'walk');
+  bones.leftUpperArm.rotation.x = -swing * armAmp;
+  bones.rightUpperArm.rotation.x = swing * armAmp;
+  bones.leftLowerArm.rotation.x = 0.25;
+  bones.rightLowerArm.rotation.x = 0.25;
+
+  bones.hips.rotation.z = swing * hipSwayAmp;
+  bones.hips.rotation.y = swing * hipSwayAmp * 0.35;
+  bones.hips.position.y = Math.abs(Math.sin(walkCycle * 2)) * bounceAmp;
+
+  bones.chest.rotation.x = 0.035 + (running ? 0.05 : 0);
+  bones.chest.rotation.z = -swing * hipSwayAmp * 0.6;
+
+  setAnimName(running ? 'run' : 'walk');
+}
+
+function applyWave(dt) {
+  actionCycle += dt * 7.5;
+  bones.rightUpperArm.rotation.set(-1.7, 0.15, -0.15);
+  bones.rightLowerArm.rotation.set(-0.2, 0, Math.sin(actionCycle) * 0.5);
+  bones.chest.rotation.y = -0.06;
+  bones.head.rotation.y = -0.08;
+  setAnimName('wave');
+}
+
+function applyCrouch(dt) {
+  actionCycle += dt * 3.2;
+  const squat = (Math.sin(actionCycle - Math.PI / 2) + 1) / 2; // 0 -> 1 -> 0, starts at 0
+  bones.leftUpperLeg.rotation.x = squat * 1.05;
+  bones.rightUpperLeg.rotation.x = squat * 1.05;
+  bones.leftLowerLeg.rotation.x = squat * 1.7;
+  bones.rightLowerLeg.rotation.x = squat * 1.7;
+  bones.hips.position.y = -squat * 0.4;
+  bones.chest.rotation.x = squat * 0.2;
+  setAnimName('crouch');
+}
+
+function applyIdle(dt) {
+  actionCycle += dt * 1.6;
+  bones.chest.rotation.x = Math.sin(actionCycle * 0.6) * 0.012;
+  bones.head.rotation.x = Math.sin(actionCycle * 0.5) * 0.02;
+  setAnimName('idle');
 }
 
 const clock = new THREE.Clock();
@@ -295,18 +360,46 @@ function step(dt) {
 
   const moving = moveX !== 0 || moveZ !== 0;
   const running = moving && keys.run;
+  const action = moving ? (running ? 'run' : 'walk') : keys.wave ? 'wave' : keys.crouch ? 'crouch' : 'idle';
+
+  if (action !== prevAction) {
+    actionCycle = 0;
+    prevAction = action;
+  }
+
+  resetLimbs();
 
   if (moving) {
     state.heading = Math.atan2(moveX, moveZ);
+    facing = state.heading;
     vrm.scene.rotation.y = state.heading;
 
     const speed = running ? RUN_SPEED : MOVE_SPEED;
     const dir = new THREE.Vector3(Math.sin(state.heading), 0, Math.cos(state.heading));
     state.position.addScaledVector(dir, speed * dt);
     vrm.scene.position.copy(state.position);
+
+    applyWalk(running, dt);
+  } else if (keys.wave) {
+    applyWave(dt);
+  } else if (keys.crouch) {
+    applyCrouch(dt);
+  } else {
+    // Face the camera when idle, instead of staying turned wherever the
+    // last movement left her — this is what actually lets you see her
+    // face without fighting the camera.
+    const toCam = new THREE.Vector2(camera.position.x - state.position.x, camera.position.z - state.position.z);
+    if (toCam.lengthSq() > 0.0001) {
+      const targetFacing = Math.atan2(toCam.x, toCam.y);
+      let delta = targetFacing - facing;
+      delta = Math.atan2(Math.sin(delta), Math.cos(delta)); // shortest-path wrap
+      facing += delta * Math.min(1, dt * 3.0);
+      vrm.scene.rotation.y = facing;
+      state.heading = facing;
+    }
+    applyIdle(dt);
   }
 
-  applyPose(moving, running, dt);
   vrm.update(dt);
   updateCamera();
 }
@@ -347,6 +440,20 @@ window.__char = {
       elapsed += stepMs;
     }
     keys.forward = keys.back = keys.left = keys.right = keys.run = false;
+    step(0.001);
+    return window.__char.getState();
+  },
+  triggerActionForTest: (name, durationMs) => {
+    keys.wave = name === 'wave';
+    keys.crouch = name === 'crouch';
+    const stepMs = 16;
+    let elapsed = 0;
+    while (elapsed < durationMs) {
+      step(stepMs / 1000);
+      elapsed += stepMs;
+    }
+    keys.wave = false;
+    keys.crouch = false;
     step(0.001);
     return window.__char.getState();
   },

@@ -33,9 +33,9 @@ test('releasing movement keys returns the character to idle', async ({ page }) =
 
 test('moving forward for a fixed simulated duration advances position deterministically', async ({ page }) => {
   const result = await page.evaluate(() => window.__char.moveForTest('forward', 1000, false));
-  // MOVE_SPEED is 4.2 units/sec; allow some tolerance for discrete stepping.
-  expect(result.position.z).toBeGreaterThan(3.5);
-  expect(result.position.z).toBeLessThan(5.0);
+  // MOVE_SPEED is 3.2 units/sec; allow some tolerance for discrete stepping.
+  expect(result.position.z).toBeGreaterThan(2.8);
+  expect(result.position.z).toBeLessThan(3.6);
   expect(result.animName).toBe('idle'); // resets after the simulated hold ends
 });
 
@@ -52,7 +52,32 @@ test('running moves the character further than walking for the same duration', a
 
 test('turning left changes heading and the character rotates to face the new direction', async ({ page }) => {
   const result = await page.evaluate(() => window.__char.moveForTest('left', 500, false));
-  // heading = atan2(moveX, moveZ); moving purely left (moveX=-1, moveZ=0) => heading = -PI/2
-  expect(result.heading).toBeCloseTo(-Math.PI / 2, 2);
+  // heading = atan2(moveX, moveZ); moving purely left (moveX=-1, moveZ=0) => heading = -PI/2.
+  // Precision is loose (1 decimal, ~0.05 rad) because moveForTest ends with a
+  // 1ms settle step after releasing the movement key, and that step is enough
+  // for the idle "face the camera" turn to nudge heading very slightly off
+  // the exact movement-derived value — expected, not a bug.
+  expect(result.heading).toBeCloseTo(-Math.PI / 2, 1);
   expect(result.position.x).toBeLessThan(0);
+});
+
+test('waving in place does not move the character and reports the wave state', async ({ page }) => {
+  const result = await page.evaluate(() => window.__char.triggerActionForTest('wave', 600));
+  expect(result.position).toEqual({ x: 0, y: 0, z: 0 });
+  // The action resets to idle once the key is released, same as walk/run.
+  expect(result.animName).toBe('idle');
+});
+
+test('crouching in place does not move the character', async ({ page }) => {
+  const result = await page.evaluate(() => window.__char.triggerActionForTest('crouch', 600));
+  expect(result.position).toEqual({ x: 0, y: 0, z: 0 });
+  expect(result.animName).toBe('idle');
+});
+
+test('idle turns the character to face the camera instead of staying at the last movement heading', async ({ page }) => {
+  const afterMove = await page.evaluate(() => window.__char.moveForTest('right', 500, false));
+  // Give the idle face-camera turn time to settle (it eases in, not instant).
+  await page.waitForTimeout(2500);
+  const idleState = await page.evaluate(() => window.__char.getState());
+  expect(idleState.heading).not.toBeCloseTo(afterMove.heading, 1);
 });
