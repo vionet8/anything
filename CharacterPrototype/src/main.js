@@ -369,12 +369,21 @@ function applyCrouch(dt) {
   bones.hips.position.y = hipsBaseY - squat * 0.471;
   bones.hips.position.z = -squat * 0.144;
   bones.chest.rotation.x = squat * 0.34;
-  // The arms were reaching in narrower than the now-splayed knees, so the
-  // hands landed 0.05 units from the knee joint — visibly overlapping it.
-  // Opening the shoulder angle (was 0.3) and pulling the reach in slightly
-  // (was 1.0) puts 0.16 units of clearance between hand and knee instead.
-  bones.leftUpperArm.rotation.set(-squat * 0.85, squat * 0.7, ARM_DOWN_Z);
-  bones.rightUpperArm.rotation.set(-squat * 0.85, -squat * 0.7, -ARM_DOWN_Z);
+  // The first fix here (a small Y-axis "opening" plus a bone-origin distance
+  // check) still put the forearm mesh straight through the knee, visibly, in
+  // a screenshot — a bone-center distance doesn't account for the knee's
+  // actual radius or the arm's, so it wasn't a real clearance check. Mapping
+  // each rotation axis individually against the knee's position showed Y
+  // actually pulls the hand INWARD across the body (which was fighting the
+  // small clearance it had), and the shoulder's Z is what swings the arm
+  // outward. Swinging outward enough to clear the knee that way reads as
+  // "flung out to the sides", not a resting squat, so instead the arms go
+  // the other direction: less forward reach (X) and a much bigger Y pull,
+  // routing the forearms down through the gap between the splayed knees to
+  // hang near the ankles, clear of both — elbow ends up 0.12 units inboard
+  // of the knee instead of overlapping it.
+  bones.leftUpperArm.rotation.set(-squat * 0.4, squat * 1.9, ARM_DOWN_Z);
+  bones.rightUpperArm.rotation.set(-squat * 0.4, -squat * 1.9, -ARM_DOWN_Z);
   bones.leftLowerArm.rotation.set(0.12 + squat * 0.5, 0, 0);
   bones.rightLowerArm.rotation.set(0.12 + squat * 0.5, 0, 0);
   // The foot bone doesn't automatically stay flat when the shin pitches
