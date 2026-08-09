@@ -330,12 +330,14 @@ function applyWalk(running, dt) {
 
 function applyWave(dt) {
   actionCycle += dt * 6.5;
-  // Shoulder and elbow hold a raised position; the wave motion itself is a
-  // wrist flick on the hand bone, not the whole forearm swinging — that's
-  // what a real wave looks like, and swinging the forearm instead (the
-  // first version of this) read as flailing rather than waving.
+  // Shoulder raised and elbow bent so the hand sits up near head height;
+  // the wave motion itself is a wrist flick on the hand bone, not the
+  // whole forearm swinging. The elbow bend has to be driven by the lower
+  // arm bone's local Y rotation, not X — X continues the same rotational
+  // arc as the upper arm (a straight, stiff-looking arm), while Y is the
+  // axis that actually folds the forearm back at the elbow joint here.
   bones.rightUpperArm.rotation.set(-1.5, 0.1, -0.55);
-  bones.rightLowerArm.rotation.set(-1.15, 0, 0.1);
+  bones.rightLowerArm.rotation.set(0.1, 1.7, 0);
   bones.rightHand.rotation.set(0, 0, Math.sin(actionCycle) * 0.55);
   bones.chest.rotation.y = -0.05;
   bones.head.rotation.y = -0.06;
@@ -347,9 +349,14 @@ function applyCrouch(dt) {
   const squat = (Math.sin(actionCycle - Math.PI / 2) + 1) / 2; // 0 -> 1 -> 0, starts at 0
   bones.leftUpperLeg.rotation.x = squat * 1.05;
   bones.rightUpperLeg.rotation.x = squat * 1.05;
-  bones.leftLowerLeg.rotation.x = squat * 1.7;
-  bones.rightLowerLeg.rotation.x = squat * 1.7;
-  bones.hips.position.y = hipsBaseY - squat * 0.4;
+  // The knee has to bend the opposite way from the hip, not the same way —
+  // a real squat keeps the shin roughly vertical (foot planted) while the
+  // thigh rotates forward, so the lower leg's rotation has to counter the
+  // upper leg's, not continue its arc (which read as the shin kicking
+  // forward instead of the knee folding).
+  bones.leftLowerLeg.rotation.x = -squat * 1.4;
+  bones.rightLowerLeg.rotation.x = -squat * 1.4;
+  bones.hips.position.y = hipsBaseY - squat * 0.35;
   bones.chest.rotation.x = squat * 0.2;
   setAnimName('crouch');
 }
