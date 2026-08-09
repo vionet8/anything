@@ -32272,11 +32272,11 @@ void main() {
   function applyCrouch(dt) {
     actionCycle += dt * 3.2;
     const squat = (Math.sin(actionCycle - Math.PI / 2) + 1) / 2;
-    bones.leftUpperLeg.rotation.x = squat * 2;
-    bones.rightUpperLeg.rotation.x = squat * 2;
-    bones.leftLowerLeg.rotation.x = -squat * 1.8;
-    bones.rightLowerLeg.rotation.x = -squat * 1.8;
-    bones.hips.position.y = hipsBaseY - squat * 0.65;
+    bones.leftUpperLeg.rotation.x = -squat * 1.6;
+    bones.rightUpperLeg.rotation.x = -squat * 1.6;
+    bones.leftLowerLeg.rotation.x = squat * 1.85;
+    bones.rightLowerLeg.rotation.x = squat * 1.85;
+    bones.hips.position.y = hipsBaseY - squat * 0.364;
     bones.chest.rotation.x = squat * 0.6;
     bones.leftUpperArm.rotation.set(-squat * 1, squat * 0.3, ARM_DOWN_Z);
     bones.rightUpperArm.rotation.set(-squat * 1, -squat * 0.3, -ARM_DOWN_Z);

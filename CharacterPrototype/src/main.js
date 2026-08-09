@@ -339,21 +339,19 @@ function applyWave(dt) {
 function applyCrouch(dt) {
   actionCycle += dt * 3.2;
   const squat = (Math.sin(actionCycle - Math.PI / 2) + 1) / 2; // 0 -> 1 -> 0, starts at 0
-  // A reference photo of a real しゃがむ (resting squat, heels flat) showed
-  // this needs to be much deeper than a gym half-squat: hips drop close to
-  // the heels, thighs fold in close to the torso, and the arms wrap down
-  // and forward to rest near the shins instead of reaching out for balance.
-  bones.leftUpperLeg.rotation.x = squat * 2.0;
-  bones.rightUpperLeg.rotation.x = squat * 2.0;
-  // The knee still bends opposite to the hip's rotation (so the joint
-  // visibly folds instead of the whole leg swinging as one rigid arc), but
-  // at this depth the shin needs to counter-rotate by nearly as much as the
-  // thigh so it stays close to vertical (heel planted) while the thigh
-  // folds in — unlike a shallow squat, where a smaller counter-rotation
-  // was enough to keep the knee tracking forward.
-  bones.leftLowerLeg.rotation.x = -squat * 1.8;
-  bones.rightLowerLeg.rotation.x = -squat * 1.8;
-  bones.hips.position.y = hipsBaseY - squat * 0.65;
+  // Measured against the actual bone matrices (not just eyeballed): on this
+  // rig, positive upperLeg.rotation.x swings the thigh BACKWARD, so a
+  // forward hip fold needs a negative angle; lowerLeg.rotation.x is the
+  // opposite (positive flexes the knee back under a forward-tilted thigh).
+  // The previous signs were both inverted, which folded the legs backward
+  // like a reversed knee instead of tracking the knee forward over the toes.
+  // hips.position.y's drop is solved so the ankle stays at its standing
+  // height (no floating/sinking) for this thigh/knee angle pair.
+  bones.leftUpperLeg.rotation.x = -squat * 1.6;
+  bones.rightUpperLeg.rotation.x = -squat * 1.6;
+  bones.leftLowerLeg.rotation.x = squat * 1.85;
+  bones.rightLowerLeg.rotation.x = squat * 1.85;
+  bones.hips.position.y = hipsBaseY - squat * 0.364;
   bones.chest.rotation.x = squat * 0.6;
   bones.leftUpperArm.rotation.set(-squat * 1.0, squat * 0.3, ARM_DOWN_Z);
   bones.rightUpperArm.rotation.set(-squat * 1.0, -squat * 0.3, -ARM_DOWN_Z);
