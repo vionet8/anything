@@ -349,13 +349,15 @@ function applyCrouch(dt) {
   const squat = (Math.sin(actionCycle - Math.PI / 2) + 1) / 2; // 0 -> 1 -> 0, starts at 0
   bones.leftUpperLeg.rotation.x = squat * 1.05;
   bones.rightUpperLeg.rotation.x = squat * 1.05;
-  // The knee has to bend the opposite way from the hip, not the same way —
-  // a real squat keeps the shin roughly vertical (foot planted) while the
-  // thigh rotates forward, so the lower leg's rotation has to counter the
-  // upper leg's, not continue its arc (which read as the shin kicking
-  // forward instead of the knee folding).
-  bones.leftLowerLeg.rotation.x = -squat * 1.4;
-  bones.rightLowerLeg.rotation.x = -squat * 1.4;
+  // The knee bends opposite to the hip's rotation (so the joint visibly
+  // folds instead of the whole leg swinging as one rigid arc), but by a
+  // smaller angle than the thigh's — the shin still has to lean forward
+  // overall, same direction as the thigh, so the knee tracks forward past
+  // the ankle the way a real squat looks. Countering it by *more* than the
+  // thigh's own rotation (as an earlier version did) tips the shin backward
+  // instead and reads as the knee never coming forward at all.
+  bones.leftLowerLeg.rotation.x = -squat * 0.6;
+  bones.rightLowerLeg.rotation.x = -squat * 0.6;
   bones.hips.position.y = hipsBaseY - squat * 0.35;
   bones.chest.rotation.x = squat * 0.2;
   setAnimName('crouch');

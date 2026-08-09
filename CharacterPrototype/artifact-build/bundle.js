@@ -32076,8 +32076,8 @@ void main() {
     const squat = (Math.sin(actionCycle - Math.PI / 2) + 1) / 2;
     bones.leftUpperLeg.rotation.x = squat * 1.05;
     bones.rightUpperLeg.rotation.x = squat * 1.05;
-    bones.leftLowerLeg.rotation.x = -squat * 1.4;
-    bones.rightLowerLeg.rotation.x = -squat * 1.4;
+    bones.leftLowerLeg.rotation.x = -squat * 0.6;
+    bones.rightLowerLeg.rotation.x = -squat * 0.6;
     bones.hips.position.y = hipsBaseY - squat * 0.35;
     bones.chest.rotation.x = squat * 0.2;
     setAnimName("crouch");
