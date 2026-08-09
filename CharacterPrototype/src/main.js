@@ -199,6 +199,7 @@ loader.load(
       'rightUpperArm', 'rightLowerArm', 'rightHand',
       'leftUpperLeg', 'leftLowerLeg',
       'rightUpperLeg', 'rightLowerLeg',
+      'leftFoot', 'rightFoot',
     ];
     for (const name of names) {
       bones[name] = vrm.humanoid.getNormalizedBoneNode(name);
@@ -266,6 +267,8 @@ function resetLimbs() {
   bones.rightLowerArm.rotation.set(0.12, 0, 0);
   bones.leftHand.rotation.set(0, 0, 0);
   bones.rightHand.rotation.set(0, 0, 0);
+  bones.leftFoot.rotation.set(0, 0, 0);
+  bones.rightFoot.rotation.set(0, 0, 0);
   bones.hips.position.set(0, hipsBaseY, 0);
   bones.hips.rotation.set(0, 0, 0);
   bones.chest.rotation.set(0, 0, 0);
@@ -366,10 +369,20 @@ function applyCrouch(dt) {
   bones.hips.position.y = hipsBaseY - squat * 0.471;
   bones.hips.position.z = -squat * 0.144;
   bones.chest.rotation.x = squat * 0.34;
-  bones.leftUpperArm.rotation.set(-squat * 1.0, squat * 0.3, ARM_DOWN_Z);
-  bones.rightUpperArm.rotation.set(-squat * 1.0, -squat * 0.3, -ARM_DOWN_Z);
+  // The arms were reaching in narrower than the now-splayed knees, so the
+  // hands landed 0.05 units from the knee joint — visibly overlapping it.
+  // Opening the shoulder angle (was 0.3) and pulling the reach in slightly
+  // (was 1.0) puts 0.16 units of clearance between hand and knee instead.
+  bones.leftUpperArm.rotation.set(-squat * 0.85, squat * 0.7, ARM_DOWN_Z);
+  bones.rightUpperArm.rotation.set(-squat * 0.85, -squat * 0.7, -ARM_DOWN_Z);
   bones.leftLowerArm.rotation.set(0.12 + squat * 0.5, 0, 0);
   bones.rightLowerArm.rotation.set(0.12 + squat * 0.5, 0, 0);
+  // The foot bone doesn't automatically stay flat when the shin pitches
+  // forward — it inherits that same pitch, tipping the sole onto its toe
+  // and lifting the heel off the ground. Counter-rotate the ankle back
+  // toward the shin's angle so the sole stays roughly parallel to the floor.
+  bones.leftFoot.rotation.x = -squat * 0.6;
+  bones.rightFoot.rotation.x = -squat * 0.6;
   setAnimName('crouch');
 }
 

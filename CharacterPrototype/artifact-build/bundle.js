@@ -31988,7 +31988,9 @@ void main() {
         "leftUpperLeg",
         "leftLowerLeg",
         "rightUpperLeg",
-        "rightLowerLeg"
+        "rightLowerLeg",
+        "leftFoot",
+        "rightFoot"
       ];
       for (const name of names) {
         bones[name] = vrm.humanoid.getNormalizedBoneNode(name);
@@ -32032,6 +32034,8 @@ void main() {
     bones.rightLowerArm.rotation.set(0.12, 0, 0);
     bones.leftHand.rotation.set(0, 0, 0);
     bones.rightHand.rotation.set(0, 0, 0);
+    bones.leftFoot.rotation.set(0, 0, 0);
+    bones.rightFoot.rotation.set(0, 0, 0);
     bones.hips.position.set(0, hipsBaseY, 0);
     bones.hips.rotation.set(0, 0, 0);
     bones.chest.rotation.set(0, 0, 0);
@@ -32083,10 +32087,12 @@ void main() {
     bones.hips.position.y = hipsBaseY - squat * 0.471;
     bones.hips.position.z = -squat * 0.144;
     bones.chest.rotation.x = squat * 0.34;
-    bones.leftUpperArm.rotation.set(-squat * 1, squat * 0.3, ARM_DOWN_Z);
-    bones.rightUpperArm.rotation.set(-squat * 1, -squat * 0.3, -ARM_DOWN_Z);
+    bones.leftUpperArm.rotation.set(-squat * 0.85, squat * 0.7, ARM_DOWN_Z);
+    bones.rightUpperArm.rotation.set(-squat * 0.85, -squat * 0.7, -ARM_DOWN_Z);
     bones.leftLowerArm.rotation.set(0.12 + squat * 0.5, 0, 0);
     bones.rightLowerArm.rotation.set(0.12 + squat * 0.5, 0, 0);
+    bones.leftFoot.rotation.x = -squat * 0.6;
+    bones.rightFoot.rotation.x = -squat * 0.6;
     setAnimName("crouch");
   }
   function applyIdle(dt) {
