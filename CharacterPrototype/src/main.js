@@ -315,15 +315,22 @@ function applyWalk(running, dt) {
 
 function applyWave(dt) {
   actionCycle += dt * 6.5;
-  // Shoulder raised and elbow bent so the hand sits up near head height;
-  // the wave motion itself is a wrist flick on the hand bone, not the
-  // whole forearm swinging. The elbow bend has to be driven by the lower
-  // arm bone's local Y rotation, not X — X continues the same rotational
-  // arc as the upper arm (a straight, stiff-looking arm), while Y is the
-  // axis that actually folds the forearm back at the elbow joint here.
-  bones.rightUpperArm.rotation.set(-1.5, 0.1, -0.55);
+  // The previous shoulder angle (x=-1.5) raised the whole arm almost
+  // straight up above the head, which read as "raising a hand in class"
+  // rather than waving — a real wave holds the upper arm out more to the
+  // side, elbow away from the body, so the arm reads as a diagonal line
+  // with the hand near head/temple height instead of directly overhead.
+  // The elbow bend still has to be driven by the lower arm bone's local Y
+  // rotation, not X — X continues the same rotational arc as the upper arm
+  // (a straight, stiff-looking arm), while Y is the axis that actually
+  // folds the forearm back at the elbow joint here.
+  bones.rightUpperArm.rotation.set(-0.7, 0.1, -0.5);
   bones.rightLowerArm.rotation.set(0.1, 1.7, 0);
-  bones.rightHand.rotation.set(0, 0, Math.sin(actionCycle) * 0.55);
+  // The wrist swing was also on the wrong axis — Z barely moved the hand
+  // (same composed-rotation quirk as the elbow), so the side-to-side wave
+  // motion itself was nearly invisible. Y visibly rotates the hand back
+  // and forth here.
+  bones.rightHand.rotation.set(0, Math.sin(actionCycle) * 0.5, 0);
   bones.chest.rotation.y = -0.05;
   bones.head.rotation.y = -0.06;
   setAnimName('wave');
@@ -332,19 +339,26 @@ function applyWave(dt) {
 function applyCrouch(dt) {
   actionCycle += dt * 3.2;
   const squat = (Math.sin(actionCycle - Math.PI / 2) + 1) / 2; // 0 -> 1 -> 0, starts at 0
-  bones.leftUpperLeg.rotation.x = squat * 1.05;
-  bones.rightUpperLeg.rotation.x = squat * 1.05;
-  // The knee bends opposite to the hip's rotation (so the joint visibly
-  // folds instead of the whole leg swinging as one rigid arc), but by a
-  // smaller angle than the thigh's — the shin still has to lean forward
-  // overall, same direction as the thigh, so the knee tracks forward past
-  // the ankle the way a real squat looks. Countering it by *more* than the
-  // thigh's own rotation (as an earlier version did) tips the shin backward
-  // instead and reads as the knee never coming forward at all.
-  bones.leftLowerLeg.rotation.x = -squat * 0.6;
-  bones.rightLowerLeg.rotation.x = -squat * 0.6;
-  bones.hips.position.y = hipsBaseY - squat * 0.35;
-  bones.chest.rotation.x = squat * 0.2;
+  // A reference photo of a real しゃがむ (resting squat, heels flat) showed
+  // this needs to be much deeper than a gym half-squat: hips drop close to
+  // the heels, thighs fold in close to the torso, and the arms wrap down
+  // and forward to rest near the shins instead of reaching out for balance.
+  bones.leftUpperLeg.rotation.x = squat * 2.0;
+  bones.rightUpperLeg.rotation.x = squat * 2.0;
+  // The knee still bends opposite to the hip's rotation (so the joint
+  // visibly folds instead of the whole leg swinging as one rigid arc), but
+  // at this depth the shin needs to counter-rotate by nearly as much as the
+  // thigh so it stays close to vertical (heel planted) while the thigh
+  // folds in — unlike a shallow squat, where a smaller counter-rotation
+  // was enough to keep the knee tracking forward.
+  bones.leftLowerLeg.rotation.x = -squat * 1.8;
+  bones.rightLowerLeg.rotation.x = -squat * 1.8;
+  bones.hips.position.y = hipsBaseY - squat * 0.65;
+  bones.chest.rotation.x = squat * 0.6;
+  bones.leftUpperArm.rotation.set(-squat * 1.0, squat * 0.3, ARM_DOWN_Z);
+  bones.rightUpperArm.rotation.set(-squat * 1.0, -squat * 0.3, -ARM_DOWN_Z);
+  bones.leftLowerArm.rotation.set(0.12 + squat * 0.5, 0, 0);
+  bones.rightLowerArm.rotation.set(0.12 + squat * 0.5, 0, 0);
   setAnimName('crouch');
 }
 
