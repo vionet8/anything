@@ -31883,6 +31883,9 @@ void main() {
   }
   var MOVE_SPEED = 3.2;
   var RUN_SPEED = 6.6;
+  var JUMP_GRAVITY = 18;
+  var JUMP_VELOCITY = 4.2;
+  var LANDING_RECOVER_TIME = 0.18;
   var state = {
     ready: false,
     animName: "idle",
@@ -31890,6 +31893,14 @@ void main() {
     heading: 0
   };
   var keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false };
+  var airborne = false;
+  var velocityY = 0;
+  var landingRecoverT = 0;
+  function startJump() {
+    if (airborne || landingRecoverT > 0) return;
+    airborne = true;
+    velocityY = JUMP_VELOCITY;
+  }
   function onKey(e, down) {
     switch (e.code) {
       case "KeyW":
@@ -31917,6 +31928,10 @@ void main() {
         break;
       case "KeyC":
         keys.crouch = down;
+        break;
+      case "Space":
+        e.preventDefault();
+        if (down) startJump();
         break;
     }
   }
@@ -32102,6 +32117,36 @@ void main() {
     bones.head.rotation.x = Math.sin(actionCycle * 0.5) * 0.02;
     setAnimName("idle");
   }
+  var JUMP_MAX_HEIGHT = JUMP_VELOCITY * JUMP_VELOCITY / (2 * JUMP_GRAVITY);
+  function applyJump() {
+    const tuck = MathUtils.clamp(state.position.y / JUMP_MAX_HEIGHT, 0, 1);
+    bones.leftUpperLeg.rotation.x = tuck * 0.15;
+    bones.rightUpperLeg.rotation.x = tuck * 0.15;
+    bones.leftLowerLeg.rotation.x = tuck * 1.3;
+    bones.rightLowerLeg.rotation.x = tuck * 1.3;
+    bones.hips.position.y = hipsBaseY - tuck * 0.1;
+    bones.leftFoot.rotation.x = tuck * 0.3;
+    bones.rightFoot.rotation.x = tuck * 0.3;
+    bones.leftUpperArm.rotation.set(tuck * 0.1, 0, tuck * 0.9);
+    bones.rightUpperArm.rotation.set(tuck * 0.1, 0, -tuck * 0.9);
+    bones.leftLowerArm.rotation.set(tuck * 0.15, 0, 0);
+    bones.rightLowerArm.rotation.set(tuck * 0.15, 0, 0);
+    bones.chest.rotation.x = -tuck * 0.15;
+    setAnimName("jump");
+  }
+  function applyLanding() {
+    const p = 1 - landingRecoverT / LANDING_RECOVER_TIME;
+    const absorb = (1 - p) * (1 - p);
+    bones.leftUpperLeg.rotation.x = -absorb * 0.7;
+    bones.rightUpperLeg.rotation.x = -absorb * 0.7;
+    bones.leftLowerLeg.rotation.x = absorb * 1;
+    bones.rightLowerLeg.rotation.x = absorb * 1;
+    bones.hips.position.y = hipsBaseY - absorb * 0.18;
+    bones.chest.rotation.x = absorb * 0.22;
+    bones.leftUpperArm.rotation.set(-absorb * 0.3, 0, ARM_DOWN_Z);
+    bones.rightUpperArm.rotation.set(-absorb * 0.3, 0, -ARM_DOWN_Z);
+    setAnimName("jump");
+  }
   var clock = new Clock();
   function step(dt) {
     if (!vrm) return;
@@ -32113,7 +32158,7 @@ void main() {
     if (keys.right) moveX += 1;
     const moving = moveX !== 0 || moveZ !== 0;
     const running = moving && keys.run;
-    const action = moving ? running ? "run" : "walk" : keys.wave ? "wave" : keys.crouch ? "crouch" : "idle";
+    const action = airborne || landingRecoverT > 0 ? "jump" : moving ? running ? "run" : "walk" : keys.wave ? "wave" : keys.crouch ? "crouch" : "idle";
     if (action !== prevAction) {
       actionCycle = 0;
       prevAction = action;
@@ -32126,8 +32171,26 @@ void main() {
       const speed = running ? RUN_SPEED : MOVE_SPEED;
       const dir = new Vector3(Math.sin(state.heading), 0, Math.cos(state.heading));
       state.position.addScaledVector(dir, speed * dt);
-      vrm.scene.position.copy(state.position);
+    }
+    if (airborne) {
+      velocityY -= JUMP_GRAVITY * dt;
+      state.position.y += velocityY * dt;
+      if (state.position.y <= 0) {
+        state.position.y = 0;
+        velocityY = 0;
+        airborne = false;
+        landingRecoverT = LANDING_RECOVER_TIME;
+      }
+    } else if (landingRecoverT > 0) {
+      landingRecoverT = Math.max(0, landingRecoverT - dt);
+    }
+    vrm.scene.position.copy(state.position);
+    if (airborne) {
+      applyJump();
+    } else if (moving) {
       applyWalk(running, dt);
+    } else if (landingRecoverT > 0) {
+      applyLanding();
     } else if (keys.wave) {
       applyWave(dt);
     } else if (keys.crouch) {
@@ -32196,6 +32259,18 @@ void main() {
       keys.crouch = false;
       step(1e-3);
       return window.__char.getState();
+    },
+    jumpForTest: (durationMs) => {
+      startJump();
+      const stepMs = 16;
+      let elapsed = 0;
+      const samples = [];
+      while (elapsed < durationMs) {
+        step(stepMs / 1e3);
+        elapsed += stepMs;
+        samples.push(window.__char.getState().position.y);
+      }
+      return { ...window.__char.getState(), maxHeight: Math.max(...samples) };
     }
   };
 })();

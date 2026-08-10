@@ -112,6 +112,12 @@ for (let i = 0; i < 10; i++) {
 // ---- Character (VRM) ----
 const MOVE_SPEED = 3.2;
 const RUN_SPEED = 6.6;
+// Solved from a target arc rather than picked by feel: a ~0.47s hop that
+// peaks just under a third of her standing height (0.49 units) reads as a
+// quick, game-y jump instead of a slow, floaty one.
+const JUMP_GRAVITY = 18;
+const JUMP_VELOCITY = 4.2;
+const LANDING_RECOVER_TIME = 0.18;
 
 const state = {
   ready: false,
@@ -121,6 +127,18 @@ const state = {
 };
 
 const keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false };
+
+// Jump is a one-shot trigger (a single keydown), not a held state like the
+// others, so it lives outside `keys` and is driven by startJump() directly.
+let airborne = false;
+let velocityY = 0;
+let landingRecoverT = 0;
+
+function startJump() {
+  if (airborne || landingRecoverT > 0) return; // no double-jump, no jump-cancel out of landing
+  airborne = true;
+  velocityY = JUMP_VELOCITY;
+}
 
 function onKey(e, down) {
   switch (e.code) {
@@ -149,6 +167,10 @@ function onKey(e, down) {
       break;
     case 'KeyC':
       keys.crouch = down;
+      break;
+    case 'Space':
+      e.preventDefault(); // stop the page from scrolling on spacebar
+      if (down) startJump();
       break;
   }
 }
@@ -408,6 +430,64 @@ function applyIdle(dt) {
   setAnimName('idle');
 }
 
+const JUMP_MAX_HEIGHT = (JUMP_VELOCITY * JUMP_VELOCITY) / (2 * JUMP_GRAVITY);
+
+function applyJump() {
+  // Driven by height-so-far rather than elapsed time, so the pose always
+  // matches how far off the ground she actually is (0 at takeoff/landing, 1
+  // at the apex) instead of drifting out of sync if the frame rate stutters.
+  //
+  // Reworked from a "cannonball" knees-forward tuck into a joyful leap
+  // (reference: arms thrown up in a V, legs kicked back and bent, not
+  // pulled up in front) — the earlier version read as defensive/curled-up
+  // rather than celebratory. The arm angles here aren't a small tweak of
+  // the wave's raised-arm formula (X=-1.8) — that pose is a modest
+  // shoulder-height wave. Getting the hands genuinely overhead needed a
+  // much smaller X (near 0) paired with a large Z swing; confirmed by
+  // checking the hand's world Y ended up above the shoulder's, not just
+  // eyeballing the rotation numbers. Legs: a big thigh swing (tried first)
+  // kicked the foot up above shoulder height and hidden behind her own
+  // torso in a render — dialed back to a small thigh rotation plus a big
+  // knee fold instead, landing the heel near hip height.
+  const tuck = THREE.MathUtils.clamp(state.position.y / JUMP_MAX_HEIGHT, 0, 1);
+  bones.leftUpperLeg.rotation.x = tuck * 0.15;
+  bones.rightUpperLeg.rotation.x = tuck * 0.15;
+  bones.leftLowerLeg.rotation.x = tuck * 1.3;
+  bones.rightLowerLeg.rotation.x = tuck * 1.3;
+  bones.hips.position.y = hipsBaseY - tuck * 0.1;
+  bones.leftFoot.rotation.x = tuck * 0.3; // toes point down, not stiffly flat, mid-air
+  bones.rightFoot.rotation.x = tuck * 0.3;
+
+  bones.leftUpperArm.rotation.set(tuck * 0.1, 0, tuck * 0.9);
+  bones.rightUpperArm.rotation.set(tuck * 0.1, 0, -tuck * 0.9);
+  bones.leftLowerArm.rotation.set(tuck * 0.15, 0, 0);
+  bones.rightLowerArm.rotation.set(tuck * 0.15, 0, 0);
+
+  bones.chest.rotation.x = -tuck * 0.15;
+  setAnimName('jump');
+}
+
+function applyLanding() {
+  // Quick, snappy absorb-and-recover instead of a lingering deep knee bend —
+  // (1 - p)^2 front-loads the compression right at touchdown and eases it
+  // out fast, since LANDING_RECOVER_TIME is deliberately short (0.18s).
+  // The initial coefficients (0.5/0.75/0.12) were only visible zoomed in —
+  // at normal camera distance the bend read as barely-there. Scaled up
+  // (0.7/1.0/0.18) plus a bit more forward chest lean so the impact
+  // actually reads at a normal viewing distance.
+  const p = 1 - landingRecoverT / LANDING_RECOVER_TIME;
+  const absorb = (1 - p) * (1 - p);
+  bones.leftUpperLeg.rotation.x = -absorb * 0.7;
+  bones.rightUpperLeg.rotation.x = -absorb * 0.7;
+  bones.leftLowerLeg.rotation.x = absorb * 1.0;
+  bones.rightLowerLeg.rotation.x = absorb * 1.0;
+  bones.hips.position.y = hipsBaseY - absorb * 0.18;
+  bones.chest.rotation.x = absorb * 0.22;
+  bones.leftUpperArm.rotation.set(-absorb * 0.3, 0, ARM_DOWN_Z);
+  bones.rightUpperArm.rotation.set(-absorb * 0.3, 0, -ARM_DOWN_Z);
+  setAnimName('jump');
+}
+
 const clock = new THREE.Clock();
 
 function step(dt) {
@@ -422,7 +502,13 @@ function step(dt) {
 
   const moving = moveX !== 0 || moveZ !== 0;
   const running = moving && keys.run;
-  const action = moving ? (running ? 'run' : 'walk') : keys.wave ? 'wave' : keys.crouch ? 'crouch' : 'idle';
+  // Jumping (and its brief landing recovery) outrank every other pose, but
+  // horizontal movement keeps working the whole time — a "running jump" —
+  // so the action name for animName/actionCycle purposes is independent of
+  // whether WASD happens to also be held.
+  const action = airborne || landingRecoverT > 0 ? 'jump'
+    : moving ? (running ? 'run' : 'walk')
+    : keys.wave ? 'wave' : keys.crouch ? 'crouch' : 'idle';
 
   if (action !== prevAction) {
     actionCycle = 0;
@@ -431,6 +517,9 @@ function step(dt) {
 
   resetLimbs();
 
+  // Horizontal movement is independent of jump/pose state so it still
+  // applies mid-air; vertical position is independent of horizontal so a
+  // running jump doesn't have to special-case anything below.
   if (moving) {
     state.heading = Math.atan2(moveX, moveZ);
     facing = state.heading;
@@ -439,9 +528,28 @@ function step(dt) {
     const speed = running ? RUN_SPEED : MOVE_SPEED;
     const dir = new THREE.Vector3(Math.sin(state.heading), 0, Math.cos(state.heading));
     state.position.addScaledVector(dir, speed * dt);
-    vrm.scene.position.copy(state.position);
+  }
 
+  if (airborne) {
+    velocityY -= JUMP_GRAVITY * dt;
+    state.position.y += velocityY * dt;
+    if (state.position.y <= 0) {
+      state.position.y = 0;
+      velocityY = 0;
+      airborne = false;
+      landingRecoverT = LANDING_RECOVER_TIME;
+    }
+  } else if (landingRecoverT > 0) {
+    landingRecoverT = Math.max(0, landingRecoverT - dt);
+  }
+  vrm.scene.position.copy(state.position);
+
+  if (airborne) {
+    applyJump();
+  } else if (moving) {
     applyWalk(running, dt);
+  } else if (landingRecoverT > 0) {
+    applyLanding();
   } else if (keys.wave) {
     applyWave(dt);
   } else if (keys.crouch) {
@@ -518,5 +626,17 @@ window.__char = {
     keys.crouch = false;
     step(0.001);
     return window.__char.getState();
+  },
+  jumpForTest: (durationMs) => {
+    startJump();
+    const stepMs = 16;
+    let elapsed = 0;
+    const samples = [];
+    while (elapsed < durationMs) {
+      step(stepMs / 1000);
+      elapsed += stepMs;
+      samples.push(window.__char.getState().position.y);
+    }
+    return { ...window.__char.getState(), maxHeight: Math.max(...samples) };
   },
 };

@@ -74,6 +74,31 @@ test('crouching in place does not move the character', async ({ page }) => {
   expect(result.animName).toBe('idle');
 });
 
+test('jumping rises and returns to the ground and idle, without net horizontal movement', async ({ page }) => {
+  const result = await page.evaluate(() => window.__char.jumpForTest(900));
+  // JUMP_VELOCITY=4.2, JUMP_GRAVITY=18 -> analytic max height = 0.49; allow
+  // tolerance for discrete 16ms stepping.
+  expect(result.maxHeight).toBeGreaterThan(0.4);
+  expect(result.maxHeight).toBeLessThan(0.55);
+  expect(result.position.y).toBe(0); // back on the ground by 900ms (full cycle is ~0.65s)
+  expect(result.position.x).toBe(0);
+  expect(result.position.z).toBe(0);
+  expect(result.animName).toBe('idle'); // recovered and settled back to idle
+});
+
+test('a running jump keeps moving horizontally while airborne', async ({ page }) => {
+  await page.keyboard.down('KeyW');
+  await page.waitForTimeout(100);
+  await page.keyboard.down('Space');
+  await page.keyboard.up('Space');
+  await page.waitForTimeout(400); // still airborne partway through the ~0.65s cycle
+  const midState = await page.evaluate(() => window.__char.getState());
+  await page.keyboard.up('KeyW');
+
+  expect(midState.animName).toBe('jump'); // jump outranks walk's animName while airborne
+  expect(midState.position.z).toBeGreaterThan(0); // but WASD still moved her forward
+});
+
 test('idle turns the character to face the camera instead of staying at the last movement heading', async ({ page }) => {
   const afterMove = await page.evaluate(() => window.__char.moveForTest('right', 500, false));
   // Give the idle face-camera turn time to settle (it eases in, not instant).
