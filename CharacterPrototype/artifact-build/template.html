@@ -13,6 +13,7 @@
     --state-wave: #ffd166;
     --state-crouch: #7ec8e3;
     --state-jump: #c792ea;
+    --state-peace: #ff8fab;
   }
 
   * { box-sizing: border-box; }
@@ -121,6 +122,7 @@
   #state-label[data-state="wave"] { color: var(--state-wave); }
   #state-label[data-state="crouch"] { color: var(--state-crouch); }
   #state-label[data-state="jump"] { color: var(--state-jump); }
+  #state-label[data-state="peace"] { color: var(--state-peace); }
 
   #loading {
     position: fixed;
@@ -186,6 +188,10 @@
   <div class="keys">
     <span class="keycap">C</span>
     <span class="keys-label">屈伸</span>
+  </div>
+  <div class="keys">
+    <span class="keycap">V</span>
+    <span class="keys-label">ピース</span>
   </div>
   <div class="keys">
     <span class="keycap">Space</span>

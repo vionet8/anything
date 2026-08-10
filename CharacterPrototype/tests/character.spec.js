@@ -74,6 +74,19 @@ test('crouching in place does not move the character', async ({ page }) => {
   expect(result.animName).toBe('idle');
 });
 
+test('peace sign in place does not move the character and reports the peace state', async ({ page }) => {
+  await page.keyboard.down('KeyV');
+  await page.waitForTimeout(300);
+  const midState = await page.evaluate(() => window.__char.getState());
+  await page.keyboard.up('KeyV');
+  await page.waitForTimeout(300);
+  const afterState = await page.evaluate(() => window.__char.getState());
+
+  expect(midState.animName).toBe('peace');
+  expect(midState.position).toEqual({ x: 0, y: 0, z: 0 });
+  expect(afterState.animName).toBe('idle'); // resets once the key is released
+});
+
 test('jumping rises and returns to the ground and idle, without net horizontal movement', async ({ page }) => {
   const result = await page.evaluate(() => window.__char.jumpForTest(900));
   // JUMP_VELOCITY=4.2, JUMP_GRAVITY=18 -> analytic max height = 0.49; allow

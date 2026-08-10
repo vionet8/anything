@@ -126,7 +126,7 @@ const state = {
   heading: 0,
 };
 
-const keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false };
+const keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false, peace: false };
 
 // Jump is a one-shot trigger (a single keydown), not a held state like the
 // others, so it lives outside `keys` and is driven by startJump() directly.
@@ -167,6 +167,9 @@ function onKey(e, down) {
       break;
     case 'KeyC':
       keys.crouch = down;
+      break;
+    case 'KeyV':
+      keys.peace = down;
       break;
     case 'Space':
       e.preventDefault(); // stop the page from scrolling on spacebar
@@ -222,6 +225,11 @@ loader.load(
       'leftUpperLeg', 'leftLowerLeg',
       'rightUpperLeg', 'rightLowerLeg',
       'leftFoot', 'rightFoot',
+      'rightThumbMetacarpal', 'rightThumbProximal', 'rightThumbDistal',
+      'rightIndexProximal', 'rightIndexIntermediate', 'rightIndexDistal',
+      'rightMiddleProximal', 'rightMiddleIntermediate', 'rightMiddleDistal',
+      'rightRingProximal', 'rightRingIntermediate', 'rightRingDistal',
+      'rightLittleProximal', 'rightLittleIntermediate', 'rightLittleDistal',
     ];
     for (const name of names) {
       bones[name] = vrm.humanoid.getNormalizedBoneNode(name);
@@ -291,6 +299,24 @@ function resetLimbs() {
   bones.rightHand.rotation.set(0, 0, 0);
   bones.leftFoot.rotation.set(0, 0, 0);
   bones.rightFoot.rotation.set(0, 0, 0);
+  // The rest pose for these fingers is already a natural relaxed-open hand
+  // (confirmed in a screenshot) — zeroing them here is what makes it safe
+  // for applyPeace to only touch the fingers it needs to curl.
+  bones.rightThumbMetacarpal.rotation.set(0, 0, 0);
+  bones.rightThumbProximal.rotation.set(0, 0, 0);
+  bones.rightThumbDistal.rotation.set(0, 0, 0);
+  bones.rightIndexProximal.rotation.set(0, 0, 0);
+  bones.rightIndexIntermediate.rotation.set(0, 0, 0);
+  bones.rightIndexDistal.rotation.set(0, 0, 0);
+  bones.rightMiddleProximal.rotation.set(0, 0, 0);
+  bones.rightMiddleIntermediate.rotation.set(0, 0, 0);
+  bones.rightMiddleDistal.rotation.set(0, 0, 0);
+  bones.rightRingProximal.rotation.set(0, 0, 0);
+  bones.rightRingIntermediate.rotation.set(0, 0, 0);
+  bones.rightRingDistal.rotation.set(0, 0, 0);
+  bones.rightLittleProximal.rotation.set(0, 0, 0);
+  bones.rightLittleIntermediate.rotation.set(0, 0, 0);
+  bones.rightLittleDistal.rotation.set(0, 0, 0);
   bones.hips.position.set(0, hipsBaseY, 0);
   bones.hips.rotation.set(0, 0, 0);
   bones.chest.rotation.set(0, 0, 0);
@@ -355,6 +381,33 @@ function applyWave(dt) {
   bones.chest.rotation.y = -0.05;
   bones.head.rotation.y = -0.06;
   setAnimName('wave');
+}
+
+function applyPeace(dt) {
+  actionCycle += dt * 1.2;
+  // Reuses the wave's verified raised-arm formula (elbow below shoulder,
+  // palm rolled to face the viewer via the hand's local X) — same shoulder
+  // height reads fine for a held-up peace sign, just without the wrist
+  // swing. The finger curl axis (Y) was found by isolating one bone at a
+  // time and reading whether the fingertip stayed visible from a
+  // palm-facing camera or vanished behind the palm — confirmed on both the
+  // little finger alone and then the ring finger + thumb together before
+  // trusting it. Index and middle are left at their already-open rest pose.
+  bones.rightUpperArm.rotation.set(-1.8, -0.4, -0.5);
+  bones.rightLowerArm.rotation.set(0.1, 1.7, 0);
+  bones.rightHand.rotation.set(-1.0, 0, 0);
+  bones.rightRingProximal.rotation.set(0, 0.9, 0);
+  bones.rightRingIntermediate.rotation.set(0, 0.9, 0);
+  bones.rightRingDistal.rotation.set(0, 0.9, 0);
+  bones.rightLittleProximal.rotation.set(0, 0.9, 0);
+  bones.rightLittleIntermediate.rotation.set(0, 0.9, 0);
+  bones.rightLittleDistal.rotation.set(0, 0.9, 0);
+  bones.rightThumbProximal.rotation.set(0, 0.9, 0);
+  bones.rightThumbDistal.rotation.set(0, 0.9, 0);
+  bones.chest.rotation.y = -0.05;
+  bones.head.rotation.y = -0.06;
+  bones.head.rotation.x = Math.sin(actionCycle * 0.6) * 0.015; // subtle breathing, not a stiff freeze
+  setAnimName('peace');
 }
 
 function applyCrouch(dt) {
@@ -495,7 +548,7 @@ function step(dt) {
   // whether WASD happens to also be held.
   const action = airborne || landingRecoverT > 0 ? 'jump'
     : moving ? (running ? 'run' : 'walk')
-    : keys.wave ? 'wave' : keys.crouch ? 'crouch' : 'idle';
+    : keys.wave ? 'wave' : keys.crouch ? 'crouch' : keys.peace ? 'peace' : 'idle';
 
   if (action !== prevAction) {
     actionCycle = 0;
@@ -541,6 +594,8 @@ function step(dt) {
     applyWave(dt);
   } else if (keys.crouch) {
     applyCrouch(dt);
+  } else if (keys.peace) {
+    applyPeace(dt);
   } else {
     // Face the camera when idle, instead of staying turned wherever the
     // last movement left her — this is what actually lets you see her
@@ -603,6 +658,7 @@ window.__char = {
   triggerActionForTest: (name, durationMs) => {
     keys.wave = name === 'wave';
     keys.crouch = name === 'crouch';
+    keys.peace = name === 'peace';
     const stepMs = 16;
     let elapsed = 0;
     while (elapsed < durationMs) {
@@ -611,6 +667,7 @@ window.__char = {
     }
     keys.wave = false;
     keys.crouch = false;
+    keys.peace = false;
     step(0.001);
     return window.__char.getState();
   },

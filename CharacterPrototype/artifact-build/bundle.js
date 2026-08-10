@@ -31892,7 +31892,7 @@ void main() {
     position: new Vector3(0, 0, 0),
     heading: 0
   };
-  var keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false };
+  var keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false, peace: false };
   var airborne = false;
   var velocityY = 0;
   var landingRecoverT = 0;
@@ -31928,6 +31928,9 @@ void main() {
         break;
       case "KeyC":
         keys.crouch = down;
+        break;
+      case "KeyV":
+        keys.peace = down;
         break;
       case "Space":
         e.preventDefault();
@@ -32005,7 +32008,22 @@ void main() {
         "rightUpperLeg",
         "rightLowerLeg",
         "leftFoot",
-        "rightFoot"
+        "rightFoot",
+        "rightThumbMetacarpal",
+        "rightThumbProximal",
+        "rightThumbDistal",
+        "rightIndexProximal",
+        "rightIndexIntermediate",
+        "rightIndexDistal",
+        "rightMiddleProximal",
+        "rightMiddleIntermediate",
+        "rightMiddleDistal",
+        "rightRingProximal",
+        "rightRingIntermediate",
+        "rightRingDistal",
+        "rightLittleProximal",
+        "rightLittleIntermediate",
+        "rightLittleDistal"
       ];
       for (const name of names) {
         bones[name] = vrm.humanoid.getNormalizedBoneNode(name);
@@ -32051,6 +32069,21 @@ void main() {
     bones.rightHand.rotation.set(0, 0, 0);
     bones.leftFoot.rotation.set(0, 0, 0);
     bones.rightFoot.rotation.set(0, 0, 0);
+    bones.rightThumbMetacarpal.rotation.set(0, 0, 0);
+    bones.rightThumbProximal.rotation.set(0, 0, 0);
+    bones.rightThumbDistal.rotation.set(0, 0, 0);
+    bones.rightIndexProximal.rotation.set(0, 0, 0);
+    bones.rightIndexIntermediate.rotation.set(0, 0, 0);
+    bones.rightIndexDistal.rotation.set(0, 0, 0);
+    bones.rightMiddleProximal.rotation.set(0, 0, 0);
+    bones.rightMiddleIntermediate.rotation.set(0, 0, 0);
+    bones.rightMiddleDistal.rotation.set(0, 0, 0);
+    bones.rightRingProximal.rotation.set(0, 0, 0);
+    bones.rightRingIntermediate.rotation.set(0, 0, 0);
+    bones.rightRingDistal.rotation.set(0, 0, 0);
+    bones.rightLittleProximal.rotation.set(0, 0, 0);
+    bones.rightLittleIntermediate.rotation.set(0, 0, 0);
+    bones.rightLittleDistal.rotation.set(0, 0, 0);
     bones.hips.position.set(0, hipsBaseY, 0);
     bones.hips.rotation.set(0, 0, 0);
     bones.chest.rotation.set(0, 0, 0);
@@ -32090,6 +32123,24 @@ void main() {
     bones.chest.rotation.y = -0.05;
     bones.head.rotation.y = -0.06;
     setAnimName("wave");
+  }
+  function applyPeace(dt) {
+    actionCycle += dt * 1.2;
+    bones.rightUpperArm.rotation.set(-1.8, -0.4, -0.5);
+    bones.rightLowerArm.rotation.set(0.1, 1.7, 0);
+    bones.rightHand.rotation.set(-1, 0, 0);
+    bones.rightRingProximal.rotation.set(0, 0.9, 0);
+    bones.rightRingIntermediate.rotation.set(0, 0.9, 0);
+    bones.rightRingDistal.rotation.set(0, 0.9, 0);
+    bones.rightLittleProximal.rotation.set(0, 0.9, 0);
+    bones.rightLittleIntermediate.rotation.set(0, 0.9, 0);
+    bones.rightLittleDistal.rotation.set(0, 0.9, 0);
+    bones.rightThumbProximal.rotation.set(0, 0.9, 0);
+    bones.rightThumbDistal.rotation.set(0, 0.9, 0);
+    bones.chest.rotation.y = -0.05;
+    bones.head.rotation.y = -0.06;
+    bones.head.rotation.x = Math.sin(actionCycle * 0.6) * 0.015;
+    setAnimName("peace");
   }
   function applyCrouch(dt) {
     actionCycle += dt * 3.2;
@@ -32158,7 +32209,7 @@ void main() {
     if (keys.right) moveX += 1;
     const moving = moveX !== 0 || moveZ !== 0;
     const running = moving && keys.run;
-    const action = airborne || landingRecoverT > 0 ? "jump" : moving ? running ? "run" : "walk" : keys.wave ? "wave" : keys.crouch ? "crouch" : "idle";
+    const action = airborne || landingRecoverT > 0 ? "jump" : moving ? running ? "run" : "walk" : keys.wave ? "wave" : keys.crouch ? "crouch" : keys.peace ? "peace" : "idle";
     if (action !== prevAction) {
       actionCycle = 0;
       prevAction = action;
@@ -32195,6 +32246,8 @@ void main() {
       applyWave(dt);
     } else if (keys.crouch) {
       applyCrouch(dt);
+    } else if (keys.peace) {
+      applyPeace(dt);
     } else {
       const toCam = new Vector2(camera.position.x - state.position.x, camera.position.z - state.position.z);
       if (toCam.lengthSq() > 1e-4) {
@@ -32249,6 +32302,7 @@ void main() {
     triggerActionForTest: (name, durationMs) => {
       keys.wave = name === "wave";
       keys.crouch = name === "crouch";
+      keys.peace = name === "peace";
       const stepMs = 16;
       let elapsed = 0;
       while (elapsed < durationMs) {
@@ -32257,6 +32311,7 @@ void main() {
       }
       keys.wave = false;
       keys.crouch = false;
+      keys.peace = false;
       step(1e-3);
       return window.__char.getState();
     },
