@@ -32127,8 +32127,8 @@ void main() {
     bones.hips.position.y = hipsBaseY - tuck * 0.1;
     bones.leftFoot.rotation.x = tuck * 0.3;
     bones.rightFoot.rotation.x = tuck * 0.3;
-    bones.leftUpperArm.rotation.set(tuck * 0.1, 0, tuck * 0.9);
-    bones.rightUpperArm.rotation.set(tuck * 0.1, 0, -tuck * 0.9);
+    bones.leftUpperArm.rotation.set(0, 0, tuck * 1.2);
+    bones.rightUpperArm.rotation.set(0, 0, -tuck * 1.2);
     bones.leftLowerArm.rotation.set(tuck * 0.15, 0, 0);
     bones.rightLowerArm.rotation.set(tuck * 0.15, 0, 0);
     bones.chest.rotation.x = -tuck * 0.15;
