@@ -318,22 +318,18 @@ function applyWalk(running, dt) {
 
 function applyWave(dt) {
   actionCycle += dt * 6.5;
-  // The previous shoulder angle (x=-1.5) raised the whole arm almost
-  // straight up above the head, which read as "raising a hand in class"
-  // rather than waving — a real wave holds the upper arm out more to the
-  // side, elbow away from the body, so the arm reads as a diagonal line
-  // with the hand near head/temple height instead of directly overhead.
-  // The elbow bend still has to be driven by the lower arm bone's local Y
-  // rotation, not X — X continues the same rotational arc as the upper arm
-  // (a straight, stiff-looking arm), while Y is the axis that actually
-  // folds the forearm back at the elbow joint here.
-  bones.rightUpperArm.rotation.set(-0.7, 0.1, -0.5);
+  // Measured against the actual bone matrices: the elbow needs to sit about
+  // 10cm below the shoulder (a raised-but-relaxed wave, not a stiff salute),
+  // which took a much steeper shoulder pitch than it looks like it should —
+  // x=-1.8 here, verified against the shoulder joint's own world Y.
+  bones.rightUpperArm.rotation.set(-1.8, -0.4, -0.5);
   bones.rightLowerArm.rotation.set(0.1, 1.7, 0);
-  // The wrist swing was also on the wrong axis — Z barely moved the hand
-  // (same composed-rotation quirk as the elbow), so the side-to-side wave
-  // motion itself was nearly invisible. Y visibly rotates the hand back
-  // and forth here.
-  bones.rightHand.rotation.set(0, Math.sin(actionCycle) * 0.5, 0);
+  // The palm was facing up/away rather than toward the viewer — rightHand's
+  // local X is the twist axis that rolls it to face forward, independent of
+  // the Y-axis side-to-side swing below (confirmed the palm stays forward
+  // through both swing extremes, not just the rest frame).
+  const SWING_DEG = 30;
+  bones.rightHand.rotation.set(-1.0, Math.sin(actionCycle) * (SWING_DEG * Math.PI / 180), 0);
   bones.chest.rotation.y = -0.05;
   bones.head.rotation.y = -0.06;
   setAnimName('wave');

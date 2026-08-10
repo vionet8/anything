@@ -32266,9 +32266,10 @@ void main() {
   }
   function applyWave(dt) {
     actionCycle += dt * 6.5;
-    bones.rightUpperArm.rotation.set(-0.7, 0.1, -0.5);
+    bones.rightUpperArm.rotation.set(-1.8, -0.4, -0.5);
     bones.rightLowerArm.rotation.set(0.1, 1.7, 0);
-    bones.rightHand.rotation.set(0, Math.sin(actionCycle) * 0.5, 0);
+    const SWING_DEG = 30;
+    bones.rightHand.rotation.set(-1, Math.sin(actionCycle) * (SWING_DEG * Math.PI / 180), 0);
     bones.chest.rotation.y = -0.05;
     bones.head.rotation.y = -0.06;
     setAnimName("wave");
