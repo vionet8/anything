@@ -32094,7 +32094,9 @@ void main() {
     const swing = Math.sin(walkCycle);
     const legAmp = running ? 0.5 : 0.3;
     const kneeAmp = running ? 0.85 : 0.5;
-    const armAmp = running ? 0.3 : 0.16;
+    const armAmp = running ? 0.6 : 0.16;
+    const elbowBend = running ? 0.9 : 0.25;
+    const elbowRoll = running ? -0.5 : -0.15;
     const hipSwayAmp = running ? 0.05 : 0.09;
     const bounceAmp = running ? 0.075 : 0.028;
     bones.leftUpperLeg.rotation.x = swing * legAmp;
@@ -32105,8 +32107,8 @@ void main() {
     bones.rightLowerLeg.rotation.x = rightKnee * kneeAmp;
     bones.leftUpperArm.rotation.x = -swing * armAmp;
     bones.rightUpperArm.rotation.x = swing * armAmp;
-    bones.leftLowerArm.rotation.x = 0.25;
-    bones.rightLowerArm.rotation.x = 0.25;
+    bones.leftLowerArm.rotation.set(0.12, -elbowBend, elbowRoll);
+    bones.rightLowerArm.rotation.set(0.12, elbowBend, -elbowRoll);
     bones.hips.rotation.z = swing * hipSwayAmp;
     bones.hips.rotation.y = swing * hipSwayAmp * 0.35;
     bones.hips.position.y = hipsBaseY + Math.abs(Math.sin(walkCycle * 2)) * bounceAmp;

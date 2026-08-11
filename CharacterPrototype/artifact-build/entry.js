@@ -348,7 +348,17 @@ function applyWalk(running, dt) {
   // that reads as a "cute"/feminine walk rather than a wide marching gait.
   const legAmp = running ? 0.5 : 0.3;
   const kneeAmp = running ? 0.85 : 0.5;
-  const armAmp = running ? 0.3 : 0.16;
+  const armAmp = running ? 0.6 : 0.16;
+  // Running pumps the arms with a bent elbow so the hands ride at waist
+  // height instead of dangling at the thighs. Measured against the bones:
+  // hips (waist) sit at y=0.879 and these values put the hand at 0.976 at
+  // the front of the swing and 0.821 at the back — a mean of 0.898, i.e.
+  // the pump is centred on the waist. The elbow hinge is the forearm's Y
+  // axis (X is the roll axis and moves the hand not at all); the small
+  // negative Z is what keeps the hands from flaring outside the shoulders,
+  // which a pure Y bend does on its own.
+  const elbowBend = running ? 0.9 : 0.25;
+  const elbowRoll = running ? -0.5 : -0.15;
   const hipSwayAmp = running ? 0.05 : 0.09;
   const bounceAmp = running ? 0.075 : 0.028;
 
@@ -366,8 +376,8 @@ function applyWalk(running, dt) {
 
   bones.leftUpperArm.rotation.x = -swing * armAmp;
   bones.rightUpperArm.rotation.x = swing * armAmp;
-  bones.leftLowerArm.rotation.x = 0.25;
-  bones.rightLowerArm.rotation.x = 0.25;
+  bones.leftLowerArm.rotation.set(0.12, -elbowBend, elbowRoll);
+  bones.rightLowerArm.rotation.set(0.12, elbowBend, -elbowRoll);
 
   bones.hips.rotation.z = swing * hipSwayAmp;
   bones.hips.rotation.y = swing * hipSwayAmp * 0.35;

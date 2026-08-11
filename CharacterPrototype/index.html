@@ -11,13 +11,22 @@
     font-family: sans-serif; font-size: 14px; line-height: 1.5;
     background: rgba(0,0,0,0.4); padding: 8px 12px; border-radius: 6px;
   }
+  /* Same per-state colour coding as the published artifact's HUD, so the
+     dev page and the artifact read identically. */
+  #anim-state { font-weight: 600; color: #8b93a7; }
+  #anim-state[data-state="walk"] { color: #7ee787; }
+  #anim-state[data-state="run"] { color: #ff8a5c; }
+  #anim-state[data-state="wave"] { color: #ffd166; }
+  #anim-state[data-state="crouch"] { color: #7ec8e3; }
+  #anim-state[data-state="jump"] { color: #c792ea; }
+  #anim-state[data-state="peace"] { color: #ff8fab; }
 </style>
 </head>
 <body>
 <div id="ui">
   <div>WASD / 矢印キーで移動、Shiftでダッシュ</div>
   <div>E: 手を振る、C: 屈伸、V: ピース、Space: ジャンプ、ドラッグ: カメラ回転</div>
-  <div id="anim-state">state: idle</div>
+  <div id="anim-state" data-state="idle">state: idle</div>
 </div>
 <script type="importmap">
 {
