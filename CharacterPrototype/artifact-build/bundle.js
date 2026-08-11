@@ -32051,6 +32051,7 @@ void main() {
         bones[name] = vrm.humanoid.getNormalizedBoneNode(name);
       }
       hipsBaseY = bones.hips.position.y;
+      if (vrm.lookAt) vrm.lookAt.target = gazeTarget;
       state.ready = true;
       window.__char.ready = true;
       if (loadingEl) loadingEl.style.display = "none";
@@ -32243,6 +32244,51 @@ void main() {
     bones.rightUpperArm.rotation.set(-absorb * 0.3, 0, -ARM_DOWN_Z);
     setAnimName("jump");
   }
+  var GAZE_TARGET_DISTANCE = 4;
+  var GAZE_EASE = 5;
+  var GAZE_HEAD_SHARE = 0.4;
+  var GAZE_HEAD_LIMIT = 0.5;
+  var GAZE_FULL_ANGLE = 1.3;
+  var GAZE_DROP_ANGLE = 2.1;
+  var gazeTarget = new Object3D();
+  scene.add(gazeTarget);
+  var gazeHeadPos = new Vector3();
+  var gazeToCamera = new Vector3();
+  var gazeAngle = 0;
+  var gazeWeight = 0;
+  function applyGaze(dt) {
+    const rawHead = vrm.humanoid.getRawBoneNode("head");
+    if (!rawHead) return;
+    rawHead.updateWorldMatrix(true, false);
+    gazeHeadPos.setFromMatrixPosition(rawHead.matrixWorld);
+    gazeToCamera.copy(camera.position).sub(gazeHeadPos);
+    const horizontal = Math.hypot(gazeToCamera.x, gazeToCamera.z) || 1e-6;
+    const fx = Math.sin(state.heading);
+    const fz = Math.cos(state.heading);
+    const cx = gazeToCamera.x / horizontal;
+    const cz = gazeToCamera.z / horizontal;
+    const angle = Math.atan2(fz * cx - fx * cz, fx * cx + fz * cz);
+    const magnitude = Math.abs(angle);
+    const interest = magnitude <= GAZE_FULL_ANGLE ? 1 : magnitude >= GAZE_DROP_ANGLE ? 0 : 1 - (magnitude - GAZE_FULL_ANGLE) / (GAZE_DROP_ANGLE - GAZE_FULL_ANGLE);
+    const ease = Math.min(1, dt * GAZE_EASE);
+    gazeWeight += (interest - gazeWeight) * ease;
+    let delta = angle - gazeAngle;
+    delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+    gazeAngle += delta * ease;
+    const headYaw = MathUtils.clamp(
+      gazeAngle * GAZE_HEAD_SHARE,
+      -GAZE_HEAD_LIMIT,
+      GAZE_HEAD_LIMIT
+    ) * gazeWeight;
+    bones.head.rotation.y += headYaw;
+    const lookYaw = state.heading + gazeAngle * gazeWeight;
+    const rise = (camera.position.y - gazeHeadPos.y) * gazeWeight * (GAZE_TARGET_DISTANCE / horizontal);
+    gazeTarget.position.set(
+      gazeHeadPos.x + Math.sin(lookYaw) * GAZE_TARGET_DISTANCE,
+      gazeHeadPos.y + rise,
+      gazeHeadPos.z + Math.cos(lookYaw) * GAZE_TARGET_DISTANCE
+    );
+  }
   function conformPoseToRig() {
     if (!rigIsMirrored) return;
     for (const name in bones) {
@@ -32351,6 +32397,7 @@ void main() {
       }
       applyIdle(dt);
     }
+    applyGaze(dt);
     conformPoseToRig();
     applyFace(dt, action);
     vrm.update(dt);
@@ -32375,8 +32422,26 @@ void main() {
       animName: state.animName,
       position: { x: state.position.x, y: state.position.y, z: state.position.z },
       heading: state.heading,
-      smile: Math.max(smile.happy, smile.relaxed)
+      smile: Math.max(smile.happy, smile.relaxed),
+      gazeAngle,
+      gazeWeight
     }),
+    // The axis the eye bone points along, in world space, so a test can check
+    // she is actually looking at the camera rather than that a number moved.
+    // Only the axis is meaningful, not its sign: which end of the eye bone's
+    // local +Z faces out of the face is up to whoever rigged the model, and on
+    // this one it points backwards. Callers should compare with Math.abs.
+    getEyeAim: () => {
+      const eye = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode("leftEye") : null;
+      if (!eye) return null;
+      eye.updateWorldMatrix(true, false);
+      const origin = new Vector3().setFromMatrixPosition(eye.matrixWorld);
+      const forward = new Vector3(0, 0, 1).applyQuaternion(new Quaternion().setFromRotationMatrix(eye.matrixWorld)).normalize();
+      return {
+        origin: { x: origin.x, y: origin.y, z: origin.z },
+        forward: { x: forward.x, y: forward.y, z: forward.z }
+      };
+    },
     // Expression names the loaded model actually exposes — the previous model
     // shipped with this list empty, which is the bug that hid the missing
     // morph targets, so the tests assert on it now.

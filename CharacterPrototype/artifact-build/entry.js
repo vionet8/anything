@@ -278,6 +278,10 @@ loader.parse(
     // pelvis reference down to ground level and sinking the whole lower body.
     hipsBaseY = bones.hips.position.y;
 
+    // Hand the eyes a target to follow. autoUpdate means VRM re-reads its
+    // world position on every vrm.update(), so applyGaze only has to move it.
+    if (vrm.lookAt) vrm.lookAt.target = gazeTarget;
+
     state.ready = true;
     window.__char.ready = true;
     if (loadingEl) loadingEl.style.display = 'none';
@@ -618,6 +622,80 @@ function applyLanding() {
   setAnimName('jump');
 }
 
+// ---- Gaze ----
+// The eyes follow the camera, which is most of what makes her read as present
+// rather than as a rig cycling through poses. Some of the turn is handed to
+// the head as well: this model's VRM eye range is only 8-12 degrees
+// horizontally, and at gameplay camera distance that much eye movement on its
+// own is close to invisible.
+const GAZE_TARGET_DISTANCE = 4;
+const GAZE_EASE = 5;          // per second
+const GAZE_HEAD_SHARE = 0.4;  // of the angle to the camera, taken by the head
+const GAZE_HEAD_LIMIT = 0.5;  // radians (~29 degrees), so the neck stays plausible
+// Within GAZE_FULL she looks straight at you; past GAZE_DROP she has given up
+// and faces front. Ramping between the two rather than cutting matters — the
+// camera orbits freely, and a hard switch reads as her losing interest in a
+// single frame.
+const GAZE_FULL_ANGLE = 1.3;  // ~75 degrees
+const GAZE_DROP_ANGLE = 2.1;  // ~120 degrees
+
+const gazeTarget = new THREE.Object3D();
+scene.add(gazeTarget);
+const gazeHeadPos = new THREE.Vector3();
+const gazeToCamera = new THREE.Vector3();
+let gazeAngle = 0;   // smoothed signed angle from her facing to the camera
+let gazeWeight = 0;  // smoothed 0..1 interest
+
+function applyGaze(dt) {
+  const rawHead = vrm.humanoid.getRawBoneNode('head');
+  if (!rawHead) return;
+  rawHead.updateWorldMatrix(true, false);
+  gazeHeadPos.setFromMatrixPosition(rawHead.matrixWorld);
+
+  gazeToCamera.copy(camera.position).sub(gazeHeadPos);
+  const horizontal = Math.hypot(gazeToCamera.x, gazeToCamera.z) || 1e-6;
+
+  // Signed angle about Y from where she is facing to where the camera is.
+  // Positive means the camera is off to her left, which is also the direction
+  // a positive head yaw turns her.
+  const fx = Math.sin(state.heading);
+  const fz = Math.cos(state.heading);
+  const cx = gazeToCamera.x / horizontal;
+  const cz = gazeToCamera.z / horizontal;
+  const angle = Math.atan2(fz * cx - fx * cz, fx * cx + fz * cz);
+
+  const magnitude = Math.abs(angle);
+  const interest = magnitude <= GAZE_FULL_ANGLE ? 1
+    : magnitude >= GAZE_DROP_ANGLE ? 0
+    : 1 - (magnitude - GAZE_FULL_ANGLE) / (GAZE_DROP_ANGLE - GAZE_FULL_ANGLE);
+
+  const ease = Math.min(1, dt * GAZE_EASE);
+  gazeWeight += (interest - gazeWeight) * ease;
+  // Shortest-path wrap, so an orbit across the back of her head eases the
+  // short way round instead of sweeping all the way through the front.
+  let delta = angle - gazeAngle;
+  delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+  gazeAngle += delta * ease;
+
+  // The head takes its share; the eyes pick up whatever is left over when the
+  // lookAt applier aims them at the target below, and clamp at the model's own
+  // range if that remainder is still more than the eyes can cover.
+  const headYaw = THREE.MathUtils.clamp(
+    gazeAngle * GAZE_HEAD_SHARE, -GAZE_HEAD_LIMIT, GAZE_HEAD_LIMIT
+  ) * gazeWeight;
+  bones.head.rotation.y += headYaw;
+
+  const lookYaw = state.heading + gazeAngle * gazeWeight;
+  // Scaled to the target distance so the pitch stays the angle to the camera
+  // rather than shrinking as the camera pulls back.
+  const rise = (camera.position.y - gazeHeadPos.y) * gazeWeight * (GAZE_TARGET_DISTANCE / horizontal);
+  gazeTarget.position.set(
+    gazeHeadPos.x + Math.sin(lookYaw) * GAZE_TARGET_DISTANCE,
+    gazeHeadPos.y + rise,
+    gazeHeadPos.z + Math.cos(lookYaw) * GAZE_TARGET_DISTANCE
+  );
+}
+
 // Re-express the pose the animation functions just wrote so it means the same
 // thing on a mirrored (VRM 0.x) rig.
 //
@@ -779,6 +857,7 @@ function step(dt) {
     applyIdle(dt);
   }
 
+  applyGaze(dt);
   conformPoseToRig();
   applyFace(dt, action);
 
@@ -812,7 +891,27 @@ window.__char = {
     position: { x: state.position.x, y: state.position.y, z: state.position.z },
     heading: state.heading,
     smile: Math.max(smile.happy, smile.relaxed),
+    gazeAngle,
+    gazeWeight,
   }),
+  // The axis the eye bone points along, in world space, so a test can check
+  // she is actually looking at the camera rather than that a number moved.
+  // Only the axis is meaningful, not its sign: which end of the eye bone's
+  // local +Z faces out of the face is up to whoever rigged the model, and on
+  // this one it points backwards. Callers should compare with Math.abs.
+  getEyeAim: () => {
+    const eye = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode('leftEye') : null;
+    if (!eye) return null;
+    eye.updateWorldMatrix(true, false);
+    const origin = new THREE.Vector3().setFromMatrixPosition(eye.matrixWorld);
+    const forward = new THREE.Vector3(0, 0, 1)
+      .applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(eye.matrixWorld))
+      .normalize();
+    return {
+      origin: { x: origin.x, y: origin.y, z: origin.z },
+      forward: { x: forward.x, y: forward.y, z: forward.z },
+    };
+  },
   // Expression names the loaded model actually exposes — the previous model
   // shipped with this list empty, which is the bug that hid the missing
   // morph targets, so the tests assert on it now.

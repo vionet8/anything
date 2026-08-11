@@ -232,6 +232,70 @@ test('the character faces the way she walks', async ({ page }) => {
   expect(measured.left.x).toBeGreaterThan(measured.right.x);
 });
 
+// Gaze is measured while a pose is held, because a held pose leaves her body
+// heading alone — in idle she turns to face the camera, which would hide any
+// tracking behind the body turn. 'wave' is used rather than a peace pose
+// because the peace smile closes her eyes.
+async function gazeAt(page, degreesOffHerFacing) {
+  return page.evaluate((degrees) => {
+    const head = window.__char.getBoneWorld('head');
+    const angle = window.__char.getState().heading + degrees * Math.PI / 180;
+    const camera = {
+      x: head.x + Math.sin(angle) * 2,
+      y: head.y + 0.1,
+      z: head.z + Math.cos(angle) * 2,
+    };
+    const target = { x: head.x, y: head.y, z: head.z };
+
+    window.__char.setCameraForTest(camera, target);
+    window.__char.holdActionForTest('wave', 1200); // long enough for the ease to settle
+    window.__char.setCameraForTest(camera, target);
+
+    const state = window.__char.getState();
+    const aim = window.__char.getEyeAim();
+    const to = {
+      x: camera.x - aim.origin.x, y: camera.y - aim.origin.y, z: camera.z - aim.origin.z,
+    };
+    const length = Math.hypot(to.x, to.y, to.z);
+    const alignment = Math.abs(
+      (aim.forward.x * to.x + aim.forward.y * to.y + aim.forward.z * to.z) / length
+    );
+
+    // The angle she should be turning through, recomputed here rather than
+    // assumed from `degrees`: holding the pose runs the camera follow, which
+    // drifts the camera a little from where it was placed.
+    const fx = Math.sin(state.heading);
+    const fz = Math.cos(state.heading);
+    const hx = camera.x - head.x;
+    const hz = camera.z - head.z;
+    const hn = Math.hypot(hx, hz);
+    const trueAngle = Math.atan2(
+      fz * (hx / hn) - fx * (hz / hn), fx * (hx / hn) + fz * (hz / hn)
+    );
+
+    window.__char.releaseActionsForTest();
+    return { gazeAngle: state.gazeAngle, gazeWeight: state.gazeWeight, alignment, trueAngle };
+  }, degreesOffHerFacing);
+}
+
+test('the gaze follows the camera around her', async ({ page }) => {
+  for (const degrees of [0, 35, 70]) {
+    const gaze = await gazeAt(page, degrees);
+    expect(gaze.gazeWeight, `weight at ${degrees}deg`).toBeGreaterThan(0.9);
+    expect(gaze.gazeAngle, `angle at ${degrees}deg`).toBeCloseTo(gaze.trueAngle, 1);
+  }
+});
+
+test('the eyes are aimed at the camera when it is in front of her', async ({ page }) => {
+  const gaze = await gazeAt(page, 0);
+  expect(gaze.alignment).toBeGreaterThan(0.97);
+});
+
+test('the gaze gives up rather than straining when the camera goes behind her', async ({ page }) => {
+  const gaze = await gazeAt(page, 170);
+  expect(gaze.gazeWeight).toBeLessThan(0.1);
+});
+
 test('idle turns the character to face the camera instead of staying at the last movement heading', async ({ page }) => {
   const afterMove = await page.evaluate(() => window.__char.moveForTest('right', 500, false));
   // Give the idle face-camera turn time to settle (it eases in, not instant).
