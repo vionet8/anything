@@ -14,6 +14,7 @@
     --state-crouch: #7ec8e3;
     --state-jump: #c792ea;
     --state-peace: #ff8fab;
+    --state-double-peace: #ff5c8a;
   }
 
   * { box-sizing: border-box; }
@@ -123,6 +124,7 @@
   #state-label[data-state="crouch"] { color: var(--state-crouch); }
   #state-label[data-state="jump"] { color: var(--state-jump); }
   #state-label[data-state="peace"] { color: var(--state-peace); }
+  #state-label[data-state="double-peace"] { color: var(--state-double-peace); }
 
   #loading {
     position: fixed;
@@ -192,6 +194,10 @@
   <div class="keys">
     <span class="keycap">V</span>
     <span class="keys-label">ピース</span>
+  </div>
+  <div class="keys">
+    <span class="keycap">B</span>
+    <span class="keys-label">ダブルピース</span>
   </div>
   <div class="keys">
     <span class="keycap">Space</span>

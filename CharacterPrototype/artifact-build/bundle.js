@@ -31892,7 +31892,7 @@ void main() {
     position: new Vector3(0, 0, 0),
     heading: 0
   };
-  var keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false, peace: false };
+  var keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false, peace: false, doublePeace: false };
   var airborne = false;
   var velocityY = 0;
   var landingRecoverT = 0;
@@ -31932,6 +31932,9 @@ void main() {
       case "KeyV":
         keys.peace = down;
         break;
+      case "KeyB":
+        keys.doublePeace = down;
+        break;
       case "Space":
         e.preventDefault();
         if (down) startJump();
@@ -31968,6 +31971,8 @@ void main() {
   var vrm = null;
   var bones = {};
   var hipsBaseY = 0;
+  var modelYaw = 0;
+  var rigIsMirrored = false;
   function base64ToArrayBuffer(base64) {
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
@@ -31983,6 +31988,8 @@ void main() {
     (gltf) => {
       vrm = gltf.userData.vrm;
       VRMUtils.rotateVRM0(vrm);
+      modelYaw = vrm.scene.rotation.y;
+      rigIsMirrored = modelYaw !== 0;
       vrm.scene.traverse((obj) => {
         if (obj.isMesh) {
           obj.castShadow = true;
@@ -32023,7 +32030,22 @@ void main() {
         "rightRingDistal",
         "rightLittleProximal",
         "rightLittleIntermediate",
-        "rightLittleDistal"
+        "rightLittleDistal",
+        "leftThumbMetacarpal",
+        "leftThumbProximal",
+        "leftThumbDistal",
+        "leftIndexProximal",
+        "leftIndexIntermediate",
+        "leftIndexDistal",
+        "leftMiddleProximal",
+        "leftMiddleIntermediate",
+        "leftMiddleDistal",
+        "leftRingProximal",
+        "leftRingIntermediate",
+        "leftRingDistal",
+        "leftLittleProximal",
+        "leftLittleIntermediate",
+        "leftLittleDistal"
       ];
       for (const name of names) {
         bones[name] = vrm.humanoid.getNormalizedBoneNode(name);
@@ -32052,6 +32074,26 @@ void main() {
     controls.update();
   }
   var ARM_DOWN_Z = -1.3;
+  var FINGER_BONES = [];
+  for (const side of ["left", "right"]) {
+    for (const finger of ["Thumb", "Index", "Middle", "Ring", "Little"]) {
+      const segments = finger === "Thumb" ? ["Metacarpal", "Proximal", "Distal"] : ["Proximal", "Intermediate", "Distal"];
+      for (const segment of segments) FINGER_BONES.push(side + finger + segment);
+    }
+  }
+  var FINGER_CURL = 0.9;
+  function curlSpareFingers(side, amount) {
+    for (const finger of ["Ring", "Little"]) {
+      for (const segment of ["Proximal", "Intermediate", "Distal"]) {
+        const bone = bones[side + finger + segment];
+        if (bone) bone.rotation.set(0, amount, 0);
+      }
+    }
+    for (const segment of ["Proximal", "Distal"]) {
+      const bone = bones[side + "Thumb" + segment];
+      if (bone) bone.rotation.set(0, amount, 0);
+    }
+  }
   var walkCycle = 0;
   var actionCycle = 0;
   var prevAction = "idle";
@@ -32069,21 +32111,10 @@ void main() {
     bones.rightHand.rotation.set(0, 0, 0);
     bones.leftFoot.rotation.set(0, 0, 0);
     bones.rightFoot.rotation.set(0, 0, 0);
-    bones.rightThumbMetacarpal.rotation.set(0, 0, 0);
-    bones.rightThumbProximal.rotation.set(0, 0, 0);
-    bones.rightThumbDistal.rotation.set(0, 0, 0);
-    bones.rightIndexProximal.rotation.set(0, 0, 0);
-    bones.rightIndexIntermediate.rotation.set(0, 0, 0);
-    bones.rightIndexDistal.rotation.set(0, 0, 0);
-    bones.rightMiddleProximal.rotation.set(0, 0, 0);
-    bones.rightMiddleIntermediate.rotation.set(0, 0, 0);
-    bones.rightMiddleDistal.rotation.set(0, 0, 0);
-    bones.rightRingProximal.rotation.set(0, 0, 0);
-    bones.rightRingIntermediate.rotation.set(0, 0, 0);
-    bones.rightRingDistal.rotation.set(0, 0, 0);
-    bones.rightLittleProximal.rotation.set(0, 0, 0);
-    bones.rightLittleIntermediate.rotation.set(0, 0, 0);
-    bones.rightLittleDistal.rotation.set(0, 0, 0);
+    for (const name of FINGER_BONES) {
+      const bone = bones[name];
+      if (bone) bone.rotation.set(0, 0, 0);
+    }
     bones.hips.position.set(0, hipsBaseY, 0);
     bones.hips.rotation.set(0, 0, 0);
     bones.chest.rotation.set(0, 0, 0);
@@ -32131,18 +32162,30 @@ void main() {
     bones.rightUpperArm.rotation.set(-1.8, -0.4, -0.5);
     bones.rightLowerArm.rotation.set(0.1, 1.7, 0);
     bones.rightHand.rotation.set(-1, 0, 0);
-    bones.rightRingProximal.rotation.set(0, 0.9, 0);
-    bones.rightRingIntermediate.rotation.set(0, 0.9, 0);
-    bones.rightRingDistal.rotation.set(0, 0.9, 0);
-    bones.rightLittleProximal.rotation.set(0, 0.9, 0);
-    bones.rightLittleIntermediate.rotation.set(0, 0.9, 0);
-    bones.rightLittleDistal.rotation.set(0, 0.9, 0);
-    bones.rightThumbProximal.rotation.set(0, 0.9, 0);
-    bones.rightThumbDistal.rotation.set(0, 0.9, 0);
+    curlSpareFingers("right", FINGER_CURL);
     bones.chest.rotation.y = -0.05;
     bones.head.rotation.y = -0.06;
     bones.head.rotation.x = Math.sin(actionCycle * 0.6) * 0.015;
     setAnimName("peace");
+  }
+  var DOUBLE_PEACE_SHOULDER_X = -1.45;
+  var DOUBLE_PEACE_SHOULDER_Y = -0.35;
+  var DOUBLE_PEACE_SHOULDER_Z = -0.62;
+  var DOUBLE_PEACE_ELBOW = 2.3;
+  function applyDoublePeace(dt) {
+    actionCycle += dt * 1.2;
+    bones.rightUpperArm.rotation.set(DOUBLE_PEACE_SHOULDER_X, DOUBLE_PEACE_SHOULDER_Y, DOUBLE_PEACE_SHOULDER_Z);
+    bones.leftUpperArm.rotation.set(DOUBLE_PEACE_SHOULDER_X, -DOUBLE_PEACE_SHOULDER_Y, -DOUBLE_PEACE_SHOULDER_Z);
+    bones.rightLowerArm.rotation.set(0.1, DOUBLE_PEACE_ELBOW, 0);
+    bones.leftLowerArm.rotation.set(0.1, -DOUBLE_PEACE_ELBOW, 0);
+    bones.rightHand.rotation.set(-1, 0, 0);
+    bones.leftHand.rotation.set(-1, 0, 0);
+    curlSpareFingers("right", FINGER_CURL);
+    curlSpareFingers("left", -FINGER_CURL);
+    bones.head.rotation.z = 0.12;
+    bones.head.rotation.x = 0.05 + Math.sin(actionCycle * 0.6) * 0.015;
+    bones.chest.rotation.x = 0.03;
+    setAnimName("double-peace");
   }
   function applyCrouch(dt) {
     actionCycle += dt * 3.2;
@@ -32200,6 +32243,50 @@ void main() {
     bones.rightUpperArm.rotation.set(-absorb * 0.3, 0, -ARM_DOWN_Z);
     setAnimName("jump");
   }
+  function conformPoseToRig() {
+    if (!rigIsMirrored) return;
+    for (const name in bones) {
+      const bone = bones[name];
+      if (!bone) continue;
+      bone.rotation.x = -bone.rotation.x;
+      bone.rotation.z = -bone.rotation.z;
+    }
+    bones.hips.position.x = -bones.hips.position.x;
+    bones.hips.position.z = -bones.hips.position.z;
+  }
+  var FACE_BY_ACTION = {
+    peace: { happy: 0.9 },
+    "double-peace": { happy: 1 },
+    jump: { relaxed: 0.85 }
+  };
+  var SMILE_EASE = 9;
+  var BLINK_DURATION = 0.13;
+  var BLINK_MIN_GAP = 2.4;
+  var BLINK_MAX_GAP = 6;
+  var smile = { happy: 0, relaxed: 0 };
+  var blinkCountdown = BLINK_MIN_GAP;
+  var blinkElapsed = BLINK_DURATION;
+  function applyFace(dt, action) {
+    const expressions = vrm.expressionManager;
+    if (!expressions) return;
+    const wanted = FACE_BY_ACTION[action] || {};
+    for (const name in smile) {
+      smile[name] += ((wanted[name] || 0) - smile[name]) * Math.min(1, dt * SMILE_EASE);
+      expressions.setValue(name, smile[name]);
+    }
+    blinkCountdown -= dt;
+    if (blinkCountdown <= 0) {
+      blinkCountdown = BLINK_MIN_GAP + Math.random() * (BLINK_MAX_GAP - BLINK_MIN_GAP);
+      blinkElapsed = 0;
+    }
+    let lids = 0;
+    if (blinkElapsed < BLINK_DURATION) {
+      blinkElapsed += dt;
+      const p = Math.min(1, blinkElapsed / BLINK_DURATION);
+      lids = p < 0.35 ? p / 0.35 : 1 - (p - 0.35) / 0.65;
+    }
+    expressions.setValue("blink", Math.max(0, lids) * (1 - smile.happy));
+  }
   var clock = new Clock();
   function step(dt) {
     if (!vrm) return;
@@ -32211,7 +32298,7 @@ void main() {
     if (keys.right) moveX += 1;
     const moving = moveX !== 0 || moveZ !== 0;
     const running = moving && keys.run;
-    const action = airborne || landingRecoverT > 0 ? "jump" : moving ? running ? "run" : "walk" : keys.wave ? "wave" : keys.crouch ? "crouch" : keys.peace ? "peace" : "idle";
+    const action = airborne || landingRecoverT > 0 ? "jump" : moving ? running ? "run" : "walk" : keys.wave ? "wave" : keys.crouch ? "crouch" : keys.doublePeace ? "double-peace" : keys.peace ? "peace" : "idle";
     if (action !== prevAction) {
       actionCycle = 0;
       prevAction = action;
@@ -32220,7 +32307,7 @@ void main() {
     if (moving) {
       state.heading = Math.atan2(moveX, moveZ);
       facing = state.heading;
-      vrm.scene.rotation.y = state.heading;
+      vrm.scene.rotation.y = state.heading + modelYaw;
       const speed = running ? RUN_SPEED : MOVE_SPEED;
       const dir = new Vector3(Math.sin(state.heading), 0, Math.cos(state.heading));
       state.position.addScaledVector(dir, speed * dt);
@@ -32248,6 +32335,8 @@ void main() {
       applyWave(dt);
     } else if (keys.crouch) {
       applyCrouch(dt);
+    } else if (keys.doublePeace) {
+      applyDoublePeace(dt);
     } else if (keys.peace) {
       applyPeace(dt);
     } else {
@@ -32257,18 +32346,21 @@ void main() {
         let delta = targetFacing - facing;
         delta = Math.atan2(Math.sin(delta), Math.cos(delta));
         facing += delta * Math.min(1, dt * 3);
-        vrm.scene.rotation.y = facing;
+        vrm.scene.rotation.y = facing + modelYaw;
         state.heading = facing;
       }
       applyIdle(dt);
     }
+    conformPoseToRig();
+    applyFace(dt, action);
     vrm.update(dt);
     updateCamera();
   }
+  var paused = false;
   function animate() {
     requestAnimationFrame(animate);
     const dt = Math.min(clock.getDelta(), 0.1);
-    step(dt);
+    if (!paused) step(dt);
     renderer.render(scene, camera);
   }
   animate();
@@ -32282,8 +32374,28 @@ void main() {
     getState: () => ({
       animName: state.animName,
       position: { x: state.position.x, y: state.position.y, z: state.position.z },
-      heading: state.heading
+      heading: state.heading,
+      smile: Math.max(smile.happy, smile.relaxed)
     }),
+    // Expression names the loaded model actually exposes — the previous model
+    // shipped with this list empty, which is the bug that hid the missing
+    // morph targets, so the tests assert on it now.
+    getExpressions: () => vrm && vrm.expressionManager ? vrm.expressionManager.expressions.map((e) => e.expressionName) : [],
+    // World position of a humanoid bone, for poses that have to be checked
+    // against real distances rather than eyeballed from a screenshot.
+    //
+    // Deliberately the *raw* bone, not the normalized one the pose code writes
+    // to. The normalized rig is a rotation-only reference skeleton whose limb
+    // segments do not carry the model's real bone lengths, so measuring it
+    // reports every pose as putting the hand the same distance from the head —
+    // which is exactly the wrong answer, and a confident-looking one.
+    getBoneWorld: (name) => {
+      const bone = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode(name) : null;
+      if (!bone) return null;
+      bone.updateWorldMatrix(true, false);
+      const v = new Vector3().setFromMatrixPosition(bone.matrixWorld);
+      return { x: v.x, y: v.y, z: v.z };
+    },
     moveForTest: (direction, durationMs, run = false) => {
       const dirKeys = { forward: false, back: false, left: false, right: false };
       if (direction === "forward") dirKeys.forward = true;
@@ -32305,6 +32417,7 @@ void main() {
       keys.wave = name === "wave";
       keys.crouch = name === "crouch";
       keys.peace = name === "peace";
+      keys.doublePeace = name === "double-peace";
       const stepMs = 16;
       let elapsed = 0;
       while (elapsed < durationMs) {
@@ -32314,8 +32427,40 @@ void main() {
       keys.wave = false;
       keys.crouch = false;
       keys.peace = false;
+      keys.doublePeace = false;
       step(1e-3);
       return window.__char.getState();
+    },
+    // Like triggerActionForTest but leaves the pose held, so a caller can
+    // measure it. triggerActionForTest releases the keys and steps once more
+    // before returning, which lands the rig back in idle — measuring after it
+    // silently reports the idle pose for every action.
+    holdActionForTest: (name, durationMs) => {
+      keys.wave = name === "wave";
+      keys.crouch = name === "crouch";
+      keys.peace = name === "peace";
+      keys.doublePeace = name === "double-peace";
+      const stepMs = 16;
+      let elapsed = 0;
+      while (elapsed < durationMs) {
+        step(stepMs / 1e3);
+        elapsed += stepMs;
+      }
+      return window.__char.getState();
+    },
+    releaseActionsForTest: () => {
+      keys.wave = keys.crouch = keys.peace = keys.doublePeace = false;
+      step(1e-3);
+    },
+    setPausedForTest: (on) => {
+      paused = on;
+    },
+    // Park the camera for a screenshot. Goes through OrbitControls' target
+    // rather than camera.lookAt so the next controls.update() doesn't undo it.
+    setCameraForTest: (position, target) => {
+      camera.position.set(position.x, position.y, position.z);
+      controls.target.set(target.x, target.y, target.z);
+      controls.update();
     },
     jumpForTest: (durationMs) => {
       startJump();

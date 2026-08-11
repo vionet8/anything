@@ -104,12 +104,132 @@ test('a running jump keeps moving horizontally while airborne', async ({ page })
   await page.waitForTimeout(100);
   await page.keyboard.down('Space');
   await page.keyboard.up('Space');
-  await page.waitForTimeout(400); // still airborne partway through the ~0.65s cycle
+  // Sample near the apex (~233ms), not late in the arc. The airborne phase
+  // ends at ~467ms, so a 400ms wait left only ~67ms of margin and this failed
+  // roughly two runs in three on real-time frame jitter.
+  await page.waitForTimeout(250);
   const midState = await page.evaluate(() => window.__char.getState());
   await page.keyboard.up('KeyW');
 
   expect(midState.animName).toBe('jump'); // jump outranks walk's animName while airborne
   expect(midState.position.z).toBeGreaterThan(0); // but WASD still moved her forward
+});
+
+test('double peace sign in place does not move the character and reports its own state', async ({ page }) => {
+  await page.keyboard.down('KeyB');
+  await page.waitForTimeout(300);
+  const midState = await page.evaluate(() => window.__char.getState());
+  await page.keyboard.up('KeyB');
+  await page.waitForTimeout(300);
+  const afterState = await page.evaluate(() => window.__char.getState());
+
+  expect(midState.animName).toBe('double-peace');
+  expect(midState.position).toEqual({ x: 0, y: 0, z: 0 });
+  expect(afterState.animName).toBe('idle');
+});
+
+test('the double peace puts both hands up beside the face, not out at the shoulders', async ({ page }) => {
+  const measured = await page.evaluate(() => {
+    window.__char.holdActionForTest('double-peace', 500);
+    const out = {
+      head: window.__char.getBoneWorld('head'),
+      left: window.__char.getBoneWorld('leftHand'),
+      right: window.__char.getBoneWorld('rightHand'),
+    };
+    window.__char.releaseActionsForTest();
+    return out;
+  });
+
+  for (const side of ['left', 'right']) {
+    const hand = measured[side];
+    const distance = Math.hypot(
+      hand.x - measured.head.x, hand.y - measured.head.y, hand.z - measured.head.z
+    );
+    // Beside the face: close to the head, and level with it rather than
+    // hanging below at shoulder height like the one-handed peace does.
+    expect(distance, `${side} hand distance from head`).toBeLessThan(0.32);
+    expect(hand.y, `${side} hand height`).toBeGreaterThan(measured.head.y - 0.1);
+  }
+  // One hand either side of the face, not both crowded onto one side.
+  // Measured as a spread plus a centred midpoint so the check does not depend
+  // on which way she happens to be facing.
+  const spread = Math.hypot(measured.left.x - measured.right.x, measured.left.z - measured.right.z);
+  const midX = (measured.left.x + measured.right.x) / 2;
+  const midZ = (measured.left.z + measured.right.z) / 2;
+  expect(spread, 'distance between the hands').toBeGreaterThan(0.25);
+  expect(Math.hypot(midX - measured.head.x, midZ - measured.head.z),
+    'hands centred on the head').toBeLessThan(0.1);
+});
+
+test('the model exposes the facial expressions the poses depend on', async ({ page }) => {
+  // The previous model had every morph target stripped by an optimisation
+  // pass, so this list came back empty and no expression could ever apply.
+  // Nothing on screen said so, which is why it is asserted here.
+  const expressions = await page.evaluate(() => window.__char.getExpressions());
+  expect(expressions).toEqual(expect.arrayContaining(['happy', 'relaxed', 'blink']));
+});
+
+test('the peace poses and the jump smile, and idle does not', async ({ page }) => {
+  const idle = await page.evaluate(() => window.__char.getState().smile);
+  expect(idle).toBeLessThan(0.05);
+
+  for (const pose of ['peace', 'double-peace']) {
+    const smile = await page.evaluate((name) => {
+      window.__char.holdActionForTest(name, 500);
+      const value = window.__char.getState().smile;
+      window.__char.releaseActionsForTest();
+      return value;
+    }, pose);
+    expect(smile, `${pose} smile`).toBeGreaterThan(0.8);
+  }
+
+  const jumping = await page.evaluate(() => {
+    window.__char.jumpForTest(200); // ~apex
+    return window.__char.getState().smile;
+  });
+  expect(jumping).toBeGreaterThan(0.5);
+});
+
+test('the smile eases in rather than snapping to full on the first frame', async ({ page }) => {
+  const early = await page.evaluate(() => {
+    window.__char.holdActionForTest('double-peace', 32); // two frames
+    const value = window.__char.getState().smile;
+    window.__char.releaseActionsForTest();
+    return value;
+  });
+  expect(early).toBeGreaterThan(0);
+  expect(early).toBeLessThan(0.5);
+});
+
+test('the arms hang below the head at rest', async ({ page }) => {
+  // A rig-orientation guard. The model is a VRM 0.x export whose normalized
+  // skeleton is mirrored against the VRM 1.0 one these poses were written
+  // for, and the failure mode is silent and total: every arm rotation
+  // inverts, so idle raises both arms straight up instead of letting them
+  // hang. Nothing else in the suite would notice.
+  const measured = await page.evaluate(() => ({
+    head: window.__char.getBoneWorld('head'),
+    left: window.__char.getBoneWorld('leftHand'),
+    right: window.__char.getBoneWorld('rightHand'),
+  }));
+
+  expect(measured.left.y).toBeLessThan(measured.head.y - 0.3);
+  expect(measured.right.y).toBeLessThan(measured.head.y - 0.3);
+});
+
+test('the character faces the way she walks', async ({ page }) => {
+  // Guards the half-turn that rotateVRM0 puts on the scene root: drop it and
+  // she still travels the right way, but moonwalks there facing backwards.
+  // Her left hand ends up on the wrong side of her, which is what this reads.
+  const measured = await page.evaluate(() => {
+    window.__char.moveForTest('forward', 400, false); // heading 0, travelling +Z
+    return {
+      left: window.__char.getBoneWorld('leftHand'),
+      right: window.__char.getBoneWorld('rightHand'),
+    };
+  });
+  // Facing +Z, her left hand sits at greater world X than her right.
+  expect(measured.left.x).toBeGreaterThan(measured.right.x);
 });
 
 test('idle turns the character to face the camera instead of staying at the last movement heading', async ({ page }) => {

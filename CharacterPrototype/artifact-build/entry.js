@@ -126,7 +126,7 @@ const state = {
   heading: 0,
 };
 
-const keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false, peace: false };
+const keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false, peace: false, doublePeace: false };
 
 // Jump is a one-shot trigger (a single keydown), not a held state like the
 // others, so it lives outside `keys` and is driven by startJump() directly.
@@ -171,6 +171,9 @@ function onKey(e, down) {
     case 'KeyV':
       keys.peace = down;
       break;
+    case 'KeyB':
+      keys.doublePeace = down;
+      break;
     case 'Space':
       e.preventDefault(); // stop the page from scrolling on spacebar
       if (down) startJump();
@@ -203,6 +206,18 @@ function setAnimName(name) {
 let vrm = null;
 let bones = {};
 let hipsBaseY = 0;
+// VRM 0.x models are authored facing +Z where VRM 1.0 faces -Z, and
+// VRMUtils.rotateVRM0 corrects that by parking a half-turn on the scene root.
+// Every place that steers the character has to add that half-turn back on,
+// because assigning scene.rotation.y from a heading would otherwise wipe it
+// out and leave her walking backwards.
+let modelYaw = 0;
+// The same half-turn also mirrors the normalized rig the pose code writes to:
+// on a VRM 0.x rig the left arm rests along -X instead of +X, so a rotation
+// that lowered an arm on the old VRM 1.0 model raises it here. Measured, not
+// assumed — with every other bone identical, z=-1.3 on the upper arm puts the
+// hand at y=0.768 on the old model and y=1.655 on this one.
+let rigIsMirrored = false;
 
 function base64ToArrayBuffer(base64) {
   const binary = atob(base64);
@@ -222,6 +237,8 @@ loader.parse(
   (gltf) => {
     vrm = gltf.userData.vrm;
     VRMUtils.rotateVRM0(vrm); // no-op for VRM1 models, safe either way
+    modelYaw = vrm.scene.rotation.y;
+    rigIsMirrored = modelYaw !== 0;
     vrm.scene.traverse((obj) => {
       if (obj.isMesh) {
         obj.castShadow = true;
@@ -244,6 +261,11 @@ loader.parse(
       'rightMiddleProximal', 'rightMiddleIntermediate', 'rightMiddleDistal',
       'rightRingProximal', 'rightRingIntermediate', 'rightRingDistal',
       'rightLittleProximal', 'rightLittleIntermediate', 'rightLittleDistal',
+      'leftThumbMetacarpal', 'leftThumbProximal', 'leftThumbDistal',
+      'leftIndexProximal', 'leftIndexIntermediate', 'leftIndexDistal',
+      'leftMiddleProximal', 'leftMiddleIntermediate', 'leftMiddleDistal',
+      'leftRingProximal', 'leftRingIntermediate', 'leftRingDistal',
+      'leftLittleProximal', 'leftLittleIntermediate', 'leftLittleDistal',
     ];
     for (const name of names) {
       bones[name] = vrm.humanoid.getNormalizedBoneNode(name);
@@ -296,6 +318,41 @@ function updateCamera() {
 // every other pose layered on top of it.
 const ARM_DOWN_Z = -1.3;
 
+// Both hands' finger bones, so resetLimbs can clear them in one pass. Held as
+// a list rather than written out per bone because the double peace needs the
+// left hand cleared on exactly the same terms the right already was.
+const FINGER_BONES = [];
+for (const side of ['left', 'right']) {
+  for (const finger of ['Thumb', 'Index', 'Middle', 'Ring', 'Little']) {
+    const segments = finger === 'Thumb'
+      ? ['Metacarpal', 'Proximal', 'Distal']
+      : ['Proximal', 'Intermediate', 'Distal'];
+    for (const segment of segments) FINGER_BONES.push(side + finger + segment);
+  }
+}
+
+// How far the folded fingers curl. The axis (Y) was found by isolating one
+// bone at a time and reading whether the fingertip stayed visible from a
+// palm-facing camera or vanished behind the palm — confirmed on the little
+// finger alone, then on the ring finger and thumb together, before being
+// trusted. The left hand mirrors it with a negated angle.
+const FINGER_CURL = 0.9;
+
+// The three fingers a peace sign folds away, per side. Index and middle stay
+// at their already-open rest pose, which is what makes the V read.
+function curlSpareFingers(side, amount) {
+  for (const finger of ['Ring', 'Little']) {
+    for (const segment of ['Proximal', 'Intermediate', 'Distal']) {
+      const bone = bones[side + finger + segment];
+      if (bone) bone.rotation.set(0, amount, 0);
+    }
+  }
+  for (const segment of ['Proximal', 'Distal']) {
+    const bone = bones[side + 'Thumb' + segment];
+    if (bone) bone.rotation.set(0, amount, 0);
+  }
+}
+
 let walkCycle = 0;
 let actionCycle = 0;
 let prevAction = 'idle';
@@ -316,22 +373,11 @@ function resetLimbs() {
   bones.rightFoot.rotation.set(0, 0, 0);
   // The rest pose for these fingers is already a natural relaxed-open hand
   // (confirmed in a screenshot) — zeroing them here is what makes it safe
-  // for applyPeace to only touch the fingers it needs to curl.
-  bones.rightThumbMetacarpal.rotation.set(0, 0, 0);
-  bones.rightThumbProximal.rotation.set(0, 0, 0);
-  bones.rightThumbDistal.rotation.set(0, 0, 0);
-  bones.rightIndexProximal.rotation.set(0, 0, 0);
-  bones.rightIndexIntermediate.rotation.set(0, 0, 0);
-  bones.rightIndexDistal.rotation.set(0, 0, 0);
-  bones.rightMiddleProximal.rotation.set(0, 0, 0);
-  bones.rightMiddleIntermediate.rotation.set(0, 0, 0);
-  bones.rightMiddleDistal.rotation.set(0, 0, 0);
-  bones.rightRingProximal.rotation.set(0, 0, 0);
-  bones.rightRingIntermediate.rotation.set(0, 0, 0);
-  bones.rightRingDistal.rotation.set(0, 0, 0);
-  bones.rightLittleProximal.rotation.set(0, 0, 0);
-  bones.rightLittleIntermediate.rotation.set(0, 0, 0);
-  bones.rightLittleDistal.rotation.set(0, 0, 0);
+  // for the peace poses to only touch the fingers they need to curl.
+  for (const name of FINGER_BONES) {
+    const bone = bones[name];
+    if (bone) bone.rotation.set(0, 0, 0);
+  }
   bones.hips.position.set(0, hipsBaseY, 0);
   bones.hips.rotation.set(0, 0, 0);
   bones.chest.rotation.set(0, 0, 0);
@@ -412,27 +458,46 @@ function applyPeace(dt) {
   actionCycle += dt * 1.2;
   // Reuses the wave's verified raised-arm formula (elbow below shoulder,
   // palm rolled to face the viewer via the hand's local X) — same shoulder
-  // height reads fine for a held-up peace sign, just without the wrist
-  // swing. The finger curl axis (Y) was found by isolating one bone at a
-  // time and reading whether the fingertip stayed visible from a
-  // palm-facing camera or vanished behind the palm — confirmed on both the
-  // little finger alone and then the ring finger + thumb together before
-  // trusting it. Index and middle are left at their already-open rest pose.
+  // height reads fine for a held-up peace sign, just without the wrist swing.
   bones.rightUpperArm.rotation.set(-1.8, -0.4, -0.5);
   bones.rightLowerArm.rotation.set(0.1, 1.7, 0);
   bones.rightHand.rotation.set(-1.0, 0, 0);
-  bones.rightRingProximal.rotation.set(0, 0.9, 0);
-  bones.rightRingIntermediate.rotation.set(0, 0.9, 0);
-  bones.rightRingDistal.rotation.set(0, 0.9, 0);
-  bones.rightLittleProximal.rotation.set(0, 0.9, 0);
-  bones.rightLittleIntermediate.rotation.set(0, 0.9, 0);
-  bones.rightLittleDistal.rotation.set(0, 0.9, 0);
-  bones.rightThumbProximal.rotation.set(0, 0.9, 0);
-  bones.rightThumbDistal.rotation.set(0, 0.9, 0);
+  curlSpareFingers('right', FINGER_CURL);
   bones.chest.rotation.y = -0.05;
   bones.head.rotation.y = -0.06;
   bones.head.rotation.x = Math.sin(actionCycle * 0.6) * 0.015; // subtle breathing, not a stiff freeze
   setAnimName('peace');
+}
+
+// Both hands up beside the face, the way you'd actually hold a double peace
+// for a photo, rather than the single sign's shoulder-height hold. Getting the
+// hands next to the cheeks is mostly the elbow: a near-full fold (Y=2.3) is
+// what carries the hand up past the jaw, while the shoulder angle only decides
+// how wide the elbows sit. Tuned against the bones rather than by eye — see
+// tools/measure_pose.js, which prints each hand's world position relative to
+// the head so "beside the face" is a number and not a guess.
+const DOUBLE_PEACE_SHOULDER_X = -1.45;
+const DOUBLE_PEACE_SHOULDER_Y = -0.35;
+const DOUBLE_PEACE_SHOULDER_Z = -0.62;
+const DOUBLE_PEACE_ELBOW = 2.3;
+
+function applyDoublePeace(dt) {
+  actionCycle += dt * 1.2;
+  bones.rightUpperArm.rotation.set(DOUBLE_PEACE_SHOULDER_X, DOUBLE_PEACE_SHOULDER_Y, DOUBLE_PEACE_SHOULDER_Z);
+  bones.leftUpperArm.rotation.set(DOUBLE_PEACE_SHOULDER_X, -DOUBLE_PEACE_SHOULDER_Y, -DOUBLE_PEACE_SHOULDER_Z);
+  bones.rightLowerArm.rotation.set(0.1, DOUBLE_PEACE_ELBOW, 0);
+  bones.leftLowerArm.rotation.set(0.1, -DOUBLE_PEACE_ELBOW, 0);
+  // Same palm-forward twist as the single sign, mirrored on the left.
+  bones.rightHand.rotation.set(-1.0, 0, 0);
+  bones.leftHand.rotation.set(-1.0, 0, 0);
+  curlSpareFingers('right', FINGER_CURL);
+  curlSpareFingers('left', -FINGER_CURL);
+  // A small head tilt — the pose is a photo pose, and a dead-level head makes
+  // it read as a shrug instead.
+  bones.head.rotation.z = 0.12;
+  bones.head.rotation.x = 0.05 + Math.sin(actionCycle * 0.6) * 0.015;
+  bones.chest.rotation.x = 0.03;
+  setAnimName('double-peace');
 }
 
 function applyCrouch(dt) {
@@ -553,6 +618,77 @@ function applyLanding() {
   setAnimName('jump');
 }
 
+// Re-express the pose the animation functions just wrote so it means the same
+// thing on a mirrored (VRM 0.x) rig.
+//
+// The mirror is a half-turn about Y, and conjugating a rotation by a half-turn
+// about Y negates exactly its X and Z components — for XYZ-order Euler angles
+// that is precisely Euler(-x, y, -z), so this pass is exact rather than an
+// approximation. Doing it here, once, in one place, is what lets every pose
+// above keep the angles they were measured and tuned with.
+function conformPoseToRig() {
+  if (!rigIsMirrored) return;
+  for (const name in bones) {
+    const bone = bones[name];
+    if (!bone) continue;
+    bone.rotation.x = -bone.rotation.x;
+    bone.rotation.z = -bone.rotation.z;
+  }
+  bones.hips.position.x = -bones.hips.position.x;
+  bones.hips.position.z = -bones.hips.position.z;
+}
+
+// ---- Face ----
+// Which smile each action wears. Two different ones, because the model's
+// 'happy' preset squeezes the eyes shut into a ^^ well before full weight —
+// perfect for a held photo pose, wrong for the jump, where she is moving and
+// a face with no eyes reads as a wince. 'relaxed' is the open-eyed smile.
+const FACE_BY_ACTION = {
+  peace: { happy: 0.9 },
+  'double-peace': { happy: 1.0 },
+  jump: { relaxed: 0.85 },
+};
+const SMILE_EASE = 9;        // per second; ~0.15s to settle
+const BLINK_DURATION = 0.13;
+const BLINK_MIN_GAP = 2.4;
+const BLINK_MAX_GAP = 6.0;
+
+const smile = { happy: 0, relaxed: 0 };
+let blinkCountdown = BLINK_MIN_GAP;
+let blinkElapsed = BLINK_DURATION;
+
+function applyFace(dt, action) {
+  const expressions = vrm.expressionManager;
+  if (!expressions) return;
+
+  // Eased rather than assigned outright: snapping an expression to full on a
+  // keypress reads as a mask being swapped in, where a short ramp reads as her
+  // reacting to what she's doing.
+  const wanted = FACE_BY_ACTION[action] || {};
+  for (const name in smile) {
+    smile[name] += ((wanted[name] || 0) - smile[name]) * Math.min(1, dt * SMILE_EASE);
+    expressions.setValue(name, smile[name]);
+  }
+
+  blinkCountdown -= dt;
+  if (blinkCountdown <= 0) {
+    blinkCountdown = BLINK_MIN_GAP + Math.random() * (BLINK_MAX_GAP - BLINK_MIN_GAP);
+    blinkElapsed = 0;
+  }
+  let lids = 0;
+  if (blinkElapsed < BLINK_DURATION) {
+    blinkElapsed += dt;
+    // Shuts faster than it opens, which is what a real blink does; a symmetric
+    // triangle reads as a slow deliberate wink.
+    const p = Math.min(1, blinkElapsed / BLINK_DURATION);
+    lids = p < 0.35 ? p / 0.35 : 1 - (p - 0.35) / 0.65;
+  }
+  // Scaled against 'happy' only — that is the one that already closes the
+  // eyes, and without this the two fight over the lids and pop as the smile
+  // eases back out. 'relaxed' leaves the eyes open, so it still blinks.
+  expressions.setValue('blink', Math.max(0, lids) * (1 - smile.happy));
+}
+
 const clock = new THREE.Clock();
 
 function step(dt) {
@@ -573,7 +709,11 @@ function step(dt) {
   // whether WASD happens to also be held.
   const action = airborne || landingRecoverT > 0 ? 'jump'
     : moving ? (running ? 'run' : 'walk')
-    : keys.wave ? 'wave' : keys.crouch ? 'crouch' : keys.peace ? 'peace' : 'idle';
+    : keys.wave ? 'wave'
+    : keys.crouch ? 'crouch'
+    : keys.doublePeace ? 'double-peace'
+    : keys.peace ? 'peace'
+    : 'idle';
 
   if (action !== prevAction) {
     actionCycle = 0;
@@ -588,7 +728,7 @@ function step(dt) {
   if (moving) {
     state.heading = Math.atan2(moveX, moveZ);
     facing = state.heading;
-    vrm.scene.rotation.y = state.heading;
+    vrm.scene.rotation.y = state.heading + modelYaw;
 
     const speed = running ? RUN_SPEED : MOVE_SPEED;
     const dir = new THREE.Vector3(Math.sin(state.heading), 0, Math.cos(state.heading));
@@ -619,6 +759,8 @@ function step(dt) {
     applyWave(dt);
   } else if (keys.crouch) {
     applyCrouch(dt);
+  } else if (keys.doublePeace) {
+    applyDoublePeace(dt);
   } else if (keys.peace) {
     applyPeace(dt);
   } else {
@@ -631,20 +773,28 @@ function step(dt) {
       let delta = targetFacing - facing;
       delta = Math.atan2(Math.sin(delta), Math.cos(delta)); // shortest-path wrap
       facing += delta * Math.min(1, dt * 3.0);
-      vrm.scene.rotation.y = facing;
+      vrm.scene.rotation.y = facing + modelYaw;
       state.heading = facing;
     }
     applyIdle(dt);
   }
 
+  conformPoseToRig();
+  applyFace(dt, action);
+
   vrm.update(dt);
   updateCamera();
 }
 
+// Set by the test hooks so a screenshot can catch a moment that the real-time
+// loop would otherwise have run straight past — the apex of a jump lasts about
+// one frame, and the rAF loop lands her before the screenshot is taken.
+let paused = false;
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1);
-  step(dt);
+  if (!paused) step(dt);
   renderer.render(scene, camera);
 }
 animate();
@@ -661,7 +811,29 @@ window.__char = {
     animName: state.animName,
     position: { x: state.position.x, y: state.position.y, z: state.position.z },
     heading: state.heading,
+    smile: Math.max(smile.happy, smile.relaxed),
   }),
+  // Expression names the loaded model actually exposes — the previous model
+  // shipped with this list empty, which is the bug that hid the missing
+  // morph targets, so the tests assert on it now.
+  getExpressions: () => (vrm && vrm.expressionManager
+    ? vrm.expressionManager.expressions.map((e) => e.expressionName)
+    : []),
+  // World position of a humanoid bone, for poses that have to be checked
+  // against real distances rather than eyeballed from a screenshot.
+  //
+  // Deliberately the *raw* bone, not the normalized one the pose code writes
+  // to. The normalized rig is a rotation-only reference skeleton whose limb
+  // segments do not carry the model's real bone lengths, so measuring it
+  // reports every pose as putting the hand the same distance from the head —
+  // which is exactly the wrong answer, and a confident-looking one.
+  getBoneWorld: (name) => {
+    const bone = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode(name) : null;
+    if (!bone) return null;
+    bone.updateWorldMatrix(true, false);
+    const v = new THREE.Vector3().setFromMatrixPosition(bone.matrixWorld);
+    return { x: v.x, y: v.y, z: v.z };
+  },
   moveForTest: (direction, durationMs, run = false) => {
     const dirKeys = { forward: false, back: false, left: false, right: false };
     if (direction === 'forward') dirKeys.forward = true;
@@ -684,6 +856,7 @@ window.__char = {
     keys.wave = name === 'wave';
     keys.crouch = name === 'crouch';
     keys.peace = name === 'peace';
+    keys.doublePeace = name === 'double-peace';
     const stepMs = 16;
     let elapsed = 0;
     while (elapsed < durationMs) {
@@ -693,8 +866,38 @@ window.__char = {
     keys.wave = false;
     keys.crouch = false;
     keys.peace = false;
+    keys.doublePeace = false;
     step(0.001);
     return window.__char.getState();
+  },
+  // Like triggerActionForTest but leaves the pose held, so a caller can
+  // measure it. triggerActionForTest releases the keys and steps once more
+  // before returning, which lands the rig back in idle — measuring after it
+  // silently reports the idle pose for every action.
+  holdActionForTest: (name, durationMs) => {
+    keys.wave = name === 'wave';
+    keys.crouch = name === 'crouch';
+    keys.peace = name === 'peace';
+    keys.doublePeace = name === 'double-peace';
+    const stepMs = 16;
+    let elapsed = 0;
+    while (elapsed < durationMs) {
+      step(stepMs / 1000);
+      elapsed += stepMs;
+    }
+    return window.__char.getState();
+  },
+  releaseActionsForTest: () => {
+    keys.wave = keys.crouch = keys.peace = keys.doublePeace = false;
+    step(0.001);
+  },
+  setPausedForTest: (on) => { paused = on; },
+  // Park the camera for a screenshot. Goes through OrbitControls' target
+  // rather than camera.lookAt so the next controls.update() doesn't undo it.
+  setCameraForTest: (position, target) => {
+    camera.position.set(position.x, position.y, position.z);
+    controls.target.set(target.x, target.y, target.z);
+    controls.update();
   },
   jumpForTest: (durationMs) => {
     startJump();
