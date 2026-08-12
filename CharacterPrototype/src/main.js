@@ -140,7 +140,31 @@ function startJump() {
   velocityY = JUMP_VELOCITY;
 }
 
+// Held expression keys on the number row. Ordered by how often you'd reach
+// for one rather than by the model's own ordering. 'Surprised' and 'Extra'
+// are this model's two non-preset expressions — Extra draws a >_< over the
+// eyes — so they are addressed by their exact authored names, and setValue
+// ignores a name the model does not have.
+const FACE_KEYS = {
+  Digit1: 'happy',
+  Digit2: 'relaxed',
+  Digit3: 'Surprised',
+  Digit4: 'angry',
+  Digit5: 'sad',
+  Digit6: 'Extra',
+};
+let heldExpression = null;
+
 function onKey(e, down) {
+  const expression = FACE_KEYS[e.code];
+  if (expression) {
+    // Only clear on the release of the key that set it, so rolling from one
+    // expression key to the next doesn't blank the face when the first lifts.
+    if (down) heldExpression = expression;
+    else if (heldExpression === expression) heldExpression = null;
+    return;
+  }
+
   switch (e.code) {
     case 'KeyW':
     case 'ArrowUp':
@@ -713,13 +737,25 @@ const FACE_BY_ACTION = {
   peace: { happy: 0.9 },
   'double-peace': { happy: 1.0 },
   jump: { relaxed: 0.85 },
+  wave: { relaxed: 0.75 },
 };
-const SMILE_EASE = 9;        // per second; ~0.15s to settle
+
+// Every expression this file drives. Anything not listed here is left alone,
+// so the visemes stay available for whatever wants them later.
+const MANAGED_EXPRESSIONS = ['happy', 'relaxed', 'Surprised', 'angry', 'sad', 'Extra'];
+// The ones that draw their own eyes, and so must not have a blink stacked on
+// top: 'happy' squeezes them shut, 'Extra' replaces them with a drawn >_<, and
+// 'Surprised' holds them wide. Blinking through any of those fights the morph
+// and pops as the expression eases out.
+const EYE_OWNING_EXPRESSIONS = ['happy', 'Extra', 'Surprised'];
+
+const FACE_EASE = 9;         // per second; ~0.15s to settle
 const BLINK_DURATION = 0.13;
 const BLINK_MIN_GAP = 2.4;
 const BLINK_MAX_GAP = 6.0;
 
-const smile = { happy: 0, relaxed: 0 };
+const faceWeights = {};
+for (const name of MANAGED_EXPRESSIONS) faceWeights[name] = 0;
 let blinkCountdown = BLINK_MIN_GAP;
 let blinkElapsed = BLINK_DURATION;
 
@@ -727,13 +763,18 @@ function applyFace(dt, action) {
   const expressions = vrm.expressionManager;
   if (!expressions) return;
 
+  // A held expression key wins over whatever the current pose would wear, so
+  // you can pull a face mid-run or scowl through a peace sign.
+  const wanted = heldExpression ? { [heldExpression]: 1 } : (FACE_BY_ACTION[action] || {});
+
   // Eased rather than assigned outright: snapping an expression to full on a
   // keypress reads as a mask being swapped in, where a short ramp reads as her
   // reacting to what she's doing.
-  const wanted = FACE_BY_ACTION[action] || {};
-  for (const name in smile) {
-    smile[name] += ((wanted[name] || 0) - smile[name]) * Math.min(1, dt * SMILE_EASE);
-    expressions.setValue(name, smile[name]);
+  let eyesOwned = 0;
+  for (const name of MANAGED_EXPRESSIONS) {
+    faceWeights[name] += ((wanted[name] || 0) - faceWeights[name]) * Math.min(1, dt * FACE_EASE);
+    expressions.setValue(name, faceWeights[name]);
+    if (EYE_OWNING_EXPRESSIONS.includes(name)) eyesOwned = Math.max(eyesOwned, faceWeights[name]);
   }
 
   blinkCountdown -= dt;
@@ -749,10 +790,7 @@ function applyFace(dt, action) {
     const p = Math.min(1, blinkElapsed / BLINK_DURATION);
     lids = p < 0.35 ? p / 0.35 : 1 - (p - 0.35) / 0.65;
   }
-  // Scaled against 'happy' only — that is the one that already closes the
-  // eyes, and without this the two fight over the lids and pop as the smile
-  // eases back out. 'relaxed' leaves the eyes open, so it still blinks.
-  expressions.setValue('blink', Math.max(0, lids) * (1 - smile.happy));
+  expressions.setValue('blink', Math.max(0, lids) * (1 - eyesOwned));
 }
 
 const clock = new THREE.Clock();
@@ -878,7 +916,13 @@ window.__char = {
     animName: state.animName,
     position: { x: state.position.x, y: state.position.y, z: state.position.z },
     heading: state.heading,
-    smile: Math.max(smile.happy, smile.relaxed),
+    smile: Math.max(faceWeights.happy, faceWeights.relaxed),
+    // Whichever managed expression is currently strongest, and how far it has
+    // eased in — the pair a test needs to say "she is wearing this face".
+    expression: MANAGED_EXPRESSIONS.reduce(
+      (best, name) => (faceWeights[name] > faceWeights[best] ? name : best), MANAGED_EXPRESSIONS[0]
+    ),
+    expressionWeight: Math.max(...MANAGED_EXPRESSIONS.map((name) => faceWeights[name])),
     gazeAngle,
     gazeWeight,
   }),

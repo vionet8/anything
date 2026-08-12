@@ -232,6 +232,78 @@ test('the character faces the way she walks', async ({ page }) => {
   expect(measured.left.x).toBeGreaterThan(measured.right.x);
 });
 
+test('each expression key puts on its own expression', async ({ page }) => {
+  const bindings = [
+    ['Digit1', 'happy'], ['Digit2', 'relaxed'], ['Digit3', 'Surprised'],
+    ['Digit4', 'angry'], ['Digit5', 'sad'], ['Digit6', 'Extra'],
+  ];
+  for (const [key, expression] of bindings) {
+    await page.keyboard.down(key);
+    await page.waitForTimeout(400);
+    const state = await page.evaluate(() => window.__char.getState());
+    await page.keyboard.up(key);
+    await page.waitForTimeout(300);
+
+    expect(state.expression, `${key}`).toBe(expression);
+    expect(state.expressionWeight, `${key} weight`).toBeGreaterThan(0.9);
+  }
+});
+
+test('releasing an expression key returns her face to rest', async ({ page }) => {
+  await page.keyboard.down('Digit4');
+  await page.waitForTimeout(400);
+  await page.keyboard.up('Digit4');
+  await page.waitForTimeout(600);
+
+  const state = await page.evaluate(() => window.__char.getState());
+  expect(state.expressionWeight).toBeLessThan(0.05);
+});
+
+test('a held expression key overrides the expression the pose would wear', async ({ page }) => {
+  await page.keyboard.down('KeyV'); // peace, which on its own smiles
+  await page.waitForTimeout(400);
+  const smiling = await page.evaluate(() => window.__char.getState());
+
+  await page.keyboard.down('Digit4'); // scowl through it
+  await page.waitForTimeout(400);
+  const scowling = await page.evaluate(() => window.__char.getState());
+
+  await page.keyboard.up('Digit4');
+  await page.keyboard.up('KeyV');
+
+  expect(smiling.expression).toBe('happy');
+  expect(scowling.animName).toBe('peace'); // still holding the pose
+  expect(scowling.expression).toBe('angry');
+  expect(scowling.expressionWeight).toBeGreaterThan(0.9);
+});
+
+test('rolling from one expression key to the next does not blank her face', async ({ page }) => {
+  // Press the second before releasing the first, then release the first. The
+  // naive "any keyup clears it" version drops back to neutral here.
+  await page.keyboard.down('Digit1');
+  await page.waitForTimeout(300);
+  await page.keyboard.down('Digit5');
+  await page.waitForTimeout(100);
+  await page.keyboard.up('Digit1');
+  await page.waitForTimeout(400);
+
+  const state = await page.evaluate(() => window.__char.getState());
+  await page.keyboard.up('Digit5');
+
+  expect(state.expression).toBe('sad');
+  expect(state.expressionWeight).toBeGreaterThan(0.9);
+});
+
+test('waving wears a smile of its own', async ({ page }) => {
+  const smile = await page.evaluate(() => {
+    window.__char.holdActionForTest('wave', 500);
+    const value = window.__char.getState().smile;
+    window.__char.releaseActionsForTest();
+    return value;
+  });
+  expect(smile).toBeGreaterThan(0.6);
+});
+
 // Gaze is measured while a pose is held, because a held pose leaves her body
 // heading alone — in idle she turns to face the camera, which would hide any
 // tracking behind the body turn. 'wave' is used rather than a peace pose

@@ -31901,7 +31901,22 @@ void main() {
     airborne = true;
     velocityY = JUMP_VELOCITY;
   }
+  var FACE_KEYS = {
+    Digit1: "happy",
+    Digit2: "relaxed",
+    Digit3: "Surprised",
+    Digit4: "angry",
+    Digit5: "sad",
+    Digit6: "Extra"
+  };
+  var heldExpression = null;
   function onKey(e, down) {
+    const expression = FACE_KEYS[e.code];
+    if (expression) {
+      if (down) heldExpression = expression;
+      else if (heldExpression === expression) heldExpression = null;
+      return;
+    }
     switch (e.code) {
       case "KeyW":
       case "ArrowUp":
@@ -32303,22 +32318,28 @@ void main() {
   var FACE_BY_ACTION = {
     peace: { happy: 0.9 },
     "double-peace": { happy: 1 },
-    jump: { relaxed: 0.85 }
+    jump: { relaxed: 0.85 },
+    wave: { relaxed: 0.75 }
   };
-  var SMILE_EASE = 9;
+  var MANAGED_EXPRESSIONS = ["happy", "relaxed", "Surprised", "angry", "sad", "Extra"];
+  var EYE_OWNING_EXPRESSIONS = ["happy", "Extra", "Surprised"];
+  var FACE_EASE = 9;
   var BLINK_DURATION = 0.13;
   var BLINK_MIN_GAP = 2.4;
   var BLINK_MAX_GAP = 6;
-  var smile = { happy: 0, relaxed: 0 };
+  var faceWeights = {};
+  for (const name of MANAGED_EXPRESSIONS) faceWeights[name] = 0;
   var blinkCountdown = BLINK_MIN_GAP;
   var blinkElapsed = BLINK_DURATION;
   function applyFace(dt, action) {
     const expressions = vrm.expressionManager;
     if (!expressions) return;
-    const wanted = FACE_BY_ACTION[action] || {};
-    for (const name in smile) {
-      smile[name] += ((wanted[name] || 0) - smile[name]) * Math.min(1, dt * SMILE_EASE);
-      expressions.setValue(name, smile[name]);
+    const wanted = heldExpression ? { [heldExpression]: 1 } : FACE_BY_ACTION[action] || {};
+    let eyesOwned = 0;
+    for (const name of MANAGED_EXPRESSIONS) {
+      faceWeights[name] += ((wanted[name] || 0) - faceWeights[name]) * Math.min(1, dt * FACE_EASE);
+      expressions.setValue(name, faceWeights[name]);
+      if (EYE_OWNING_EXPRESSIONS.includes(name)) eyesOwned = Math.max(eyesOwned, faceWeights[name]);
     }
     blinkCountdown -= dt;
     if (blinkCountdown <= 0) {
@@ -32331,7 +32352,7 @@ void main() {
       const p = Math.min(1, blinkElapsed / BLINK_DURATION);
       lids = p < 0.35 ? p / 0.35 : 1 - (p - 0.35) / 0.65;
     }
-    expressions.setValue("blink", Math.max(0, lids) * (1 - smile.happy));
+    expressions.setValue("blink", Math.max(0, lids) * (1 - eyesOwned));
   }
   var clock = new Clock();
   function step(dt) {
@@ -32422,7 +32443,14 @@ void main() {
       animName: state.animName,
       position: { x: state.position.x, y: state.position.y, z: state.position.z },
       heading: state.heading,
-      smile: Math.max(smile.happy, smile.relaxed),
+      smile: Math.max(faceWeights.happy, faceWeights.relaxed),
+      // Whichever managed expression is currently strongest, and how far it has
+      // eased in — the pair a test needs to say "she is wearing this face".
+      expression: MANAGED_EXPRESSIONS.reduce(
+        (best, name) => faceWeights[name] > faceWeights[best] ? name : best,
+        MANAGED_EXPRESSIONS[0]
+      ),
+      expressionWeight: Math.max(...MANAGED_EXPRESSIONS.map((name) => faceWeights[name])),
       gazeAngle,
       gazeWeight
     }),
