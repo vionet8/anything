@@ -242,7 +242,54 @@ let modelYaw = 0;
 // hand at y=0.768 on the old model and y=1.655 on this one.
 let rigIsMirrored = false;
 
+// three.js loads a GLB's embedded textures by wrapping each one in a Blob,
+// minting a blob: URL for it and fetching that URL. The published artifact runs
+// under a strict Content-Security-Policy that refuses the connection, and
+// GLTFLoader's image path ends in `.catch(() => null)` — so the failure is
+// silent and every material falls back to untextured white. It looks like the
+// model loaded fine and lost all its colour, which is exactly what it did.
+//
+// Decoding straight from the Blob avoids the whole question: createImageBitmap
+// given a Blob object loads no URL, so no CSP directive is involved. The decode
+// options mirror three's own ImageBitmapLoader so the pixels are identical to
+// what the rest of the loader expects.
+function cspSafeTextures(parser) {
+  const proto = Object.getPrototypeOf(parser);
+  if (!proto.__cspSafeTextures && typeof createImageBitmap !== 'undefined') {
+    proto.__cspSafeTextures = true;
+    const original = proto.loadImageSource;
+
+    proto.loadImageSource = function (sourceIndex, imageLoader) {
+      const sourceDef = this.json.images[sourceIndex];
+      // Images referenced by URI still go the normal route; only the embedded
+      // ones need rescuing.
+      if (sourceDef.bufferView === undefined) {
+        return original.call(this, sourceIndex, imageLoader);
+      }
+      if (this.sourceCache[sourceIndex] !== undefined) {
+        return this.sourceCache[sourceIndex].then((texture) => texture.clone());
+      }
+
+      const promise = this.getDependency('bufferView', sourceDef.bufferView)
+        .then((bufferView) => createImageBitmap(
+          new Blob([bufferView], { type: sourceDef.mimeType }),
+          { premultiplyAlpha: 'none', colorSpaceConversion: 'none' }
+        ))
+        .then((bitmap) => {
+          const texture = new THREE.Texture(bitmap);
+          texture.needsUpdate = true;
+          return texture;
+        });
+
+      this.sourceCache[sourceIndex] = promise;
+      return promise;
+    };
+  }
+  return { name: 'CSPSafeTextures' };
+}
+
 const loader = new GLTFLoader();
+loader.register(cspSafeTextures);
 loader.register((parser) => new VRMLoaderPlugin(parser));
 
 loader.load(

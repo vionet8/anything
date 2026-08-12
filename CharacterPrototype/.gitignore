@@ -2,3 +2,4 @@ node_modules/
 test-results/
 playwright-report/
 assets/source/
+tools/__pycache__/

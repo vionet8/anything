@@ -31988,6 +31988,33 @@ void main() {
   var hipsBaseY = 0;
   var modelYaw = 0;
   var rigIsMirrored = false;
+  function cspSafeTextures(parser) {
+    const proto = Object.getPrototypeOf(parser);
+    if (!proto.__cspSafeTextures && typeof createImageBitmap !== "undefined") {
+      proto.__cspSafeTextures = true;
+      const original = proto.loadImageSource;
+      proto.loadImageSource = function(sourceIndex, imageLoader) {
+        const sourceDef = this.json.images[sourceIndex];
+        if (sourceDef.bufferView === void 0) {
+          return original.call(this, sourceIndex, imageLoader);
+        }
+        if (this.sourceCache[sourceIndex] !== void 0) {
+          return this.sourceCache[sourceIndex].then((texture) => texture.clone());
+        }
+        const promise = this.getDependency("bufferView", sourceDef.bufferView).then((bufferView) => createImageBitmap(
+          new Blob([bufferView], { type: sourceDef.mimeType }),
+          { premultiplyAlpha: "none", colorSpaceConversion: "none" }
+        )).then((bitmap) => {
+          const texture = new Texture(bitmap);
+          texture.needsUpdate = true;
+          return texture;
+        });
+        this.sourceCache[sourceIndex] = promise;
+        return promise;
+      };
+    }
+    return { name: "CSPSafeTextures" };
+  }
   function base64ToArrayBuffer(base64) {
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
@@ -31995,6 +32022,7 @@ void main() {
     return bytes.buffer;
   }
   var loader = new GLTFLoader();
+  loader.register(cspSafeTextures);
   loader.register((parser) => new VRMLoaderPlugin(parser));
   var modelBuffer = base64ToArrayBuffer(window.__MODEL_BASE64__);
   loader.parse(

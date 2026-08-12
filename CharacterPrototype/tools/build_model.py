@@ -9,12 +9,10 @@ recipe, in a form that can be re-run and audited.
 
 What it does, in order:
 
-  1. Ports the recoloured hair textures across from the previous model. The two
-     files come from different VRoid Studio versions (F00_* vs N00_* asset
-     names, 2054 vs 4709 face vertices), so geometry cannot be shared -- but
-     the hair materials correspond one-to-one by name suffix (HAIR_01..HAIR_06)
-     and share a UV layout, so the textures transfer exactly. That is the whole
-     of the "recolour" that the previous model carried: the outfit is stock.
+  1. Recolours her: hair to blue, skin lighter. Done here as a transform of the
+     upstream textures rather than by carrying edited images around, so the
+     build stays reproducible from the upstream file alone and re-running it
+     lands on the same colours instead of shifting them further each time.
   2. Drops the 2MB embedded thumbnail, which nothing renders.
   3. Keeps only the morph targets the VRM expression list actually binds (16 of
      56). This is the step that used to throw away all 56.
@@ -24,12 +22,14 @@ What it does, in order:
 Usage:  python3 tools/build_model.py
 """
 
+import colorsys
 import io
 import json
 import os
 import struct
 import sys
 
+import numpy as np
 from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -48,6 +48,53 @@ JPEG_QUALITY = 88
 UPSTREAM_URL = (
     "https://raw.githubusercontent.com/madjin/vrm-samples/master/vroid/stable/AvatarSample_B.vrm"
 )
+
+# --- Recolour ---------------------------------------------------------------
+# Hair: hue is *set*, not rotated, so the result is the same blue no matter what
+# the upstream hair happened to be. Upstream is purple with a teal streak; a
+# relative rotation would land those two on different hues and keep the streak
+# reading as a separate colour.
+HAIR_HUE = 0.60           # ~216 degrees, a clear blue rather than indigo
+HAIR_SATURATION = 1.15    # slight lift; the stock hair is muted
+HAIR_LIGHTEN = 0.20       # the stock hair is nearly black, which reads as navy
+# Which pixels count as hair. Selected by hue, not by saturation: the hair maps
+# also carry the cream X clips and the star clips, and those overlap the hair's
+# own saturation range completely, so a saturation cutoff either recoloured the
+# clips or left the pale lavender fringe highlights behind -- both were tried.
+# By hue the two separate cleanly. Measured over the six hair maps: the hair
+# occupies 170-353 degrees (teal through purple to magenta, 1.6M pixels) and
+# the clips sit at 0-56 degrees, with essentially nothing in between.
+HAIR_HUE_MIN = 115 / 255.0
+HAIR_HUE_MAX = 250 / 255.0
+# Only to skip true greys and whites, where hue is meaningless -- the white
+# streak keeps its colour this way.
+HAIR_MIN_SATURATION = 8 / 255.0
+
+# The warm pixels the hue mask deliberately skips are the hair clips, which
+# upstream are a strong red. The model this replaces carried pale cream clips,
+# and swapping them for red is not a change anyone asked for -- so pull most of
+# the colour out of them and leave them where they were.
+CLIP_DESATURATE = 0.78
+
+# Skin: lift toward white and pull a little of the tan out. The two act on
+# independent channels (value and saturation), so the blush and lips keep their
+# contrast against the skin rather than washing out with it.
+SKIN_LIGHTEN = 0.46       # fraction of the remaining headroom to white
+SKIN_DESATURATE = 0.30
+
+# Body_00 is not only skin: the black crop top, the shorts, the socks, the
+# choker and the thigh strap are all painted into the same map. Lifting the
+# whole image turned the black garments a washed-out olive, so the lift is
+# masked to pixels that actually look like skin -- warm hue, not near-black,
+# not near-grey. The garments fail one of those three and are left alone.
+SKIN_HUE_MAX = 30 / 255.0     # warm side of the wheel (reds through orange)
+SKIN_HUE_MIN = 235 / 255.0    # ...wrapping past red the other way
+SKIN_MIN_VALUE = 0.35
+SKIN_MIN_SATURATION = 0.08
+
+# Images recoloured as skin, by their upstream names. The normal and outline
+# maps alongside them carry no colour, so they are deliberately not listed.
+SKIN_IMAGES = ('F00_000_00_Face_00', 'F00_000_00_Body_00')
 
 
 def read_glb(path):
@@ -104,22 +151,48 @@ def hair_material_key(name):
     return stem[marker:] if marker >= 0 else None
 
 
-def current_hair_textures(path):
-    """Map HAIR_0n -> encoded base-colour image bytes from the previous model."""
-    js, binary = read_glb(path)
-    payloads = image_payloads(js, binary)
-    out = {}
-    for mat in js.get("materials", []):
-        key = hair_material_key(mat.get("name", ""))
-        if not key:
-            continue
-        tex = mat.get("pbrMetallicRoughness", {}).get("baseColorTexture")
-        if not tex:
-            continue
-        source = js["textures"][tex["index"]]["source"]
-        if source in payloads:
-            out[key] = payloads[source]
-    return out
+def _to_hsv(payload):
+    """Decode to (float HSV array, alpha channel) so hue/saturation are editable."""
+    image = Image.open(io.BytesIO(payload))
+    image.load()
+    image = image.convert("RGBA")
+    red, green, blue, alpha = image.split()
+    rgb = Image.merge("RGB", (red, green, blue))
+    return np.array(rgb.convert("HSV"), dtype=np.float32), alpha
+
+
+def _from_hsv(hsv, alpha):
+    out = Image.fromarray(np.clip(hsv, 0, 255).astype(np.uint8), "HSV").convert("RGB")
+    out.putalpha(alpha)
+    buffer = io.BytesIO()
+    out.save(buffer, "PNG")   # lossless here; the resize pass picks the final format
+    return buffer.getvalue()
+
+
+def recolour_hair(payload):
+    """Set the hair to one hue, leaving the clips and the white streak alone."""
+    hsv, alpha = _to_hsv(payload)
+    hue, saturation, value = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    is_hair = (
+        (hue >= HAIR_HUE_MIN * 255)
+        & (hue <= HAIR_HUE_MAX * 255)
+        & (saturation >= HAIR_MIN_SATURATION * 255)
+    )
+    hue[is_hair] = HAIR_HUE * 255
+    saturation[is_hair] *= HAIR_SATURATION
+    value[is_hair] += (255 - value[is_hair]) * HAIR_LIGHTEN
+    saturation[~is_hair] *= 1 - CLIP_DESATURATE
+    return _from_hsv(hsv, alpha)
+
+
+def lighten_skin(payload):
+    hsv, alpha = _to_hsv(payload)
+    hue, saturation, value = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    warm = (hue <= SKIN_HUE_MAX * 255) | (hue >= SKIN_HUE_MIN * 255)
+    skin = warm & (value >= SKIN_MIN_VALUE * 255) & (saturation >= SKIN_MIN_SATURATION * 255)
+    saturation[skin] *= 1 - SKIN_DESATURATE
+    value[skin] += (255 - value[skin]) * SKIN_LIGHTEN
+    return _from_hsv(hsv, alpha)
 
 
 def used_morph_targets(js):
@@ -330,12 +403,6 @@ def main():
     if not os.path.exists(source):
         fetch_source(source)
 
-    # Read the hair colours out of whatever girl.vrm is there now, before it
-    # gets overwritten. Re-running against an already-built model is a no-op
-    # for colour, since the output carries the ported textures too.
-    hair = current_hair_textures(target) if os.path.exists(target) else {}
-    print(f"recoloured hair textures found: {len(hair)}")
-
     js, binary = read_glb(source)
     before = os.path.getsize(source)
 
@@ -343,17 +410,29 @@ def main():
     kept = strip_morph_targets(js)
     print(f"morph targets kept: {kept}")
 
-    # Swap the hair colour maps over before the resize pass, so the ported
-    # textures get sized by the same policy as everything else.
+    # Recolour before the resize pass, so the recoloured maps go through the
+    # same sizing policy as everything else. Always driven off the upstream
+    # textures, so re-running the build lands on the same colours rather than
+    # shifting them further each time.
     payloads = image_payloads(js, binary)
+    names = {i: (img.get("name") or "") for i, img in enumerate(js.get("images", []))}
+
+    hair_images = set()
     for mat in js["extensions"]["VRM"].get("materialProperties", []):
-        key = hair_material_key(mat.get("name", ""))
-        if not key or key not in hair:
+        if not hair_material_key(mat.get("name", "")):
             continue
-        for slot in ("_MainTex", "_ShadeTexture"):
+        for slot in ("_MainTex", "_ShadeTexture", "_EmissionMap"):
             tex_index = (mat.get("textureProperties") or {}).get(slot)
             if tex_index is not None:
-                payloads[js["textures"][tex_index]["source"]] = hair[key]
+                hair_images.add(js["textures"][tex_index]["source"])
+    for i in hair_images:
+        payloads[i] = recolour_hair(payloads[i])
+    print(f"hair textures recoloured: {len(hair_images)}")
+
+    skin_images = [i for i, name in names.items() if name in SKIN_IMAGES]
+    for i in skin_images:
+        payloads[i] = lighten_skin(payloads[i])
+    print(f"skin textures lightened: {len(skin_images)}")
 
     aux = aux_image_indices(js)
     new_payloads = {}
