@@ -242,6 +242,37 @@ let modelYaw = 0;
 // hand at y=0.768 on the old model and y=1.655 on this one.
 let rigIsMirrored = false;
 
+// ---- Secondary motion (spring bones) ----
+// The model ships tuned for a VRoid viewer, where the avatar mostly stands
+// still. Under a character who walks, runs and jumps, two of the groups read
+// as over-energetic, and the numbers say why: the bust joints carry
+// dragForce 0.05, which is almost no damping at all, so every footfall feeds
+// a swing that never settles. In three-vrm's Verlet step, dragForce is the
+// fraction of inertia thrown away each frame, so raising it is what makes the
+// motion die down instead of building up.
+//
+// Adjusted per group by bone name, not globally: the skirt and the jacket
+// panels read fine as they are, and flattening everything would take the life
+// out of the model. Values live here rather than being baked into the .vrm so
+// they stay next to the animation they have to sit alongside.
+const SPRING_TUNING = [
+  { match: /Bust/, dragForce: 0.80, stiffness: 1.3 },
+  { match: /^HairJoint/, dragForce: 0.78 },
+];
+
+function calmSpringBones() {
+  if (!vrm || !vrm.springBoneManager) return 0;
+  let adjusted = 0;
+  for (const joint of vrm.springBoneManager.joints) {
+    const rule = SPRING_TUNING.find((entry) => entry.match.test(joint.bone.name));
+    if (!rule) continue;
+    if (rule.dragForce !== undefined) joint.settings.dragForce = rule.dragForce;
+    if (rule.stiffness !== undefined) joint.settings.stiffness = rule.stiffness;
+    adjusted++;
+  }
+  return adjusted;
+}
+
 // three.js loads a GLB's embedded textures by wrapping each one in a Blob,
 // minting a blob: URL for it and fetching that URL. The published artifact runs
 // under a strict Content-Security-Policy that refuses the connection, and
@@ -342,6 +373,8 @@ loader.load(
     // world position on every vrm.update(), so applyGaze only has to move it.
     if (vrm.lookAt) vrm.lookAt.target = gazeTarget;
 
+    calmSpringBones();
+
     state.ready = true;
     window.__char.ready = true;
   },
@@ -394,25 +427,37 @@ for (const side of ['left', 'right']) {
   }
 }
 
-// How far the folded fingers curl. The axis (Y) was found by isolating one
-// bone at a time and reading whether the fingertip stayed visible from a
-// palm-facing camera or vanished behind the palm — confirmed on the little
-// finger alone, then on the ring finger and thumb together, before being
-// trusted. The left hand mirrors it with a negated angle.
+// How far the folded fingers curl, about their own Y axis. Found by isolating
+// one bone at a time and reading whether the fingertip stayed visible from a
+// palm-facing camera or vanished behind the palm.
 const FINGER_CURL = 0.9;
 
-// The three fingers a peace sign folds away, per side. Index and middle stay
-// at their already-open rest pose, which is what makes the V read.
-function curlSpareFingers(side, amount) {
+// The thumb needs a different axis entirely, and using the fingers' Y for it
+// was a real bug: a thumb bone is rotated roughly a quarter turn relative to
+// the other fingers so it can oppose the palm, so Y swings it away from the
+// hand instead of folding it in. It came out as a long hooked digit jutting
+// out past the sleeve — "痛々しい", and fairly. Checked all three axes at both
+// signs from three angles: Z pushes it straight out sideways, Y swings it
+// away, X folds it down over the palm the way a real hand does.
+const THUMB_FOLD = 0.5;
+
+// The fingers a peace sign folds away, per side. Index and middle stay at
+// their already-open rest pose, which is what makes the V read.
+//
+// `sign` mirrors the pose for the left hand. It applies to the finger curl but
+// deliberately not to the thumb: this rig mirrors left to right by negating Y
+// and Z, and the thumb folds on X, which is the one axis the mirror leaves
+// alone.
+function curlSpareFingers(side, sign) {
   for (const finger of ['Ring', 'Little']) {
     for (const segment of ['Proximal', 'Intermediate', 'Distal']) {
       const bone = bones[side + finger + segment];
-      if (bone) bone.rotation.set(0, amount, 0);
+      if (bone) bone.rotation.set(0, sign * FINGER_CURL, 0);
     }
   }
-  for (const segment of ['Proximal', 'Distal']) {
+  for (const segment of ['Metacarpal', 'Proximal', 'Distal']) {
     const bone = bones[side + 'Thumb' + segment];
-    if (bone) bone.rotation.set(0, amount, 0);
+    if (bone) bone.rotation.set(THUMB_FOLD, 0, 0);
   }
 }
 
@@ -525,7 +570,7 @@ function applyPeace(dt) {
   bones.rightUpperArm.rotation.set(-1.8, -0.4, -0.5);
   bones.rightLowerArm.rotation.set(0.1, 1.7, 0);
   bones.rightHand.rotation.set(-1.0, 0, 0);
-  curlSpareFingers('right', FINGER_CURL);
+  curlSpareFingers('right', 1);
   bones.chest.rotation.y = -0.05;
   bones.head.rotation.y = -0.06;
   bones.head.rotation.x = Math.sin(actionCycle * 0.6) * 0.015; // subtle breathing, not a stiff freeze
@@ -553,8 +598,8 @@ function applyDoublePeace(dt) {
   // Same palm-forward twist as the single sign, mirrored on the left.
   bones.rightHand.rotation.set(-1.0, 0, 0);
   bones.leftHand.rotation.set(-1.0, 0, 0);
-  curlSpareFingers('right', FINGER_CURL);
-  curlSpareFingers('left', -FINGER_CURL);
+  curlSpareFingers('right', 1);
+  curlSpareFingers('left', -1);
   // A small head tilt — the pose is a photo pose, and a dead-level head makes
   // it read as a shrug instead.
   bones.head.rotation.z = 0.12;
@@ -1070,6 +1115,39 @@ window.__char = {
     step(0.001);
   },
   setPausedForTest: (on) => { paused = on; },
+  // Any node by name, so secondary motion can be measured on bones the
+  // humanoid map does not cover — hair tips and bust joints are spring bones,
+  // not humanoid bones.
+  getNodeWorld: (name) => {
+    const node = vrm && vrm.scene ? vrm.scene.getObjectByName(name) : null;
+    if (!node) return null;
+    const v = new THREE.Vector3().setFromMatrixPosition(node.matrixWorld);
+    return { x: v.x, y: v.y, z: v.z };
+  },
+  // A spring bone's offset from its anchor, expressed in the anchor's own
+  // frame. Measuring in world space instead would count the body's own turning
+  // as swing — the chest rotates as she runs, which moves the bust joints in
+  // world space even with the springs perfectly rigid.
+  getSpringOffsetForTest: (nodeName, anchorBoneName) => {
+    const node = vrm && vrm.scene ? vrm.scene.getObjectByName(nodeName) : null;
+    const anchor = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode(anchorBoneName) : null;
+    if (!node || !anchor) return null;
+    anchor.updateWorldMatrix(true, false);
+    const offset = new THREE.Vector3().setFromMatrixPosition(node.matrixWorld)
+      .sub(new THREE.Vector3().setFromMatrixPosition(anchor.matrixWorld))
+      .applyQuaternion(
+        new THREE.Quaternion().setFromRotationMatrix(anchor.matrixWorld).invert()
+      );
+    return { x: offset.x, y: offset.y, z: offset.z };
+  },
+  getSpringSettings: () => {
+    if (!vrm || !vrm.springBoneManager) return [];
+    return [...vrm.springBoneManager.joints].map((joint) => ({
+      bone: joint.bone.name,
+      dragForce: joint.settings.dragForce,
+      stiffness: joint.settings.stiffness,
+    }));
+  },
   // Park the camera for a screenshot. Goes through OrbitControls' target
   // rather than camera.lookAt so the next controls.update() doesn't undo it.
   setCameraForTest: (position, target) => {

@@ -32208,6 +32208,22 @@ void main() {
   var hipsBaseY = 0;
   var modelYaw = 0;
   var rigIsMirrored = false;
+  var SPRING_TUNING = [
+    { match: /Bust/, dragForce: 0.8, stiffness: 1.3 },
+    { match: /^HairJoint/, dragForce: 0.78 }
+  ];
+  function calmSpringBones() {
+    if (!vrm || !vrm.springBoneManager) return 0;
+    let adjusted = 0;
+    for (const joint of vrm.springBoneManager.joints) {
+      const rule = SPRING_TUNING.find((entry) => entry.match.test(joint.bone.name));
+      if (!rule) continue;
+      if (rule.dragForce !== void 0) joint.settings.dragForce = rule.dragForce;
+      if (rule.stiffness !== void 0) joint.settings.stiffness = rule.stiffness;
+      adjusted++;
+    }
+    return adjusted;
+  }
   function cspSafeTextures(parser) {
     const proto = Object.getPrototypeOf(parser);
     if (!proto.__cspSafeTextures && typeof createImageBitmap !== "undefined") {
@@ -32315,6 +32331,7 @@ void main() {
       }
       hipsBaseY = bones.hips.position.y;
       if (vrm.lookAt) vrm.lookAt.target = gazeTarget;
+      calmSpringBones();
       state.ready = true;
       window.__char.ready = true;
       if (loadingEl) loadingEl.style.display = "none";
@@ -32346,16 +32363,17 @@ void main() {
     }
   }
   var FINGER_CURL = 0.9;
-  function curlSpareFingers(side, amount) {
+  var THUMB_FOLD = 0.5;
+  function curlSpareFingers(side, sign) {
     for (const finger of ["Ring", "Little"]) {
       for (const segment of ["Proximal", "Intermediate", "Distal"]) {
         const bone = bones[side + finger + segment];
-        if (bone) bone.rotation.set(0, amount, 0);
+        if (bone) bone.rotation.set(0, sign * FINGER_CURL, 0);
       }
     }
-    for (const segment of ["Proximal", "Distal"]) {
+    for (const segment of ["Metacarpal", "Proximal", "Distal"]) {
       const bone = bones[side + "Thumb" + segment];
-      if (bone) bone.rotation.set(0, amount, 0);
+      if (bone) bone.rotation.set(THUMB_FOLD, 0, 0);
     }
   }
   var walkCycle = 0;
@@ -32426,7 +32444,7 @@ void main() {
     bones.rightUpperArm.rotation.set(-1.8, -0.4, -0.5);
     bones.rightLowerArm.rotation.set(0.1, 1.7, 0);
     bones.rightHand.rotation.set(-1, 0, 0);
-    curlSpareFingers("right", FINGER_CURL);
+    curlSpareFingers("right", 1);
     bones.chest.rotation.y = -0.05;
     bones.head.rotation.y = -0.06;
     bones.head.rotation.x = Math.sin(actionCycle * 0.6) * 0.015;
@@ -32444,8 +32462,8 @@ void main() {
     bones.leftLowerArm.rotation.set(0.1, -DOUBLE_PEACE_ELBOW, 0);
     bones.rightHand.rotation.set(-1, 0, 0);
     bones.leftHand.rotation.set(-1, 0, 0);
-    curlSpareFingers("right", FINGER_CURL);
-    curlSpareFingers("left", -FINGER_CURL);
+    curlSpareFingers("right", 1);
+    curlSpareFingers("left", -1);
     bones.head.rotation.z = 0.12;
     bones.head.rotation.x = 0.05 + Math.sin(actionCycle * 0.6) * 0.015;
     bones.chest.rotation.x = 0.03;
@@ -32795,6 +32813,37 @@ void main() {
     },
     setPausedForTest: (on) => {
       paused = on;
+    },
+    // Any node by name, so secondary motion can be measured on bones the
+    // humanoid map does not cover — hair tips and bust joints are spring bones,
+    // not humanoid bones.
+    getNodeWorld: (name) => {
+      const node = vrm && vrm.scene ? vrm.scene.getObjectByName(name) : null;
+      if (!node) return null;
+      const v = new Vector3().setFromMatrixPosition(node.matrixWorld);
+      return { x: v.x, y: v.y, z: v.z };
+    },
+    // A spring bone's offset from its anchor, expressed in the anchor's own
+    // frame. Measuring in world space instead would count the body's own turning
+    // as swing — the chest rotates as she runs, which moves the bust joints in
+    // world space even with the springs perfectly rigid.
+    getSpringOffsetForTest: (nodeName, anchorBoneName) => {
+      const node = vrm && vrm.scene ? vrm.scene.getObjectByName(nodeName) : null;
+      const anchor = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode(anchorBoneName) : null;
+      if (!node || !anchor) return null;
+      anchor.updateWorldMatrix(true, false);
+      const offset = new Vector3().setFromMatrixPosition(node.matrixWorld).sub(new Vector3().setFromMatrixPosition(anchor.matrixWorld)).applyQuaternion(
+        new Quaternion().setFromRotationMatrix(anchor.matrixWorld).invert()
+      );
+      return { x: offset.x, y: offset.y, z: offset.z };
+    },
+    getSpringSettings: () => {
+      if (!vrm || !vrm.springBoneManager) return [];
+      return [...vrm.springBoneManager.joints].map((joint) => ({
+        bone: joint.bone.name,
+        dragForce: joint.settings.dragForce,
+        stiffness: joint.settings.stiffness
+      }));
     },
     // Park the camera for a screenshot. Goes through OrbitControls' target
     // rather than camera.lookAt so the next controls.update() doesn't undo it.
