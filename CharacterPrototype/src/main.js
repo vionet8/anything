@@ -427,38 +427,53 @@ for (const side of ['left', 'right']) {
   }
 }
 
-// How far the folded fingers curl, about their own Y axis. Found by isolating
-// one bone at a time and reading whether the fingertip stayed visible from a
-// palm-facing camera or vanished behind the palm.
-const FINGER_CURL = 0.9;
+// How far each joint of a folded finger curls, in order out from the knuckle,
+// about the finger's own Z — the axis that folds it toward the palm. Y, used
+// here before, is the axis that sweeps a finger sideways across the palm: it
+// hid behind a palm-facing camera well enough to look folded, while actually
+// laying the ring and little fingers flat across the base of the other two.
+//
+// The three joints get different angles because a real folded finger is not an
+// arc of constant curvature — the knuckle and the middle joint carry most of
+// the fold and the last one trails. Measured, not guessed: these are the
+// angles that put the fingertip back down on the palm (1.2cm off it) with the
+// middle joint standing 2.8cm clear of it, which is the shelf the thumb needs.
+const FINGER_CURL = [1.4, 1.7, 1.0];
 
-// The thumb needs a different axis entirely, and using the fingers' Y for it
-// was a real bug: a thumb bone is rotated roughly a quarter turn relative to
-// the other fingers so it can oppose the palm, so Y swings it away from the
-// hand instead of folding it in. It came out as a long hooked digit jutting
-// out past the sleeve — "痛々しい", and fairly. Checked all three axes at both
-// signs from three angles: Z pushes it straight out sideways, Y swings it
-// away, X folds it down over the palm the way a real hand does.
-const THUMB_FOLD = 0.5;
+// The thumb, in the same order out from the wrist. It folds across the palm
+// rather than down onto it, so that its tip comes to rest on top of the folded
+// ring finger — where a real hand parks it in a peace sign, and what stops it
+// reading as a spare digit sticking out of the sleeve.
+//
+// Solved against the rig rather than authored: tools/measure_grip.js prints
+// where the thumb tip lands relative to the folded ring finger, and these
+// angles are the ones that land it 0.8cm above the ring finger's middle
+// phalanx. Deliberately no X component — X is each thumb bone's own twist
+// axis, and a solution that leans on it poses the thumb by rolling it rather
+// than by bending it.
+const THUMB_FOLD = [
+  [0, -0.55, 0.4],    // metacarpal: swings the whole thumb in over the palm
+  [0, -1.05, -0.1],   // proximal: the main fold, bringing it across the fingers
+  [0, -0.75, 0],      // distal: lays the tip down on the ring finger
+];
 
 // The fingers a peace sign folds away, per side. Index and middle stay at
 // their already-open rest pose, which is what makes the V read.
 //
-// `sign` mirrors the pose for the left hand. It applies to the finger curl but
-// deliberately not to the thumb: this rig mirrors left to right by negating Y
-// and Z, and the thumb folds on X, which is the one axis the mirror leaves
-// alone.
+// `sign` is +1 on the right hand and -1 on the left: this rig mirrors left to
+// right by negating Y and Z, which is every component these poses use.
 function curlSpareFingers(side, sign) {
   for (const finger of ['Ring', 'Little']) {
-    for (const segment of ['Proximal', 'Intermediate', 'Distal']) {
+    ['Proximal', 'Intermediate', 'Distal'].forEach((segment, joint) => {
       const bone = bones[side + finger + segment];
-      if (bone) bone.rotation.set(0, sign * FINGER_CURL, 0);
-    }
+      if (bone) bone.rotation.set(0, 0, sign * FINGER_CURL[joint]);
+    });
   }
-  for (const segment of ['Metacarpal', 'Proximal', 'Distal']) {
+  ['Metacarpal', 'Proximal', 'Distal'].forEach((segment, joint) => {
     const bone = bones[side + 'Thumb' + segment];
-    if (bone) bone.rotation.set(THUMB_FOLD, 0, 0);
-  }
+    const [x, y, z] = THUMB_FOLD[joint];
+    if (bone) bone.rotation.set(x, sign * y, sign * z);
+  });
 }
 
 let walkCycle = 0;

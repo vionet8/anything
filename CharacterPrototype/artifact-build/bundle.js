@@ -32142,19 +32142,27 @@ void main() {
       for (const segment of segments) FINGER_BONES.push(side + finger + segment);
     }
   }
-  var FINGER_CURL = 0.9;
-  var THUMB_FOLD = 0.5;
+  var FINGER_CURL = [1.4, 1.7, 1];
+  var THUMB_FOLD = [
+    [0, -0.55, 0.4],
+    // metacarpal: swings the whole thumb in over the palm
+    [0, -1.05, -0.1],
+    // proximal: the main fold, bringing it across the fingers
+    [0, -0.75, 0]
+    // distal: lays the tip down on the ring finger
+  ];
   function curlSpareFingers(side, sign) {
     for (const finger of ["Ring", "Little"]) {
-      for (const segment of ["Proximal", "Intermediate", "Distal"]) {
+      ["Proximal", "Intermediate", "Distal"].forEach((segment, joint) => {
         const bone = bones[side + finger + segment];
-        if (bone) bone.rotation.set(0, sign * FINGER_CURL, 0);
-      }
+        if (bone) bone.rotation.set(0, 0, sign * FINGER_CURL[joint]);
+      });
     }
-    for (const segment of ["Metacarpal", "Proximal", "Distal"]) {
+    ["Metacarpal", "Proximal", "Distal"].forEach((segment, joint) => {
       const bone = bones[side + "Thumb" + segment];
-      if (bone) bone.rotation.set(THUMB_FOLD, 0, 0);
-    }
+      const [x, y, z] = THUMB_FOLD[joint];
+      if (bone) bone.rotation.set(x, sign * y, sign * z);
+    });
   }
   var walkCycle = 0;
   var actionCycle = 0;

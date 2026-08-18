@@ -161,6 +161,93 @@ test('the double peace puts both hands up beside the face, not out at the should
     'hands centred on the head').toBeLessThan(0.1);
 });
 
+// The hand's own frame, so a finger pose can be asserted on without depending
+// on where the arm is holding it. Distances come back in centimetres from the
+// wrist joint: `up` along the fingers, `across` toward the little finger,
+// `palm` out of the palm — the side the fingers fold toward.
+//
+// `palm` comes from a cross product, so its direction follows the hand's
+// handedness rather than the pose, and the left hand needs the flip.
+// tools/measure_grip.js prints the same numbers for tuning by hand.
+function handFrame(m, side) {
+  const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
+  const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+  const cross = (a, b) => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
+  const scale = (a, k) => ({ x: a.x * k, y: a.y * k, z: a.z * k });
+  const norm = (a) => scale(a, 1 / Math.hypot(a.x, a.y, a.z));
+
+  const wrist = m[`${side}Hand`];
+  const up = norm(sub(m[`${side}MiddleProximal`], wrist));
+  const across = norm(sub(m[`${side}LittleProximal`], m[`${side}IndexProximal`]));
+  const palm = scale(norm(cross(up, across)), side === 'left' ? -1 : 1);
+  return (p) => ({
+    up: dot(sub(p, wrist), up) * 100,
+    across: dot(sub(p, wrist), across) * 100,
+    palm: dot(sub(p, wrist), palm) * 100,
+  });
+}
+
+async function measureHands(page, pose, sides) {
+  const bones = sides.flatMap((side) => [
+    `${side}Hand`, `${side}IndexProximal`, `${side}MiddleProximal`, `${side}LittleProximal`,
+    `${side}ThumbDistal`, `${side}RingIntermediate`,
+  ]);
+  const tips = sides.flatMap((side) => {
+    const s = side === 'left' ? 'L' : 'R';
+    return [`J_Bip_${s}_Thumb3_end`, `J_Bip_${s}_Ring3_end`];
+  });
+  return page.evaluate(([name, boneNames, tipNames]) => {
+    window.__char.holdActionForTest(name, 400);
+    const out = {};
+    for (const bone of boneNames) out[bone] = window.__char.getBoneWorld(bone);
+    for (const tip of tipNames) out[tip] = window.__char.getNodeWorld(tip);
+    window.__char.releaseActionsForTest();
+    return out;
+  }, [pose, bones, tips]);
+}
+
+// Both peace poses, because they curl the fingers through the same code and
+// the left hand goes through its mirror — which has been wrong before.
+for (const [pose, sides] of [['peace', ['right']], ['double-peace', ['right', 'left']]]) {
+  test(`${pose} folds the spare fingers into the palm rather than across it`, async ({ page }) => {
+    const measured = await measureHands(page, pose, sides);
+
+    for (const side of sides) {
+      const local = handFrame(measured, side);
+      const s = side === 'left' ? 'L' : 'R';
+      const tip = local(measured[`J_Bip_${s}_Ring3_end`]);
+
+      // Straight, the ring fingertip stands about 12cm up from the wrist and
+      // level with the palm. Folded, it comes back down onto the palm. The
+      // bug this catches is a fingertip that stays out at full length and
+      // merely swings sideways, which reads as folded from the one camera
+      // angle that can see past the sleeve.
+      expect(tip.up, `${side} ring fingertip height`).toBeLessThan(4.5);
+      expect(tip.palm, `${side} ring fingertip off the palm`).toBeGreaterThan(0.4);
+      expect(tip.palm, `${side} ring fingertip off the palm`).toBeLessThan(2.5);
+    }
+  });
+
+  test(`${pose} rests the thumb on top of the folded ring finger`, async ({ page }) => {
+    const measured = await measureHands(page, pose, sides);
+
+    for (const side of sides) {
+      const local = handFrame(measured, side);
+      const s = side === 'left' ? 'L' : 'R';
+      const thumbTip = local(measured[`J_Bip_${s}_Thumb3_end`]);
+      const ringMiddle = local(measured[`${side}RingIntermediate`]);
+
+      // Over the ring finger's middle joint, near enough to be touching it...
+      const sideways = Math.hypot(thumbTip.up - ringMiddle.up, thumbTip.across - ringMiddle.across);
+      expect(sideways, `${side} thumb tip alongside the ring finger`).toBeLessThan(1.6);
+      // ...and on top of it rather than through it or floating above it.
+      const clearance = thumbTip.palm - ringMiddle.palm;
+      expect(clearance, `${side} thumb tip above the ring finger`).toBeGreaterThan(0.3);
+      expect(clearance, `${side} thumb tip above the ring finger`).toBeLessThan(1.6);
+    }
+  });
+}
+
 test('the model exposes the facial expressions the poses depend on', async ({ page }) => {
   // The previous model had every morph target stripped by an optimisation
   // pass, so this list came back empty and no expression could ever apply.
