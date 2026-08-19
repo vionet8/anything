@@ -55,9 +55,48 @@
       draft.push({
         id: uid(),
         name: file.name.replace(/\.[^.]+$/, '').slice(0, 30) || `写真${draft.length + 1}`,
+        note: '',
+        url: '',
         photo: await shrink(file),
       });
       renderSetup();
+    }
+  }
+
+  // ---- メモとリンク ---------------------------------------------------
+
+  // 貼り付けたものをそのまま <a> にしないための番人。
+  // scheme が抜けていれば https を補い、http/https 以外は捨てる。
+  function safeUrl(raw) {
+    const text = String(raw || '').trim();
+    if (!text) return null;
+    try {
+      const url = new URL(/^[a-z][a-z0-9+.-]*:/i.test(text) ? text : `https://${text}`);
+      return url.protocol === 'http:' || url.protocol === 'https:' ? url : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  // メモとリンクの行。どちらも空なら何も置かない
+  function fillMeta(container, entry) {
+    container.textContent = '';
+    if (!entry) return;
+    const note = String(entry.note || '').trim();
+    if (note) {
+      const span = document.createElement('span');
+      span.className = 'note';
+      span.textContent = note;
+      container.append(span);
+    }
+    const url = safeUrl(entry.url);
+    if (url) {
+      const link = document.createElement('a');
+      link.href = url.href;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = `${url.hostname.replace(/^www\./, '')} を開く`;
+      container.append(link);
     }
   }
 
@@ -74,21 +113,44 @@
       img.src = photoUrl(entry);
       img.alt = entry.name;
 
+      const fields = document.createElement('div');
+      fields.className = 'fields';
+
       const name = document.createElement('input');
       name.className = 'name';
       name.value = entry.name;
+      name.placeholder = '名前';
       name.setAttribute('aria-label', `${i + 1}枚目の名前`);
       name.addEventListener('input', () => { entry.name = name.value; });
 
+      const note = document.createElement('input');
+      note.className = 'note';
+      note.value = entry.note || '';
+      note.placeholder = 'メモ（値段・お店・条件など／任意）';
+      note.setAttribute('aria-label', `${i + 1}枚目のメモ`);
+      note.addEventListener('input', () => { entry.note = note.value; });
+
+      const url = document.createElement('input');
+      url.className = 'url';
+      url.type = 'url';
+      url.inputMode = 'url';
+      url.value = entry.url || '';
+      url.placeholder = 'リンク（任意）';
+      url.setAttribute('aria-label', `${i + 1}枚目のリンク`);
+      url.addEventListener('input', () => { entry.url = url.value; });
+
+      fields.append(name, note, url);
+
       const remove = document.createElement('button');
       remove.className = 'remove';
-      remove.textContent = '削除';
+      remove.textContent = '\u00d7';
+      remove.setAttribute('aria-label', `${i + 1}枚目を削除`);
       remove.addEventListener('click', () => {
         draft = draft.filter((e) => e.id !== entry.id);
         renderSetup();
       });
 
-      box.append(img, name, remove);
+      box.append(img, fields, remove);
       list.append(box);
     });
 
@@ -123,7 +185,11 @@
       $(`img-${side}`).alt = entry ? entry.name : '';
       $(`name-${side}`).textContent = entry ? entry.name : '';
       $(`card-${side}`).onclick = () => choose(match.id, match[side]);
+      if (record && record.showInfo) fillMeta($(`meta-${side}`), entry);
+      else $(`meta-${side}`).textContent = '';
     }
+    $('toggle-info').textContent =
+      record && record.showInfo ? '対戦中はメモとリンクを隠す' : '対戦中もメモとリンクを見る';
     $('undo').disabled = tournament.picks.length === 0;
     replayEnterAnimation();
     showView('match');
@@ -157,6 +223,8 @@
     $('champ-img').src = photoUrl(winner);
     $('champ-img').alt = winner ? winner.name : '';
     $('champ-name').textContent = winner ? winner.name : '';
+    fillMeta($('champ-meta'), winner);
+    fillMeta($('champ-meta'), winner);
 
     const rank = $('rank');
     rank.textContent = '';
@@ -168,9 +236,14 @@
       const label = document.createElement('span');
       label.className = 'label';
       label.textContent = row.label;
-      const who = document.createElement('span');
+      const who = document.createElement('div');
       who.className = 'who';
-      who.textContent = row.entry.name;
+      const whoName = document.createElement('div');
+      whoName.textContent = row.entry.name;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      fillMeta(meta, row.entry);
+      who.append(whoName, meta);
       li.append(img, label, who);
       rank.append(li);
     }
@@ -185,7 +258,14 @@
       title: record.title,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
-      entries: record.entries.map((e) => ({ id: e.id, name: e.name, photo: e.photo })),
+      showInfo: Boolean(record.showInfo),
+      entries: record.entries.map((e) => ({
+        id: e.id,
+        name: e.name,
+        note: e.note || '',
+        url: e.url || '',
+        photo: e.photo,
+      })),
       picks: record.picks,
     });
   }
@@ -198,6 +278,7 @@
       updatedAt: row.updatedAt,
       entries: row.entries,
       picks: row.picks.slice(),
+      showInfo: Boolean(row.showInfo),
     };
     tournament = Bracket.createTournament(record.entries, { shuffle: false });
     tournament.picks = record.picks.slice();
@@ -270,6 +351,7 @@
   $('new-tournament').addEventListener('click', () => {
     draft = [];
     $('title').value = '';
+    $('show-info').checked = false;
     renderSetup();
     showView('setup');
   });
@@ -292,7 +374,14 @@
       updatedAt: Date.now(),
       entries: tournament.entries,
       picks: [],
+      showInfo: $('show-info').checked,
     };
+    persist();
+    renderMatch();
+  });
+
+  $('toggle-info').addEventListener('click', () => {
+    record.showInfo = !record.showInfo;
     persist();
     renderMatch();
   });
@@ -324,6 +413,7 @@
       updatedAt: Date.now(),
       entries: tournament.entries,
       picks: [],
+      showInfo: record.showInfo,
     };
     persist();
     renderMatch();
@@ -339,6 +429,7 @@
       const match = Bracket.currentMatch(tournament);
       return {
         title: record ? record.title : null,
+        showInfo: Boolean(record && record.showInfo),
         entries: tournament.entries.length,
         size: tournament.size,
         progress: Bracket.progress(tournament),

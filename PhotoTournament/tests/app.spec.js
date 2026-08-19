@@ -14,12 +14,22 @@ async function tap(page, selector) {
 }
 
 async function newTournament(page, title, names) {
+  await addPhotos(page, title, names);
+  await page.click('#start');
+  await expect(page.locator('#view-match')).toBeVisible();
+}
+
+async function addPhotos(page, title, names) {
   await page.click('#new-tournament');
   await page.fill('#title', title);
   await page.setInputFiles('#file-input', files(names));
   await expect(page.locator('#entry-list .entry')).toHaveCount(names.length);
-  await page.click('#start');
-  await expect(page.locator('#view-match')).toBeVisible();
+}
+
+// シャッフルされるので、名前を見て目当ての写真のカードを押す
+async function tapNamed(page, name) {
+  const left = await page.locator('#name-a').textContent();
+  await tap(page, left === name ? '#card-a' : '#card-b');
 }
 
 test.beforeEach(async ({ page }) => {
@@ -142,4 +152,77 @@ test('電波がなくても、一度開いていれば起動して大会を続�
   await expect(page.locator('#view-match')).toBeVisible();
   await expect(page.locator('#img-a')).toHaveJSProperty('naturalWidth', 1);
   await context.setOffline(false);
+});
+
+test('メモとリンクを入れておくと、結果画面から確認できる', async ({ page }) => {
+  await addPhotos(page, '娘の誕プレ', ['ぬいぐるみ.png', 'じてんしゃ.png']);
+  const first = page.locator('#entry-list .entry').first();
+  await first.locator('input.note').fill('12,800円 駅前のおもちゃ屋さん');
+  await first.locator('input.url').fill('example.com/toy');
+  await page.click('#start');
+
+  // 対戦中は既定では出さない
+  await expect(page.locator('#meta-a')).toBeEmpty();
+  await expect(page.locator('#meta-b')).toBeEmpty();
+
+  await tapNamed(page, 'ぬいぐるみ');
+  await expect(page.locator('#champ-name')).toHaveText('ぬいぐるみ');
+  await expect(page.locator('#champ-meta .note')).toHaveText('12,800円 駅前のおもちゃ屋さん');
+
+  const link = page.locator('#champ-meta a');
+  await expect(link).toHaveAttribute('href', 'https://example.com/toy');
+  await expect(link).toHaveAttribute('target', '_blank');
+  await expect(link).toHaveText('example.com を開く');
+  await expect(page.locator('#rank li').first().locator('.note')).toHaveText('12,800円 駅前のおもちゃ屋さん');
+});
+
+test('対戦中に見せるかどうかを切り替えられ、その設定は大会ごとに残る', async ({ page }) => {
+  await addPhotos(page, 'おやつ', ['a.png', 'b.png', 'c.png', 'd.png']);
+  const notes = page.locator('#entry-list .entry input.note');
+  for (let i = 0; i < 4; i++) await notes.nth(i).fill('300円');
+  await page.check('#show-info');
+  await page.click('#start');
+
+  await expect(page.locator('#meta-a .note')).toHaveText('300円');
+  await expect(page.locator('#toggle-info')).toHaveText('対戦中はメモとリンクを隠す');
+
+  await page.click('#toggle-info');
+  await expect(page.locator('#meta-a')).toBeEmpty();
+  await expect(page.locator('#toggle-info')).toHaveText('対戦中もメモとリンクを見る');
+
+  await page.click('#toggle-info');
+  await expect(page.locator('#meta-b .note')).toHaveText('300円');
+
+  // 中断して開き直しても、見せる設定のまま
+  await page.click('#pause');
+  await page.reload();
+  await page.waitForFunction(() => window.__pt && window.__pt.ready);
+  await page.locator('#history li').first().locator('.meta').click();
+  await expect(page.locator('#meta-a .note')).toHaveText('300円');
+});
+
+test('対戦中のリンクはカードの外にあり、押しても勝敗にならない', async ({ page }) => {
+  await addPhotos(page, '旅行先', ['海.png', '山.png']);
+  const urls = page.locator('#entry-list .entry input.url');
+  await urls.nth(0).fill('example.com/sea');
+  await urls.nth(1).fill('example.com/mountain');
+  await page.check('#show-info');
+  await page.click('#start');
+
+  await expect(page.locator('#meta-a a')).toHaveCount(1);
+  const insideCard = await page.evaluate(() =>
+    document.getElementById('card-a').contains(document.getElementById('meta-a'))
+  );
+  expect(insideCard).toBe(false);
+  expect(await page.evaluate(() => window.__pt.getState().progress.done)).toBe(0);
+});
+
+test('http・https 以外のあやしいリンクはリンクにしない', async ({ page }) => {
+  await addPhotos(page, 'テスト', ['あぶない.png', 'ふつう.png']);
+  await page.locator('#entry-list .entry').first().locator('input.url').fill('javascript:alert(1)');
+  await page.check('#show-info');
+  await page.click('#start');
+  await tapNamed(page, 'あぶない');
+  await expect(page.locator('#champ-name')).toHaveText('あぶない');
+  await expect(page.locator('#champ-meta a')).toHaveCount(0);
 });

@@ -1,6 +1,6 @@
 // 電波の悪い店内でも開けるように、アプリ本体をキャッシュしておく。
 // 写真そのものは IndexedDB 側にあるので、ここで持つのは画面を出すための一式だけ。
-const VERSION = 'photo-tournament-v1';
+const VERSION = 'photo-tournament-v2';
 const ASSETS = [
   './',
   './index.html',

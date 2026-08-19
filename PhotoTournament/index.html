@@ -70,11 +70,12 @@
   }
   input[type="file"] { display: none; }
 
-  .entries { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; margin: 12px 0 18px; }
-  .entry { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-  .entry img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; background: #ddd6cc; }
-  .entry .name { width: 100%; border: 0; border-top: 1px solid var(--line); padding: 7px; font-size: 12px; background: transparent; }
-  .entry .remove { width: 100%; border: 0; border-top: 1px solid var(--line); background: transparent; padding: 6px; font-size: 11px; color: var(--muted); cursor: pointer; }
+  .entries { display: grid; gap: 10px; margin: 12px 0 18px; }
+  .entry { display: flex; gap: 10px; align-items: flex-start; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+  .entry img { width: 72px; height: 72px; border-radius: 10px; object-fit: cover; display: block; flex: none; background: #ddd6cc; }
+  .entry .fields { flex: 1; min-width: 0; display: grid; gap: 6px; }
+  .entry input { width: 100%; font: inherit; font-size: 14px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: inherit; }
+  .entry .remove { border: 0; background: transparent; color: var(--muted); font-size: 20px; line-height: 1; padding: 4px 6px; cursor: pointer; flex: none; }
 
   .match-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
   .match-head .round { font-size: 18px; font-weight: 700; }
@@ -98,18 +99,29 @@
   @keyframes appear { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   @media (prefers-reduced-motion: reduce) { .versus.enter .card { animation: none; } }
   .vs { text-align: center; color: var(--muted); font-size: 12px; letter-spacing: .3em; margin: 12px 0 0; }
+  .side { display: grid; gap: 6px; align-content: start; }
+  .versus .meta { justify-content: center; text-align: center; font-size: 12px; padding: 0 2px; }
+  .linky { display: block; margin: 10px auto 0; border: 0; background: transparent; color: var(--muted); font-size: 13px; text-decoration: underline; padding: 8px; cursor: pointer; }
+  .check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--muted); line-height: 1.6; margin-bottom: 16px; }
+  .check input { width: 20px; height: 20px; margin: 1px 0 0; flex: none; accent-color: var(--accent); }
   .match-foot { display: flex; gap: 10px; margin-top: 16px; }
   .match-foot .btn { flex: 1; }
 
   .champ { background: var(--card); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
   .champ .crown { padding: 12px 14px 0; font-size: 13px; font-weight: 700; color: var(--gold); letter-spacing: .1em; }
   .champ img { width: 100%; max-height: 58vh; object-fit: contain; display: block; margin-top: 8px; background: #efeae2; }
-  .champ .name { padding: 12px 14px 16px; font-size: 20px; font-weight: 700; }
+  .champ .name { padding: 12px 14px 4px; font-size: 20px; font-weight: 700; }
+  .champ .meta { padding: 0 14px 16px; }
+  .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 13px; color: var(--muted); }
+  .meta .note { color: var(--ink); }
+  .meta a { color: var(--accent); }
+  .champ .meta { font-size: 15px; }
   .rank { list-style: none; margin: 18px 0; padding: 0; }
   .rank li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
   .rank img { width: 46px; height: 46px; border-radius: 8px; object-fit: cover; background: #ddd6cc; }
   .rank .label { font-size: 12px; color: var(--muted); width: 68px; flex: none; }
-  .rank .who { font-size: 14px; word-break: break-word; }
+  .rank .who { flex: 1; min-width: 0; font-size: 14px; word-break: break-word; }
+  .rank .who .meta { margin-top: 3px; font-size: 12px; }
 
   .history { list-style: none; margin: 12px 0 0; padding: 0; }
   .history li { display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px; margin-bottom: 10px; }
@@ -156,6 +168,8 @@
     </div>
     <div class="entries" id="entry-list"></div>
     <p class="lead" id="entry-count">0枚。2枚以上でトーナメントを始められます。</p>
+    <p class="lead">メモとリンクは任意です。値段でも、お店の名前でも、条件でも自由に書けます。</p>
+    <label class="check"><input type="checkbox" id="show-info" /> 対戦中もメモとリンクを表示する（対戦画面でいつでも切り替えられます）</label>
     <button class="btn primary wide" id="start" disabled>トーナメントを始める</button>
   </section>
 
@@ -166,10 +180,17 @@
     </div>
     <div class="bar"><i id="bar-fill"></i></div>
     <div class="versus" id="versus">
-      <button class="card" id="card-a"><img alt="" id="img-a" /><span class="name" id="name-a"></span></button>
-      <button class="card" id="card-b"><img alt="" id="img-b" /><span class="name" id="name-b"></span></button>
+      <div class="side">
+        <button class="card" id="card-a"><img alt="" id="img-a" /><span class="name" id="name-a"></span></button>
+        <div class="meta" id="meta-a"></div>
+      </div>
+      <div class="side">
+        <button class="card" id="card-b"><img alt="" id="img-b" /><span class="name" id="name-b"></span></button>
+        <div class="meta" id="meta-b"></div>
+      </div>
     </div>
     <p class="vs">好きなほうをタップ</p>
+    <button class="linky" id="toggle-info">対戦中もメモとリンクを見る</button>
     <div class="match-foot">
       <button class="btn" id="undo">1つ戻す</button>
       <button class="btn ghost" id="pause">中断して保存</button>
@@ -181,6 +202,7 @@
       <div class="crown">優勝</div>
       <img alt="" id="champ-img" />
       <div class="name" id="champ-name"></div>
+      <div class="meta" id="champ-meta"></div>
     </div>
     <ul class="rank" id="rank"></ul>
     <div class="row">
