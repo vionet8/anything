@@ -1,0 +1,12 @@
+{
+  "name": "photo-tournament",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0"
+  }
+}

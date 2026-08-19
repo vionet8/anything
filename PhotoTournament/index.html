@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>写真トーナメント</title>
+<style>
+  :root {
+    --bg: #f6f4f0;
+    --card: #ffffff;
+    --ink: #23201d;
+    --muted: #8a8178;
+    --line: #e5dfd6;
+    --accent: #e0642f;
+    --accent-ink: #ffffff;
+    --gold: #d8a326;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  body { padding: 0 16px calc(24px + env(safe-area-inset-bottom)); }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 0 10px;
+  }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: .04em; }
+  header .spacer { flex: 1; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  button { font: inherit; color: inherit; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    border: 1px solid var(--line); background: var(--card); border-radius: 12px;
+    padding: 12px 16px; cursor: pointer; min-height: 46px;
+  }
+  .btn:active { transform: scale(.99); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+  .btn.wide { width: 100%; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.ghost { background: transparent; }
+  .btn.danger { color: #b23b2a; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+
+  .lead { color: var(--muted); font-size: 13px; line-height: 1.7; margin: 0 0 14px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+  input[type="text"] {
+    width: 100%; font: inherit; padding: 12px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--card); color: inherit;
+  }
+  input[type="file"] { display: none; }
+
+  .entries { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; margin: 12px 0 18px; }
+  .entry { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .entry img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; background: #ddd6cc; }
+  .entry .name { width: 100%; border: 0; border-top: 1px solid var(--line); padding: 7px; font-size: 12px; background: transparent; }
+  .entry .remove { width: 100%; border: 0; border-top: 1px solid var(--line); background: transparent; padding: 6px; font-size: 11px; color: var(--muted); cursor: pointer; }
+
+  .match-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .match-head .round { font-size: 18px; font-weight: 700; }
+  .match-head .count { font-size: 13px; color: var(--muted); margin-left: auto; }
+  .bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin-bottom: 14px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+
+  .versus { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
+  .card {
+    padding: 0; border: 2px solid var(--line); background: var(--card);
+    border-radius: 16px; overflow: hidden; cursor: pointer; width: 100%; text-align: left;
+  }
+  .card img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; display: block; background: #ddd6cc; }
+  .card .name { padding: 10px; font-size: 14px; font-weight: 700; word-break: break-word; }
+  .card:active { border-color: var(--accent); }
+  .vs { text-align: center; color: var(--muted); font-size: 12px; letter-spacing: .3em; margin: 12px 0 0; }
+  .match-foot { display: flex; gap: 10px; margin-top: 16px; }
+  .match-foot .btn { flex: 1; }
+
+  .champ { background: var(--card); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
+  .champ .crown { padding: 12px 14px 0; font-size: 13px; font-weight: 700; color: var(--gold); letter-spacing: .1em; }
+  .champ img { width: 100%; max-height: 58vh; object-fit: contain; display: block; margin-top: 8px; background: #efeae2; }
+  .champ .name { padding: 12px 14px 16px; font-size: 20px; font-weight: 700; }
+  .rank { list-style: none; margin: 18px 0; padding: 0; }
+  .rank li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .rank img { width: 46px; height: 46px; border-radius: 8px; object-fit: cover; background: #ddd6cc; }
+  .rank .label { font-size: 12px; color: var(--muted); width: 68px; flex: none; }
+  .rank .who { font-size: 14px; word-break: break-word; }
+
+  .history { list-style: none; margin: 12px 0 0; padding: 0; }
+  .history li { display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px; margin-bottom: 10px; }
+  .history img { width: 56px; height: 56px; border-radius: 10px; object-fit: cover; flex: none; background: #ddd6cc; }
+  .history .meta { flex: 1; min-width: 0; cursor: pointer; }
+  .history .title { font-weight: 700; font-size: 15px; word-break: break-word; }
+  .history .sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .history .del { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 8px; font-size: 12px; }
+  .empty { color: var(--muted); font-size: 13px; padding: 24px 0; text-align: center; }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17150f; --card: #221f1a; --ink: #f2ede4; --muted: #9c9385;
+      --line: #35302a; --accent: #ef7a45; --accent-ink: #1c1712; --gold: #e8bd51;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>写真トーナメント</h1>
+    <span class="spacer"></span>
+    <button class="btn ghost" id="to-home" hidden>ホーム</button>
+  </header>
+
+  <section class="view active" id="view-home">
+    <p class="lead">写真を並べて1対1で選んでいくと、最後に1枚が残ります。誕生日プレゼントの候補や旅行先を、写真ごと残しながら決められます。</p>
+    <button class="btn primary wide" id="new-tournament">＋ 新しい大会をつくる</button>
+    <h2 style="font-size:14px;margin:24px 0 0;">これまでの大会</h2>
+    <ul class="history" id="history"></ul>
+    <p class="empty" id="history-empty" hidden>まだ大会がありません。</p>
+  </section>
+
+  <section class="view" id="view-setup">
+    <div class="field">
+      <label for="title">大会の名前</label>
+      <input type="text" id="title" placeholder="例：娘の誕生日プレゼント／夏の旅行先" />
+    </div>
+    <div class="field">
+      <label>写真</label>
+      <button class="btn wide" id="add-photos">写真を選ぶ（何枚でも）</button>
+      <input type="file" id="file-input" accept="image/*" multiple />
+    </div>
+    <div class="entries" id="entry-list"></div>
+    <p class="lead" id="entry-count">0枚。2枚以上でトーナメントを始められます。</p>
+    <button class="btn primary wide" id="start" disabled>トーナメントを始める</button>
+  </section>
+
+  <section class="view" id="view-match">
+    <div class="match-head">
+      <span class="round" id="round-name">1回戦</span>
+      <span class="count" id="match-count">1 / 1</span>
+    </div>
+    <div class="bar"><i id="bar-fill"></i></div>
+    <div class="versus">
+      <button class="card" id="card-a"><img alt="" id="img-a" /><span class="name" id="name-a"></span></button>
+      <button class="card" id="card-b"><img alt="" id="img-b" /><span class="name" id="name-b"></span></button>
+    </div>
+    <p class="vs">好きなほうをタップ</p>
+    <div class="match-foot">
+      <button class="btn" id="undo">1つ戻す</button>
+      <button class="btn ghost" id="pause">中断して保存</button>
+    </div>
+  </section>
+
+  <section class="view" id="view-result">
+    <div class="champ">
+      <div class="crown">優勝</div>
+      <img alt="" id="champ-img" />
+      <div class="name" id="champ-name"></div>
+    </div>
+    <ul class="rank" id="rank"></ul>
+    <div class="row">
+      <button class="btn" id="replay">同じ写真でもう一度</button>
+      <button class="btn primary" id="result-home">ホームへ</button>
+    </div>
+  </section>
+</div>
+
+<script src="src/bracket.js"></script>
+<script src="src/store.js"></script>
+<script src="src/app.js"></script>
+</body>
+</html>
