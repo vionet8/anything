@@ -226,3 +226,63 @@ test('http・https 以外のあやしいリンクはリンクにしない', asyn
   await expect(page.locator('#champ-name')).toHaveText('あぶない');
   await expect(page.locator('#champ-meta a')).toHaveCount(0);
 });
+
+test('結果を1枚の画像にして共有できる', async ({ page }) => {
+  await addPhotos(page, '週末の行き先', ['海.png', '山.png', '街.png']);
+  await page.locator('#entry-list .entry input.note').first().fill('高速で1時間');
+  await page.click('#start');
+  await tap(page, '#card-a');
+  await tap(page, '#card-a');
+  await expect(page.locator('#view-result')).toBeVisible();
+
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('#share-image')]);
+  expect(download.suggestedFilename()).toMatch(/^photo-tournament-\d{4}-\d{2}-\d{2}-result\.png$/);
+
+  const buffer = require('fs').readFileSync(await download.path());
+  expect(buffer.length).toBeGreaterThan(5000);
+  expect(buffer.readUInt32BE(16)).toBe(1080); // PNG ヘッダの幅
+  await expect(page.locator('#share-status')).toContainText('保存しました');
+});
+
+test('大会を書き出して、消したあとでも読み込み直せる', async ({ page }) => {
+  await addPhotos(page, '来年の旅行', ['京都.png', '金沢.png']);
+  await page.locator('#entry-list .entry input.note').first().fill('紅葉の時期');
+  await page.click('#start');
+  await tap(page, '#card-a');
+  const champ = await page.locator('#champ-name').textContent();
+  await page.click('#result-home');
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('#history li').first().locator('.send').click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/^photo-tournament-\d{4}-\d{2}-\d{2}\.ptour\.json$/);
+  const saved = await download.path();
+
+  page.on('dialog', (dialog) => dialog.accept());
+  await page.locator('#history li').first().locator('.del').click();
+  await expect(page.locator('#history li')).toHaveCount(0);
+
+  await page.setInputFiles('#import-input', saved);
+  await expect(page.locator('#import-status')).toContainText('読み込みました');
+
+  const item = page.locator('#history li').first();
+  await expect(item).toContainText('来年の旅行');
+  await expect(item).toContainText(`優勝：${champ}`);
+
+  await item.locator('.meta').click();
+  await expect(page.locator('#view-result')).toBeVisible();
+  await expect(page.locator('#champ-img')).toHaveJSProperty('naturalWidth', 1);
+  // 勝者はシャッフル次第なので、メモが1件そのまま残っていることを見る
+  await expect(page.locator('#rank li .note')).toHaveText(['紅葉の時期']);
+});
+
+test('大会以外のファイルを読み込んでも、履歴を壊さず理由を出す', async ({ page }) => {
+  await page.setInputFiles('#import-input', {
+    name: 'memo.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from('{"hello":1}'),
+  });
+  await expect(page.locator('#import-status')).toContainText('この大会のファイルではない');
+  await expect(page.locator('#history li')).toHaveCount(0);
+});

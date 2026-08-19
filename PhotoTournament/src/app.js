@@ -219,6 +219,7 @@
   // ---- 結果画面 -------------------------------------------------------
 
   function renderResult() {
+    status('share-status', '');
     const winner = entryOf(Bracket.champion(tournament));
     $('champ-img').src = photoUrl(winner);
     $('champ-img').alt = winner ? winner.name : '';
@@ -246,6 +247,67 @@
       who.append(whoName, meta);
       li.append(img, label, who);
       rank.append(li);
+    }
+  }
+
+  // ---- 共有と持ち出し -------------------------------------------------
+
+  function status(id, message) {
+    const box = $(id);
+    box.textContent = message || '';
+    box.hidden = !message;
+  }
+
+  // 共有シートが無い環境（パソコンなど）では保存になるので、どちらかを伝える
+  function reportShare(id, result, savedMessage) {
+    if (result === 'cancelled') status(id, '');
+    else if (result === 'shared') status(id, '共有しました。');
+    else status(id, savedMessage);
+  }
+
+  async function shareResultImage() {
+    status('share-status', '画像を作っています…');
+    try {
+      const file = await Share.buildResultImage({
+        title: record.title,
+        createdAt: record.createdAt,
+        rows: Bracket.ranking(tournament),
+      });
+      const result = await Share.shareOrDownload(file, {
+        title: record.title,
+        text: `${record.title}の結果`,
+      });
+      reportShare('share-status', result, '画像を保存しました。');
+    } catch (err) {
+      console.warn(err);
+      status('share-status', '画像を作れませんでした。');
+    }
+  }
+
+  async function exportRecord(row) {
+    status('import-status', '書き出しています…');
+    try {
+      const file = await Share.exportFile(row);
+      const result = await Share.shareOrDownload(file, {
+        title: row.title,
+        text: `${row.title}（写真トーナメント）`,
+      });
+      reportShare('import-status', result, `${file.name} を保存しました。`);
+    } catch (err) {
+      console.warn(err);
+      status('import-status', '書き出せませんでした。');
+    }
+  }
+
+  async function importRecord(file) {
+    status('import-status', '読み込んでいます…');
+    try {
+      const imported = await Share.parseImport(file);
+      await Store.save(imported);
+      await renderHome();
+      status('import-status', `「${imported.title}」を読み込みました。`);
+    } catch (err) {
+      status('import-status', err && err.message ? err.message : '読み込めませんでした。');
     }
   }
 
@@ -307,6 +369,7 @@
   }
 
   async function renderHome() {
+    status('import-status', '');
     const rows = await Store.list();
     const list = $('history');
     list.textContent = '';
@@ -331,6 +394,14 @@
       meta.append(title, sub);
       meta.addEventListener('click', () => load(row));
 
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+
+      const send = document.createElement('button');
+      send.className = 'send';
+      send.textContent = '共有';
+      send.addEventListener('click', () => exportRecord(row));
+
       const del = document.createElement('button');
       del.className = 'del';
       del.textContent = '削除';
@@ -340,13 +411,24 @@
         renderHome();
       });
 
-      li.append(img, meta, del);
+      actions.append(send, del);
+      li.append(img, meta, actions);
       list.append(li);
     }
     showView('home');
   }
 
   // ---- 画面の切り替え -------------------------------------------------
+
+  $('share-image').addEventListener('click', shareResultImage);
+
+  $('import-button').addEventListener('click', () => $('import-input').click());
+
+  $('import-input').addEventListener('change', async (event) => {
+    const file = (event.target.files || [])[0];
+    event.target.value = '';
+    if (file) await importRecord(file);
+  });
 
   $('new-tournament').addEventListener('click', () => {
     draft = [];
