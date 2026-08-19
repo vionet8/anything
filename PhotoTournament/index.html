@@ -4,6 +4,16 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>写真トーナメント</title>
+<meta name="description" content="写真を1対1で見比べて、最後に残った1枚で決める" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<link rel="icon" href="icons/icon-192.png" />
+<meta name="theme-color" content="#f6f4f0" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#17150f" media="(prefers-color-scheme: dark)" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="写真トーナメント" />
 <style>
   :root {
     --bg: #f6f4f0;
@@ -36,7 +46,7 @@
   .view { display: none; }
   .view.active { display: block; }
 
-  button { font: inherit; color: inherit; }
+  button { font: inherit; color: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 6px;
     border: 1px solid var(--line); background: var(--card); border-radius: 12px;
@@ -80,6 +90,13 @@
   .card img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; display: block; background: #ddd6cc; }
   .card .name { padding: 10px; font-size: 14px; font-weight: 700; word-break: break-word; }
   .card:active { border-color: var(--accent); }
+  .card.picked { border-color: var(--accent); }
+  .card, .card .name { -webkit-user-select: none; user-select: none; }
+  /* 次の対戦に入れ替わったことが一目で分かるように、軽く出てくる */
+  .versus.enter .card { animation: appear .18s ease-out both; }
+  .versus.enter .card:last-child { animation-delay: .03s; }
+  @keyframes appear { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .versus.enter .card { animation: none; } }
   .vs { text-align: center; color: var(--muted); font-size: 12px; letter-spacing: .3em; margin: 12px 0 0; }
   .match-foot { display: flex; gap: 10px; margin-top: 16px; }
   .match-foot .btn { flex: 1; }
@@ -148,7 +165,7 @@
       <span class="count" id="match-count">1 / 1</span>
     </div>
     <div class="bar"><i id="bar-fill"></i></div>
-    <div class="versus">
+    <div class="versus" id="versus">
       <button class="card" id="card-a"><img alt="" id="img-a" /><span class="name" id="name-a"></span></button>
       <button class="card" id="card-b"><img alt="" id="img-b" /><span class="name" id="name-b"></span></button>
     </div>

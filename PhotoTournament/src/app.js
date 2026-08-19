@@ -1,11 +1,13 @@
 (function () {
   const $ = (id) => document.getElementById(id);
   const MAX_EDGE = 1400; // スマホの写真をそのまま入れると重いので、この大きさまで縮める
+  const TAP_LOCK_MS = 250; // 連打で次の対戦まで勝手に決まってしまうのを防ぐ
 
   let record = null; // 保存する形（写真そのものと、選んだ結果の並び）
   let tournament = null; // 表の進行状態。record から組み直せる
   let draft = []; // 準備中の出場写真
   let view = 'home';
+  let lockedUntil = 0;
   const urls = new Map();
 
   function photoUrl(entry) {
@@ -31,7 +33,8 @@
 
   async function shrink(file) {
     try {
-      const bitmap = await createImageBitmap(file);
+      // スマホの写真は撮った向きが EXIF にしか入っていないことがあるので、それを反映させる
+      const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
       const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(bitmap.width * scale));
@@ -122,11 +125,21 @@
       $(`card-${side}`).onclick = () => choose(match.id, match[side]);
     }
     $('undo').disabled = tournament.picks.length === 0;
+    replayEnterAnimation();
     showView('match');
   }
 
+  function replayEnterAnimation() {
+    const versus = $('versus');
+    versus.classList.remove('enter');
+    void versus.offsetWidth; // 一度止めないと同じアニメーションが再生されない
+    versus.classList.add('enter');
+  }
+
   function choose(matchId, winnerId) {
+    if (Date.now() < lockedUntil) return; // 入れ替わった直後の連打は数えない
     if (!Bracket.pickWinner(tournament, matchId, winnerId)) return;
+    lockedUntil = Date.now() + TAP_LOCK_MS;
     record.picks = tournament.picks.slice();
     persist();
     if (Bracket.isFinished(tournament)) {
@@ -320,6 +333,7 @@
   window.__pt = {
     ready: true,
     getView: () => view,
+    canPick: () => Date.now() >= lockedUntil,
     getState: () => {
       if (!tournament) return null;
       const match = Bracket.currentMatch(tournament);
@@ -339,6 +353,14 @@
       return true;
     },
   };
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch((err) => {
+        console.warn('オフライン用の準備ができませんでした', err);
+      });
+    });
+  }
 
   renderHome();
 })();
