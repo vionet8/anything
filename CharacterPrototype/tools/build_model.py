@@ -96,6 +96,29 @@ SKIN_MIN_SATURATION = 0.08
 # maps alongside them carry no colour, so they are deliberately not listed.
 SKIN_IMAGES = ('F00_000_00_Face_00', 'F00_000_00_Body_00')
 
+# --- Rings ------------------------------------------------------------------
+# Her rings are painted into the body colour map, not modelled, so they cannot
+# be removed by dropping geometry the way a hair clip could -- the pixels have
+# to be repainted as skin. (Checked the normal map too: it is flat under them,
+# so there is no embossing left behind.)
+#
+# Two things make repainting safe. The search is restricted to triangles the
+# rig weights to finger bones, which puts the rest of the metal on this map --
+# the choker, the padlock necklace, the studded thigh strap -- out of reach by
+# construction rather than by a lucky colour threshold. Then within the fingers,
+# metal is picked out by being nearly colourless, which the skin never is.
+# Measured that way the rings come out on six proximal phalanges, which is
+# where a hand wears them.
+RING_IMAGE = 'F00_000_00_Body_00'
+RING_MAX_SATURATION = 45     # 0-255; the skin around them sits far above this
+RING_MIN_VALUE = 55          # ...and the black nail polish far below it
+RING_MAX_VALUE = 240
+RING_FEATHER = 3             # px: takes the antialiased edge along with the band
+RING_FILL_PASSES = 80        # enough to close the widest band from both sides
+# How much of a vertex's skin weight has to sit on finger bones to count as
+# finger. Anything lower drags in the knuckles and the back of the hand.
+FINGER_WEIGHT = 0.6
+
 
 def read_glb(path):
     with open(path, "rb") as f:
@@ -193,6 +216,137 @@ def lighten_skin(payload):
     saturation[skin] *= 1 - SKIN_DESATURATE
     value[skin] += (255 - value[skin]) * SKIN_LIGHTEN
     return _from_hsv(hsv, alpha)
+
+
+COMPONENT_TYPES = {5121: ("B", 1), 5123: ("H", 2), 5125: ("I", 4), 5126: ("f", 4)}
+ELEMENT_COUNTS = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
+
+
+def read_accessor(js, binary, index):
+    """One accessor as an (count, components) array, honouring byteStride."""
+    acc = js["accessors"][index]
+    view = js["bufferViews"][acc["bufferView"]]
+    base = view.get("byteOffset", 0) + acc.get("byteOffset", 0)
+    fmt, size = COMPONENT_TYPES[acc["componentType"]]
+    count = ELEMENT_COUNTS[acc["type"]]
+    stride = view.get("byteStride") or size * count
+    return np.array([
+        struct.unpack_from("<" + fmt * count, binary, base + i * stride)
+        for i in range(acc["count"])
+    ])
+
+
+def finger_uv_mask(js, binary, size):
+    """Boolean mask over the body map of the area finger geometry maps to.
+
+    Built from the rig rather than from coordinates typed in by hand, so it
+    stays correct if the mesh is ever rebuilt, and so it can be explained: a
+    triangle is finger if all three of its vertices are mostly weighted to
+    finger bones.
+    """
+    from PIL import ImageDraw
+
+    mesh_index = next(
+        i for i, mesh in enumerate(js["meshes"]) if "Body" in (mesh.get("name") or "")
+    )
+    skin_index = next(
+        node["skin"] for node in js["nodes"]
+        if node.get("mesh") == mesh_index and "skin" in node
+    )
+    node_names = [node.get("name", "") for node in js["nodes"]]
+    joints = js["skins"][skin_index]["joints"]
+    finger_joints = {
+        slot for slot, joint in enumerate(joints)
+        if any(part in node_names[joint]
+               for part in ("Thumb", "Index", "Middle", "Ring", "Little"))
+    }
+
+    mask = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(mask)
+    for prim in js["meshes"][mesh_index]["primitives"]:
+        if "JOINTS_0" not in prim["attributes"]:
+            continue
+        bones = read_accessor(js, binary, prim["attributes"]["JOINTS_0"])
+        weights = read_accessor(js, binary, prim["attributes"]["WEIGHTS_0"])
+        uv = read_accessor(js, binary, prim["attributes"]["TEXCOORD_0"])
+        share = sum(
+            np.where(np.isin(bones[:, c], list(finger_joints)), weights[:, c], 0)
+            for c in range(bones.shape[1])
+        )
+        is_finger = share > FINGER_WEIGHT
+        triangles = read_accessor(js, binary, prim["indices"])[:, 0].reshape(-1, 3)
+        for triangle in triangles[is_finger[triangles].all(axis=1)]:
+            draw.polygon(
+                [(float(uv[v][0]) * size, float(uv[v][1]) * size) for v in triangle],
+                fill=255,
+            )
+    return np.array(mask) > 0
+
+
+def _grow(mask, steps):
+    for _ in range(steps):
+        grown = mask.copy()
+        for shift in (1, -1):
+            grown |= np.roll(mask, shift, axis=0) | np.roll(mask, shift, axis=1)
+        mask = grown
+    return mask
+
+
+def _flood_fill_colour(rgb, holes, source, passes):
+    """Grow the surrounding colour inward over `holes`, one ring of pixels a pass.
+
+    A plain average of the whole neighbourhood would be enough for a flat patch;
+    growing inward instead follows the gradient the finger already has, so the
+    filled band does not read as a flat stripe under raking light.
+    """
+    out = rgb.astype(np.float32)
+    known = source & ~holes
+    for _ in range(passes):
+        remaining = holes & ~known
+        if not remaining.any():
+            break
+        total = np.zeros_like(out)
+        count = np.zeros(holes.shape, dtype=np.float32)
+        for axis, shift in ((0, 1), (0, -1), (1, 1), (1, -1)):
+            total += np.roll(out, shift, axis=axis) * np.roll(known, shift, axis=axis)[..., None]
+            count += np.roll(known, shift, axis=axis)
+        fillable = remaining & (count > 0)
+        if not fillable.any():
+            break
+        out[fillable] = total[fillable] / count[fillable][..., None]
+        known |= fillable
+    return out
+
+
+def remove_rings(payload, finger_mask):
+    """Repaint the rings out of the body colour map, as skin."""
+    image = Image.open(io.BytesIO(payload))
+    image.load()
+    image = image.convert("RGBA")
+    alpha = image.getchannel("A")
+    rgb = np.array(image.convert("RGB"))
+    hsv = np.array(image.convert("RGB").convert("HSV"), dtype=np.int32)
+    hue, saturation, value = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+
+    metal = (
+        (saturation < RING_MAX_SATURATION)
+        & (value > RING_MIN_VALUE)
+        & (value < RING_MAX_VALUE)
+    )
+    rings = _grow(finger_mask & metal, RING_FEATHER)
+    # Fill from skin only. Without this the black nail polish next door is a
+    # perfectly good neighbour as far as the fill is concerned, and it bleeds.
+    warm = (hue <= SKIN_HUE_MAX * 255) | (hue >= SKIN_HUE_MIN * 255)
+    skin = warm & (value >= SKIN_MIN_VALUE * 255) & (saturation >= SKIN_MIN_SATURATION * 255)
+
+    filled = _flood_fill_colour(rgb, rings, skin, RING_FILL_PASSES)
+    rgb[rings] = np.clip(filled[rings], 0, 255).astype(np.uint8)
+
+    out = Image.fromarray(rgb, "RGB")
+    out.putalpha(alpha)
+    buffer = io.BytesIO()
+    out.save(buffer, "PNG")
+    return buffer.getvalue(), int(rings.sum())
 
 
 def used_morph_targets(js):
@@ -428,6 +582,20 @@ def main():
     for i in hair_images:
         payloads[i] = recolour_hair(payloads[i])
     print(f"hair textures recoloured: {len(hair_images)}")
+
+    # Rings before the skin lift, so the pixels they leave behind are ordinary
+    # skin by the time the lift runs and come out the same colour as the finger
+    # around them, rather than as a patch at the upstream tone.
+    for i, name in names.items():
+        if name != RING_IMAGE:
+            continue
+        size = Image.open(io.BytesIO(payloads[i])).size[0]
+        payloads[i], painted = remove_rings(payloads[i], finger_uv_mask(js, binary, size))
+        print(f"ring pixels repainted as skin: {painted}")
+        # Loudly, rather than quietly shipping the rings back: this whole step
+        # is a colour match against an upstream file, and the failure mode if
+        # that file ever changes is finding nothing and saying nothing.
+        assert painted > 5000, f"ring mask matched almost nothing ({painted}px)"
 
     skin_images = [i for i, name in names.items() if name in SKIN_IMAGES]
     for i in skin_images:
