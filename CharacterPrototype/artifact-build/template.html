@@ -60,14 +60,58 @@
   .hud::before { top: -1px; left: -1px; border-right: none; border-bottom: none; }
   .hud::after { bottom: -1px; right: -1px; border-left: none; border-top: none; }
 
+  .hud-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 8px;
+  }
+
   .hud-title {
     font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
     font-size: 10px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--accent);
-    margin: 0 0 8px;
+    margin: 0;
   }
+
+  /* Close / reopen. Sized for a thumb rather than a cursor -- the panel covers
+     a third of a phone screen, which is where closing it actually matters. */
+  .hud-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    font: inherit;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--text-dim);
+    background: var(--bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .hud-button:hover { color: var(--text); border-color: var(--accent); }
+
+  .hud-head .hud-button { margin: -6px -8px -6px 0; }
+
+  #hud-open {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    backdrop-filter: blur(6px);
+    font-size: 15px;
+  }
+
+  [hidden] { display: none !important; }
 
   .keys {
     display: flex;
@@ -173,8 +217,11 @@
 </style>
 <canvas id="scene"></canvas>
 <div id="loading">MODEL LOADING…</div>
-<div class="hud">
-  <p class="hud-title">Controls</p>
+<div class="hud" id="hud">
+  <div class="hud-head">
+    <p class="hud-title">Controls</p>
+    <button type="button" class="hud-button" id="hud-close" aria-label="操作パネルを閉じる" aria-controls="hud">×</button>
+  </div>
   <div class="keys">
     <span class="keycap">W</span><span class="keycap">A</span><span class="keycap">S</span><span class="keycap">D</span>
     <span class="keys-label">移動</span>
@@ -216,6 +263,36 @@
     <span id="state-label" data-state="idle">idle</span>
   </div>
 </div>
+<button type="button" class="hud-button" id="hud-open" aria-label="操作パネルを開く" aria-controls="hud" hidden>☰</button>
 <div id="touch-pad">HOLD<br />TO WALK</div>
+<script>
+  // Open/closed is remembered per viewer, so someone who closed the panel to
+  // look at her does not get it back on every reload. Storage can throw
+  // outright (private windows, blocked site data), hence the try/catch rather
+  // than a null check -- the panel still works, it just forgets.
+  (function () {
+    var hud = document.getElementById('hud');
+    var closeButton = document.getElementById('hud-close');
+    var openButton = document.getElementById('hud-open');
+    var KEY = 'hud-closed';
+
+    function apply(closed, remember) {
+      hud.hidden = closed;
+      openButton.hidden = !closed;
+      if (remember) {
+        try { localStorage.setItem(KEY, closed ? '1' : '0'); } catch (e) { /* not fatal */ }
+      }
+    }
+
+    var stored = null;
+    try { stored = localStorage.getItem(KEY); } catch (e) { /* not fatal */ }
+    apply(stored === '1', false);
+
+    // Blur after clicking, or the button keeps keyboard focus and swallows the
+    // space bar as "press me again" instead of letting her jump.
+    closeButton.addEventListener('click', function () { apply(true, true); openButton.focus(); openButton.blur(); });
+    openButton.addEventListener('click', function () { apply(false, true); closeButton.focus(); closeButton.blur(); });
+  })();
+</script>
 <script>window.__MODEL_BASE64__ = "__MODEL_BASE64_PLACEHOLDER__";</script>
 <script>__BUNDLE_JS_PLACEHOLDER__</script>

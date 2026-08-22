@@ -32164,6 +32164,21 @@ void main() {
       if (bone) bone.rotation.set(x, sign * y, sign * z);
     });
   }
+  var FACE_CAMERA_RATE = 6;
+  var FACE_CAMERA_SNAP = 0.01;
+  var autoFace = true;
+  function turnToFaceCamera(dt) {
+    if (!autoFace) return;
+    const toCameraX = camera.position.x - state.position.x;
+    const toCameraZ = camera.position.z - state.position.z;
+    if (toCameraX * toCameraX + toCameraZ * toCameraZ < 1e-4) return;
+    const target = Math.atan2(toCameraX, toCameraZ);
+    let delta = target - facing;
+    delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+    facing = Math.abs(delta) < FACE_CAMERA_SNAP ? target : facing + delta * Math.min(1, dt * FACE_CAMERA_RATE);
+    vrm.scene.rotation.y = facing + modelYaw;
+    state.heading = facing;
+  }
   var walkCycle = 0;
   var actionCycle = 0;
   var prevAction = "idle";
@@ -32223,8 +32238,6 @@ void main() {
     bones.rightLowerArm.rotation.set(0.1, 1.7, 0);
     const SWING_DEG = 30;
     bones.rightHand.rotation.set(-1, Math.sin(actionCycle) * (SWING_DEG * Math.PI / 180), 0);
-    bones.chest.rotation.y = -0.05;
-    bones.head.rotation.y = -0.06;
     setAnimName("wave");
   }
   function applyPeace(dt) {
@@ -32233,8 +32246,6 @@ void main() {
     bones.rightLowerArm.rotation.set(0.1, 1.7, 0);
     bones.rightHand.rotation.set(-1, 0, 0);
     curlSpareFingers("right", 1);
-    bones.chest.rotation.y = -0.05;
-    bones.head.rotation.y = -0.06;
     bones.head.rotation.x = Math.sin(actionCycle * 0.6) * 0.015;
     setAnimName("peace");
   }
@@ -32450,27 +32461,14 @@ void main() {
       applyJump();
     } else if (moving) {
       applyWalk(running, dt);
-    } else if (landingRecoverT > 0) {
-      applyLanding();
-    } else if (keys.wave) {
-      applyWave(dt);
-    } else if (keys.crouch) {
-      applyCrouch(dt);
-    } else if (keys.doublePeace) {
-      applyDoublePeace(dt);
-    } else if (keys.peace) {
-      applyPeace(dt);
     } else {
-      const toCam = new Vector2(camera.position.x - state.position.x, camera.position.z - state.position.z);
-      if (toCam.lengthSq() > 1e-4) {
-        const targetFacing = Math.atan2(toCam.x, toCam.y);
-        let delta = targetFacing - facing;
-        delta = Math.atan2(Math.sin(delta), Math.cos(delta));
-        facing += delta * Math.min(1, dt * 3);
-        vrm.scene.rotation.y = facing + modelYaw;
-        state.heading = facing;
-      }
-      applyIdle(dt);
+      turnToFaceCamera(dt);
+      if (landingRecoverT > 0) applyLanding();
+      else if (keys.wave) applyWave(dt);
+      else if (keys.crouch) applyCrouch(dt);
+      else if (keys.doublePeace) applyDoublePeace(dt);
+      else if (keys.peace) applyPeace(dt);
+      else applyIdle(dt);
     }
     applyGaze(dt);
     conformPoseToRig();
@@ -32602,6 +32600,12 @@ void main() {
     setPausedForTest: (on) => {
       paused = on;
     },
+    // Lets a test hold her heading still. Only the gaze tests want this: they
+    // put the camera at a known angle off her facing, which she would otherwise
+    // turn to cancel out.
+    setAutoFaceForTest: (on) => {
+      autoFace = on;
+    },
     // Any node by name, so secondary motion can be measured on bones the
     // humanoid map does not cover — hair tips and bust joints are spring bones,
     // not humanoid bones.
@@ -32633,6 +32637,10 @@ void main() {
         stiffness: joint.settings.stiffness
       }));
     },
+    // Where the camera actually is, so a test can check she is facing it rather
+    // than checking her heading against where the camera was put — the follow
+    // camera moves with her, so those are not the same question.
+    getCameraPosition: () => ({ x: camera.position.x, y: camera.position.y, z: camera.position.z }),
     // Park the camera for a screenshot. Goes through OrbitControls' target
     // rather than camera.lookAt so the next controls.update() doesn't undo it.
     setCameraForTest: (position, target) => {

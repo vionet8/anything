@@ -391,12 +391,14 @@ test('waving wears a smile of its own', async ({ page }) => {
   expect(smile).toBeGreaterThan(0.6);
 });
 
-// Gaze is measured while a pose is held, because a held pose leaves her body
-// heading alone — in idle she turns to face the camera, which would hide any
-// tracking behind the body turn. 'wave' is used rather than a peace pose
-// because the peace smile closes her eyes.
+// Gaze is measured with the face-camera turn switched off, because she now
+// turns to face the camera in every standing state — including while holding a
+// pose, which is what this used to lean on. Left running, the body turn would
+// cancel the angle under test before the gaze could be read. 'wave' is used
+// rather than a peace pose because the peace smile closes her eyes.
 async function gazeAt(page, degreesOffHerFacing) {
   return page.evaluate((degrees) => {
+    window.__char.setAutoFaceForTest(false);
     const head = window.__char.getBoneWorld('head');
     const angle = window.__char.getState().heading + degrees * Math.PI / 180;
     const camera = {
@@ -433,6 +435,7 @@ async function gazeAt(page, degreesOffHerFacing) {
     );
 
     window.__char.releaseActionsForTest();
+    window.__char.setAutoFaceForTest(true);
     return { gazeAngle: state.gazeAngle, gazeWeight: state.gazeWeight, alignment, trueAngle };
   }, degreesOffHerFacing);
 }
@@ -461,4 +464,38 @@ test('idle turns the character to face the camera instead of staying at the last
   await page.waitForTimeout(2500);
   const idleState = await page.evaluate(() => window.__char.getState());
   expect(idleState.heading).not.toBeCloseTo(afterMove.heading, 1);
+});
+
+// How far off the camera she is standing, in degrees, measured rather than
+// inferred from `heading`: she moves while walking, so the direction to the
+// camera is not the direction it started in.
+async function degreesOffTheCamera(page) {
+  return page.evaluate(() => {
+    const state = window.__char.getState();
+    const camera = window.__char.getCameraPosition();
+    const wanted = Math.atan2(camera.x - state.position.x, camera.z - state.position.z);
+    const delta = wanted - state.heading;
+    return Math.abs(Math.atan2(Math.sin(delta), Math.cos(delta))) * 180 / Math.PI;
+  });
+}
+
+test('standing still, she comes round to face the camera exactly', async ({ page }) => {
+  await page.evaluate(() => window.__char.moveForTest('right', 500, false));
+  await page.waitForTimeout(2500);
+  // Tight on purpose. The turn used to be an exponential ease with no
+  // stopping condition, which left her parked several degrees off — visibly
+  // standing at an angle — and the further behind the frame rate, the worse.
+  expect(await degreesOffTheCamera(page)).toBeLessThan(1);
+});
+
+test('a held pose faces the camera too, not wherever she stopped walking', async ({ page }) => {
+  await page.evaluate(() => window.__char.moveForTest('left', 600, false));
+  await page.keyboard.down('KeyV');
+  await page.waitForTimeout(2500);
+  const off = await degreesOffTheCamera(page);
+  const state = await page.evaluate(() => window.__char.getState());
+  await page.keyboard.up('KeyV');
+
+  expect(state.animName).toBe('peace');
+  expect(off).toBeLessThan(1);
 });

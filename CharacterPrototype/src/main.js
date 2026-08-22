@@ -476,6 +476,40 @@ function curlSpareFingers(side, sign) {
   });
 }
 
+// Turning her to face the camera when she is standing still — this is what
+// lets you see her face without fighting the camera.
+//
+// The snap is the point. An exponential ease never actually arrives, and the
+// step's dt is capped (so a slow frame advances the ease by less than the real
+// time it took), which on a slow device leaves the last few degrees taking
+// seconds — measured at 7 degrees off after a full 8 seconds of standing
+// still on a throttled renderer. That residue is what read as "she is always
+// standing at a slight angle". Easing the first 99% still looks better than
+// snapping the whole turn, so both are kept.
+const FACE_CAMERA_RATE = 6;      // per second, of the remaining angle
+const FACE_CAMERA_SNAP = 0.01;   // rad; about half a degree, below seeing
+
+// Held off only by the gaze tests, which need her heading to stay put while
+// they move the camera around her — with this on, no pose leaves it alone.
+let autoFace = true;
+
+function turnToFaceCamera(dt) {
+  if (!autoFace) return;
+  const toCameraX = camera.position.x - state.position.x;
+  const toCameraZ = camera.position.z - state.position.z;
+  if (toCameraX * toCameraX + toCameraZ * toCameraZ < 0.0001) return;
+
+  const target = Math.atan2(toCameraX, toCameraZ);
+  let delta = target - facing;
+  delta = Math.atan2(Math.sin(delta), Math.cos(delta)); // shortest-path wrap
+  facing = Math.abs(delta) < FACE_CAMERA_SNAP
+    ? target
+    : facing + delta * Math.min(1, dt * FACE_CAMERA_RATE);
+
+  vrm.scene.rotation.y = facing + modelYaw;
+  state.heading = facing;
+}
+
 let walkCycle = 0;
 let actionCycle = 0;
 let prevAction = 'idle';
@@ -572,8 +606,6 @@ function applyWave(dt) {
   // through both swing extremes, not just the rest frame).
   const SWING_DEG = 30;
   bones.rightHand.rotation.set(-1.0, Math.sin(actionCycle) * (SWING_DEG * Math.PI / 180), 0);
-  bones.chest.rotation.y = -0.05;
-  bones.head.rotation.y = -0.06;
   setAnimName('wave');
 }
 
@@ -586,8 +618,6 @@ function applyPeace(dt) {
   bones.rightLowerArm.rotation.set(0.1, 1.7, 0);
   bones.rightHand.rotation.set(-1.0, 0, 0);
   curlSpareFingers('right', 1);
-  bones.chest.rotation.y = -0.05;
-  bones.head.rotation.y = -0.06;
   bones.head.rotation.x = Math.sin(actionCycle * 0.6) * 0.015; // subtle breathing, not a stiff freeze
   setAnimName('peace');
 }
@@ -964,30 +994,18 @@ function step(dt) {
     applyJump();
   } else if (moving) {
     applyWalk(running, dt);
-  } else if (landingRecoverT > 0) {
-    applyLanding();
-  } else if (keys.wave) {
-    applyWave(dt);
-  } else if (keys.crouch) {
-    applyCrouch(dt);
-  } else if (keys.doublePeace) {
-    applyDoublePeace(dt);
-  } else if (keys.peace) {
-    applyPeace(dt);
   } else {
-    // Face the camera when idle, instead of staying turned wherever the
-    // last movement left her — this is what actually lets you see her
-    // face without fighting the camera.
-    const toCam = new THREE.Vector2(camera.position.x - state.position.x, camera.position.z - state.position.z);
-    if (toCam.lengthSq() > 0.0001) {
-      const targetFacing = Math.atan2(toCam.x, toCam.y);
-      let delta = targetFacing - facing;
-      delta = Math.atan2(Math.sin(delta), Math.cos(delta)); // shortest-path wrap
-      facing += delta * Math.min(1, dt * 3.0);
-      vrm.scene.rotation.y = facing + modelYaw;
-      state.heading = facing;
-    }
-    applyIdle(dt);
+    // Everything she does standing still, she does facing you. This used to
+    // run for idle alone, which left her holding a peace sign at whatever
+    // angle she happened to stop walking at.
+    turnToFaceCamera(dt);
+
+    if (landingRecoverT > 0) applyLanding();
+    else if (keys.wave) applyWave(dt);
+    else if (keys.crouch) applyCrouch(dt);
+    else if (keys.doublePeace) applyDoublePeace(dt);
+    else if (keys.peace) applyPeace(dt);
+    else applyIdle(dt);
   }
 
   applyGaze(dt);
@@ -1130,6 +1148,10 @@ window.__char = {
     step(0.001);
   },
   setPausedForTest: (on) => { paused = on; },
+  // Lets a test hold her heading still. Only the gaze tests want this: they
+  // put the camera at a known angle off her facing, which she would otherwise
+  // turn to cancel out.
+  setAutoFaceForTest: (on) => { autoFace = on; },
   // Any node by name, so secondary motion can be measured on bones the
   // humanoid map does not cover — hair tips and bust joints are spring bones,
   // not humanoid bones.
@@ -1163,6 +1185,10 @@ window.__char = {
       stiffness: joint.settings.stiffness,
     }));
   },
+  // Where the camera actually is, so a test can check she is facing it rather
+  // than checking her heading against where the camera was put — the follow
+  // camera moves with her, so those are not the same question.
+  getCameraPosition: () => ({ x: camera.position.x, y: camera.position.y, z: camera.position.z }),
   // Park the camera for a screenshot. Goes through OrbitControls' target
   // rather than camera.lookAt so the next controls.update() doesn't undo it.
   setCameraForTest: (position, target) => {
