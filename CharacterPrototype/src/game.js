@@ -16,7 +16,17 @@ export const POSES = [
   { key: 'wave', label: '手を振る', hint: 'E' },
   { key: 'crouch', label: 'しゃがむ', hint: 'C' },
   { key: 'idle', label: '自然体', hint: '—' },
+  // The moving one. A dance brief is asking for a moment rather than a pose,
+  // which is a different skill and gets the burst.
+  { key: 'dance', label: 'ダンス', hint: 'R', moving: true },
 ];
+
+// How far above her head her hands have to be to count as the peak of the
+// routine. Measured off the rig: the routine tops out at 0.28, and this
+// threshold is met on about 8% of frames — a sixth of a second in a
+// two-and-a-bit second loop, which is roughly the window a burst covers.
+export const DANCE_PEAK_REACH = 0.15;
+const BURST_FRAMES = 12;
 
 export const EXPRESSIONS = [
   { key: 'happy', label: '笑顔', hint: '1' },
@@ -69,6 +79,7 @@ const SHOTS_PER_SESSION = 3;
 // thing does not quietly move the star thresholds.
 const POINTS = {
   pose: 25, expression: 25, inFrame: 10, framing: 15, centred: 10, brightness: 15, light: 15,
+  moment: 25,
 };
 const STAR_THRESHOLDS = [85, 60, 30];   // 3 stars, 2 stars, 1 star
 
@@ -136,6 +147,21 @@ export function scoreShot(request, shot) {
           ? '顔が暗く沈んでいます。逆光では明るさを＋に補正します'
           : '顔が明るく飛んでいます。明るさを−に戻しましょう',
   });
+
+  // A dance brief is asking you to catch a moment, not to hold a pose, so the
+  // moment is what is scored — measured off where her hands actually were in
+  // the captured frame rather than off where the routine's clock says they
+  // should have been.
+  if (request.pose === 'dance') {
+    const reachOk = shot.reach >= DANCE_PEAK_REACH;
+    add({
+      key: 'moment', label: '決めの瞬間', max: POINTS.moment, ok: reachOk,
+      hint: reachOk ? null
+        : shot.reach >= DANCE_PEAK_REACH * 0.6
+          ? 'あと少し早い／遅いです。腕が伸びきった瞬間を狙いましょう'
+          : '決めのポーズから外れています。連写して選ぶと当たります',
+    });
+  }
 
   if (request.light) {
     const wanted = byKey(LIGHTS, request.light);
@@ -229,6 +255,13 @@ const STYLE = `
   width: 68px; height: 68px; border-radius: 50%; background: #ffb454; border: 4px solid #0c0e14;
   box-shadow: 0 0 0 2px #ffb454; cursor: pointer; pointer-events: auto; }
 .pg-shutter:active { transform: translateX(-50%) scale(0.94); }
+.pg-burst { display: flex; align-items: center; justify-content: center; }
+.pg-burst-label { font-size: 12px; font-weight: 700; color: #0c0e14; letter-spacing: 0.04em; }
+.pg-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 12px 0; }
+.pg-frame { padding: 0; border: 1px solid #2a3040; border-radius: 4px; background: #0c0e14;
+  cursor: pointer; overflow: hidden; line-height: 0; }
+.pg-frame:hover { border-color: #ffb454; }
+.pg-frame canvas { width: 100%; display: block; }
 .pg-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
 .pg-flash.pg-firing { animation: pg-flash 0.4s ease-out; }
 @keyframes pg-flash { from { opacity: 0.85; } to { opacity: 0; } }
@@ -271,7 +304,7 @@ export function initPhotoGame(api) {
   // Starts in 'free' rather than behind a title card: the page is a character
   // sandbox as well as a game, and a modal over the canvas on load takes the
   // camera drag away from anyone who just wants to look at her.
-  const session = { shots: [], request: null, phase: 'free' };
+  const session = { shots: [], request: null, burst: null, phase: 'free' };
 
   const el = (tag, className, html) => {
     const node = document.createElement(tag);
@@ -284,6 +317,7 @@ export function initPhotoGame(api) {
     root.innerHTML = '';
     if (session.phase === 'free') return renderFree();
     if (session.phase === 'shooting') return renderShooting();
+    if (session.phase === 'picking') return renderPicking();
     if (session.phase === 'result') return renderResult();
     if (session.phase === 'album') return renderAlbum();
   }
@@ -343,9 +377,11 @@ export function initPhotoGame(api) {
     root.append(panel);
     renderShootingChips();
 
-    const shutter = el('button', 'pg-shutter');
-    shutter.setAttribute('aria-label', 'シャッター');
-    shutter.addEventListener('click', shoot);
+    const moving = (byKey(POSES, session.request.pose) || {}).moving;
+    const shutter = el('button', moving ? 'pg-shutter pg-burst' : 'pg-shutter');
+    shutter.setAttribute('aria-label', moving ? '連写' : 'シャッター');
+    if (moving) shutter.append(el('span', 'pg-burst-label', '連写'));
+    shutter.addEventListener('click', moving ? shootBurst : shoot);
     root.append(shutter, el('div', 'pg-flash'));
   }
 
@@ -479,13 +515,52 @@ export function initPhotoGame(api) {
   function shoot() {
     const flash = root.querySelector('.pg-flash');
     if (flash) flash.classList.add('pg-firing');
-    api.takePhoto((shot) => {
-      shot.score = scoreShot(session.request, shot);
-      shot.request = session.request;
-      session.shots.push(shot);
-      session.phase = 'result';
+    api.takePhoto(keep);
+  }
+
+  function keep(shot) {
+    shot.score = scoreShot(session.request, shot);
+    shot.request = session.request;
+    session.shots.push(shot);
+    session.phase = 'result';
+    render();
+  }
+
+  // Burst, then choose. Shooting a moving subject and then picking the frame
+  // that caught it is one skill in two halves, and the second half is the one
+  // people skip.
+  function shootBurst() {
+    const flash = root.querySelector('.pg-flash');
+    if (flash) flash.classList.add('pg-firing');
+    api.takeBurst(BURST_FRAMES, (frames) => {
+      session.burst = frames;
+      session.phase = 'picking';
       render();
     });
+  }
+
+  function renderPicking() {
+    const sheet = el('div', 'pg-sheet');
+    const card = el('div', 'pg-card');
+    card.append(
+      el('h2', null, 'どれを残しますか'),
+      el('p', null, `${session.burst.length}枚撮れました。決めの瞬間が写っている1枚を選んでください。`),
+    );
+    const strip = el('div', 'pg-strip');
+    for (const frame of session.burst) {
+      const button = el('button', 'pg-frame');
+      // The frames are canvases, not images: encoding twelve JPEGs to show
+      // twelve thumbnails would cost more than the burst did.
+      button.append(frame.canvas);
+      button.addEventListener('click', () => {
+        session.burst = null;
+        keep(api.encodeFrame(frame));
+      });
+      strip.append(button);
+    }
+    card.append(strip);
+    sheet.append(card);
+    root.append(sheet);
   }
 
   // The brief's chips light up as she matches it, so the panel doubles as a
@@ -554,6 +629,21 @@ export function initPhotoGame(api) {
         });
       });
     }),
+    reachForTest: () => api.danceReach(),
+    burstForTest: () => new Promise((resolve) => {
+      api.takeBurst(BURST_FRAMES, (frames) => {
+        session.burst = frames;
+        session.phase = 'picking';
+        render();
+        resolve(frames.map((frame, index) => ({ index, reach: frame.reach })));
+      });
+    }),
+    pickForTest: (index) => {
+      const frame = session.burst[index];
+      session.burst = null;
+      keep(api.encodeFrame(frame));
+      return { score: frame.score, reach: frame.reach };
+    },
     setSunForTest: (azimuth, elevation) => api.setSun(azimuth, elevation),
     lightAngleForTest: () => api.lightAngle(),
     getExposureForTest: () => api.getExposure(),

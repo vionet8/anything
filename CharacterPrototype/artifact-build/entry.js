@@ -203,7 +203,7 @@ const state = {
   heading: 0,
 };
 
-const keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false, peace: false, doublePeace: false };
+const keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false, peace: false, doublePeace: false, dance: false };
 
 // Jump is a one-shot trigger (a single keydown), not a held state like the
 // others, so it lives outside `keys` and is driven by startJump() directly.
@@ -274,6 +274,9 @@ function onKey(e, down) {
       break;
     case 'KeyB':
       keys.doublePeace = down;
+      break;
+    case 'KeyR':
+      keys.dance = down;
       break;
     case 'Space':
       e.preventDefault(); // stop the page from scrolling on spacebar
@@ -569,8 +572,12 @@ CHARACTER_SOURCES.forEach((source, index) => {
           keys.crouch = name === 'crouch';
           keys.peace = name === 'peace';
           keys.doublePeace = name === 'double-peace';
+          keys.dance = name === 'dance';
         },
         setExpression: (name) => { heldExpression = name; },
+        danceReach,
+        takeBurst,
+        encodeFrame,
       });
     }
   }, (err) => {
@@ -850,6 +857,79 @@ function applyDoublePeace(dt) {
   bones.head.rotation.x = 0.05 + Math.sin(actionCycle * 0.6) * 0.015;
   bones.chest.rotation.x = 0.03;
   setAnimName('double-peace');
+}
+
+// ---- Dance ----
+// A short routine on a fixed beat, built to give a photographer something to
+// wait for. A smooth loop is unphotographable: every frame looks like every
+// other frame, so there is no moment to catch and nothing to learn about
+// timing. This one has a peak — both arms thrown up, on the hop — that lasts a
+// fraction of a second and then it is gone.
+const DANCE_BPM = 104;
+const DANCE_BEAT = 60 / DANCE_BPM;
+const DANCE_BARS = 4;                          // beats before the routine repeats
+const DANCE_HOP_HEIGHT = 0.09;
+
+let danceTime = 0;
+
+function applyDance(dt) {
+  danceTime = (danceTime + dt) % (DANCE_BEAT * DANCE_BARS);
+  const beat = danceTime / DANCE_BEAT;         // 0..4
+  const swing = Math.sin(beat * Math.PI);      // one arc per beat
+  const bounce = Math.abs(Math.sin(beat * Math.PI));
+
+  // The peak lands on the fourth beat: arms overhead, up on the toes. Eased
+  // with a power curve rather than a sine so it is genuinely brief — the
+  // window you have to hit is about a sixth of a second — which is why the
+// burst exists.
+  const toPeak = Math.max(0, 1 - Math.abs(beat - 3.5) / 0.7);
+  const peak = Math.pow(toPeak, 1.6);
+
+  // Z is the axis that raises an arm on this rig: the rest pose holds the right
+  // arm at +1.3 (hanging), 0 is straight out to the side, and negative is
+  // overhead. X barely lifts at all — the jump pose learned the same thing the
+  // hard way. Written the other way round first, and she danced the whole
+  // routine with both arms held out sideways.
+  const lift = 0.95 - peak * 1.75 + swing * 0.30;
+  bones.rightUpperArm.rotation.set(-0.1 - peak * 0.15, -0.2 + peak * 0.2, lift);
+  bones.leftUpperArm.rotation.set(-0.1 - peak * 0.15, 0.2 - peak * 0.2, -lift);
+  bones.rightLowerArm.rotation.set(0, 1.0 - peak * 0.95, 0);
+  bones.leftLowerArm.rotation.set(0, -1.0 + peak * 0.95, 0);
+
+  // Hips and shoulders counter-rotate on the offbeat, which is what makes it
+  // read as dancing rather than as arm-waving.
+  const sway = Math.sin(beat * Math.PI * 0.5);
+  bones.hips.rotation.set(0, sway * 0.22, -sway * 0.1);
+  bones.chest.rotation.set(0.03 + peak * -0.12, -sway * 0.3, sway * 0.12);
+  bones.head.rotation.set(-peak * 0.18, -sway * 0.18, sway * 0.1);
+
+  const knee = (1 - bounce) * 0.35 + peak * -0.2;
+  bones.leftUpperLeg.rotation.set(-knee * 0.5, 0, 0.04);
+  bones.rightUpperLeg.rotation.set(-knee * 0.5, 0, -0.04);
+  bones.leftLowerLeg.rotation.set(knee, 0, 0);
+  bones.rightLowerLeg.rotation.set(knee, 0, 0);
+
+  bones.hips.position.y = hipsBaseY + peak * DANCE_HOP_HEIGHT - (1 - bounce) * 0.03;
+  setAnimName('dance');
+}
+
+// What a photographer is actually waiting for, measured off the rig rather
+// than off the beat clock: how far her hands are above her head. Reading the
+// clock would score the moment the routine *should* be at, which is not the
+// same as the frame that was captured.
+function danceReach() {
+  if (!vrm || !vrm.humanoid) return 0;
+  const head = vrm.humanoid.getRawBoneNode('head');
+  const left = vrm.humanoid.getRawBoneNode('leftHand');
+  const right = vrm.humanoid.getRawBoneNode('rightHand');
+  if (!head || !left || !right) return 0;
+  for (const bone of [head, left, right]) bone.updateWorldMatrix(true, false);
+  const headY = new THREE.Vector3().setFromMatrixPosition(head.matrixWorld).y;
+  const handY = Math.max(
+    new THREE.Vector3().setFromMatrixPosition(left.matrixWorld).y,
+    new THREE.Vector3().setFromMatrixPosition(right.matrixWorld).y
+  );
+  return handY - headY;
 }
 
 function applyCrouch(dt) {
@@ -1204,6 +1284,7 @@ function step(dt) {
     else if (keys.crouch) applyCrouch(dt);
     else if (keys.doublePeace) applyDoublePeace(dt);
     else if (keys.peace) applyPeace(dt);
+    else if (keys.dance) applyDance(dt);
     else applyIdle(dt);
   }
 
@@ -1322,9 +1403,8 @@ function runAutoExposure(elapsed) {
 // Average brightness of the frame where her face is, which is what the photo
 // is actually judged on. Sampled from the rendered frame rather than from the
 // lighting model, so it accounts for the exposure the player chose.
-function sampleFaceLuma(framing) {
+function sampleFaceLuma(framing, canvas = renderer.domElement) {
   if (!framing || framing.behindCamera) return null;
-  const canvas = renderer.domElement;
   // framing.x/y are fractions of the frame from the centre; y is up in NDC and
   // down in canvas pixels.
   const centreX = (0.5 + framing.x) * canvas.width;
@@ -1372,6 +1452,64 @@ function takePhoto(callback) {
   pendingShot = callback;
 }
 
+// A frame is kept as a canvas rather than as a JPEG. Encoding is the expensive
+// half by a wide margin — a burst that encoded every frame ran at about three
+// frames a second, which is not a burst, and worse, it sampled the dance in
+// slow motion and sailed straight past the peak it was supposed to catch.
+// Blitting to a canvas is a GPU copy and keeps the run at frame rate.
+// Burst frames are scaled down; a single shot is not. Holding twelve
+// full-size copies to choose between is a lot of memory for thumbnails.
+// Burst frames are scaled down; a single shot is not. Twelve full-size copies
+// held in memory to choose between is a lot for what are thumbnails.
+const BURST_MAX_EDGE = 640;
+
+function captureFrame({ measureLuma = true, maxEdge = Infinity } = {}) {
+  const source = renderer.domElement;
+  const scale = Math.min(1, maxEdge / Math.max(source.width, source.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(source.width * scale);
+  canvas.height = Math.round(source.height * scale);
+  canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
+
+  const framing = measureFraming();
+  return {
+    canvas,
+    state: window.__char.getState(),
+    framing,
+    // Reading pixels back off the GPU is the expensive part of all this, and a
+    // burst frame does not need its brightness until it is the one chosen —
+    // by which point it can be measured off the copy instead, which is cheap.
+    faceLuma: measureLuma ? sampleFaceLuma(framing) : null,
+    lightAngle: lightAngleDegrees(),
+    reach: danceReach(),
+    exposure: { auto: autoExposure, compensation: exposureCompensation },
+  };
+}
+
+function encodeFrame(frame) {
+  if (frame.faceLuma === null) frame.faceLuma = sampleFaceLuma(frame.framing, frame.canvas);
+  if (!frame.dataUrl) frame.dataUrl = frame.canvas.toDataURL('image/jpeg', 0.85);
+  return frame;
+}
+
+// A burst, the way a phone shoots a moving subject: hold it down, get a run of
+// frames, keep the one that caught the moment.
+//
+// Measured in seconds, not in frames — the third time this lesson has come up
+// in this file. A twelve-frame burst is a fifth of a second on a fast machine
+// and seven seconds on a slow one, which is not the same photograph at all;
+// this way the burst covers the same slice of the dance either way, and a slow
+// device gets fewer frames of it rather than a different moment.
+const BURST_SECONDS = 0.6;
+let burst = null;
+
+function takeBurst(maxFrames, callback) {
+  burst = {
+    frames: [], callback, maxFrames, elapsed: 0, sinceFrame: Infinity,
+    spacing: BURST_SECONDS / maxFrames,
+  };
+}
+
 // Set by the test hooks so a screenshot can catch a moment that the real-time
 // loop would otherwise have run straight past — the apex of a jump lasts about
 // one frame, and the rAF loop lands her before the screenshot is taken.
@@ -1392,15 +1530,20 @@ function animate() {
   if (pendingShot) {
     const deliver = pendingShot;
     pendingShot = null;
-    const framing = measureFraming();
-    deliver({
-      dataUrl: renderer.domElement.toDataURL('image/jpeg', 0.85),
-      state: window.__char.getState(),
-      framing,
-      faceLuma: sampleFaceLuma(framing),
-      lightAngle: lightAngleDegrees(),
-      exposure: { auto: autoExposure, compensation: exposureCompensation },
-    });
+    deliver(encodeFrame(captureFrame()));
+  }
+  if (burst) {
+    burst.elapsed += dt;
+    burst.sinceFrame += dt;
+    if (burst.sinceFrame >= burst.spacing && burst.frames.length < burst.maxFrames) {
+      burst.sinceFrame = 0;
+      burst.frames.push(captureFrame({ measureLuma: false, maxEdge: BURST_MAX_EDGE }));
+    }
+    if (burst.elapsed >= BURST_SECONDS || burst.frames.length >= burst.maxFrames) {
+      const finished = burst;
+      burst = null;
+      finished.callback(finished.frames);
+    }
   }
   if (!paused && autoExposureEnabled) {
     sinceMetered += dt;

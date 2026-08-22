@@ -571,6 +571,82 @@ test('the framing bands tell a tight shot from a loose one', async ({ page }) =>
 // Driven through the real buttons rather than the test hooks, because the
 // thing under test here is the session flow itself: three shots, a result
 // after each, and an album at the end.
+test('the dance has a peak worth waiting for, and it is brief', async ({ page }) => {
+  test.setTimeout(60000);
+  await page.keyboard.down('KeyR');
+  await page.waitForTimeout(400);
+  const samples = await page.evaluate(async () => {
+    const out = [];
+    for (let i = 0; i < 150; i++) {
+      out.push(window.__game.reachForTest());
+      await new Promise((frame) => requestAnimationFrame(frame));
+    }
+    return out;
+  });
+  const state = await page.evaluate(() => window.__char.getState().animName);
+  await page.keyboard.up('KeyR');
+
+  expect(state).toBe('dance');
+  // Hands well above her head at the peak, well below it the rest of the time.
+  expect(Math.max(...samples)).toBeGreaterThan(0.2);
+  expect(Math.min(...samples)).toBeLessThan(-0.2);
+  // And the window is a window: if most of the routine qualified there would
+  // be no moment to catch.
+  const atPeak = samples.filter((reach) => reach >= 0.15).length / samples.length;
+  expect(atPeak).toBeGreaterThan(0.02);
+  expect(atPeak).toBeLessThan(0.25);
+});
+
+test('a burst spans the moment, and picking the right frame is what scores', async ({ page }) => {
+  test.setTimeout(60000);
+  await page.evaluate(() => window.__game.startForTest(
+    { pose: 'dance', expression: 'happy', framing: 'medium' }
+  ));
+  await page.evaluate(() => {
+    const head = window.__char.getBoneWorld('head');
+    window.__char.setCameraForTest(
+      { x: head.x, y: head.y - 0.3, z: head.z - 2.6 }, { x: head.x, y: head.y - 0.3, z: head.z }
+    );
+    window.__game.setSunForTest(Math.PI, 0.3);
+  });
+  await page.keyboard.down('KeyR');
+  await page.keyboard.down('Digit1');
+  await page.waitForTimeout(1200);
+
+  // Take bursts until one of them contains the peak. The burst covers a fixed
+  // slice of time, so whether it catches the peak depends on when it started —
+  // which is the game, and which is also why this loops rather than asserting
+  // that any one burst has it.
+  let frames = [];
+  for (let attempt = 0; attempt < 8 && !frames.some((f) => f.reach >= 0.15); attempt++) {
+    frames = await page.evaluate(() => window.__game.burstForTest());
+    if (!frames.some((f) => f.reach >= 0.15)) {
+      await page.evaluate(() => window.__game.startForTest(window.__game.getRequest()));
+      await page.waitForTimeout(150);
+    }
+  }
+  expect(frames.length, 'frames in a burst').toBeGreaterThan(1);
+  const best = frames.reduce((a, b) => (a.reach > b.reach ? a : b));
+  const worst = frames.reduce((a, b) => (a.reach < b.reach ? a : b));
+  expect(best.reach, 'a burst that caught the peak').toBeGreaterThanOrEqual(0.15);
+
+  const kept = await page.evaluate((index) => window.__game.pickForTest(index), best.index);
+  const moment = (score) => score.parts.find((part) => part.key === 'moment');
+  expect(moment(kept.score).ok, 'the frame at the peak').toBe(true);
+
+  // The same burst, judged on its worst frame, does not score the moment.
+  await page.evaluate(() => window.__game.startForTest(window.__game.getRequest()));
+  const again = await page.evaluate(() => window.__game.burstForTest());
+  if (again.some((f) => f.reach < 0.05)) {
+    const low = again.reduce((a, b) => (a.reach < b.reach ? a : b));
+    const missed = await page.evaluate((index) => window.__game.pickForTest(index), low.index);
+    expect(moment(missed.score).ok, 'a frame away from the peak').toBe(false);
+  }
+  await page.keyboard.up('KeyR');
+  await page.keyboard.up('Digit1');
+  expect(worst.reach).toBeLessThan(best.reach);
+});
+
 // Park the camera in front of her with the sun at a known angle behind the
 // subject or behind the camera, and let the auto exposure settle.
 async function lightHerAt(page, degrees, stops) {
@@ -633,6 +709,12 @@ test('a session runs three shots and ends in an album', async ({ page }) => {
 
   for (let shot = 1; shot <= 3; shot++) {
     await page.locator('.pg-shutter').click();
+    // A dance brief bursts instead of taking one frame, and asks which to keep.
+    if (await page.evaluate(() => window.__game.getPhase()) === 'picking'
+      || await page.locator('.pg-frame').count()) {
+      await expect(page.locator('.pg-frame').first()).toBeVisible();
+      await page.locator('.pg-frame').first().click();
+    }
     await expect(page.locator('.pg-stars')).toBeVisible();
     expect(await page.evaluate(() => window.__game.getShots())).toHaveLength(shot);
     await page.locator('.pg-card .pg-button').first().click();
