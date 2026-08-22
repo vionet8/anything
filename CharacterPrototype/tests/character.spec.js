@@ -831,6 +831,7 @@ async function traceScenario(page, key, seconds) {
         pose: state.animName,
         expression: state.expressionWeight >= 0.6 ? state.expression : null,
         bird: window.__char.getBirdStateForTest().state,
+        owner: window.__char.getBirdStateForTest().owner,
       };
     });
     // Stop *before* recording, not after: one story runs straight into the
@@ -847,6 +848,46 @@ async function traceScenario(page, key, seconds) {
   return trace;
 }
 
+test('the bird is on stage living its own life, not just when a story wants it', async ({ page }) => {
+  // It is part of the place, not a prop the photo game wheels on: it is there
+  // in free play, with no session running and no scenario driving it, doing
+  // bird things a few metres away.
+  test.setTimeout(60000);
+  const seen = [];
+  const until = Date.now() + 20000;
+  while (Date.now() < until) {
+    seen.push(await page.evaluate(() => {
+      const bird = window.__char.getBirdStateForTest();
+      const hips = window.__char.getBoneWorld('hips');
+      return {
+        state: bird.state,
+        owner: bird.owner,
+        visible: bird.visible,
+        x: bird.position.x,
+        z: bird.position.z,
+        distance: Math.hypot(bird.position.x - hips.x, bird.position.z - hips.z),
+      };
+    }));
+    await page.waitForTimeout(150);
+  }
+
+  expect(seen.every((f) => f.owner === 'ambient'), 'no story touched it').toBe(true);
+  expect(seen.some((f) => f.visible), 'it was on stage').toBe(true);
+  expect(seen.some((f) => f.state === 'flying'), 'it moved').toBe(true);
+  expect(seen.some((f) => f.state === 'settled'), 'it landed').toBe(true);
+
+  // It got about, rather than landing once and freezing.
+  const places = new Set(seen
+    .filter((f) => f.state === 'settled')
+    .map((f) => `${f.x.toFixed(1)},${f.z.toFixed(1)}`));
+  expect(places.size, 'it settled in more than one place').toBeGreaterThan(1);
+
+  // And it kept its distance. Coming close to her is the story's move; if the
+  // ambient bird did it too, an approach would stop being a telegraph.
+  const landed = seen.filter((f) => f.state === 'settled');
+  expect(Math.min(...landed.map((f) => f.distance))).toBeGreaterThan(1);
+});
+
 test('the bird causes her reaction rather than accompanying it', async ({ page }) => {
   // The first version of the bird was explicitly decoupled from what she was
   // doing -- a generic "something is about to happen" tell that flew in on a
@@ -857,6 +898,7 @@ test('the bird causes her reaction rather than accompanying it', async ({ page }
   const trace = await traceScenario(page, 'bird-to-hand', 30);
 
   expect(trace.some((f) => f.bird === 'flying'), 'the bird flew in').toBe(true);
+  expect(trace.some((f) => f.owner === 'story'), 'the story had hold of it').toBe(true);
   // Perched on her hand while she is delighted at it -- the cause and the
   // reaction in the same frame.
   expect(
@@ -909,7 +951,10 @@ test('a scenario runs its beats in order rather than cutting at random', async (
 });
 
 test('the burst frame count is the player\'s choice and the shutter honours it', async ({ page }) => {
-  test.setTimeout(30000);
+  // Two bursts, one of them twenty-four full frames, all captured over real
+  // time. This is the heaviest test in the suite; 30s was not enough for it
+  // on a loaded machine.
+  test.setTimeout(60000);
   await page.getByRole('button', { name: '撮影を始める' }).click();
 
   // The chosen count is a ceiling, not a promise: a frame needs an actual

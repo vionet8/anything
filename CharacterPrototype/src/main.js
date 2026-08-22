@@ -204,44 +204,78 @@ function makeWingGeometry() {
 
 function makeBird() {
   const group = new THREE.Group();
-  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x4a6fa5, roughness: 0.75 });
-  const breastMat = new THREE.MeshStandardMaterial({ color: 0xe8a24a, roughness: 0.8 });
-  const beakMat = new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: 0.6 });
-  const wingMat = new THREE.MeshStandardMaterial({ color: 0x3a5a8a, roughness: 0.75, side: THREE.DoubleSide });
+  // Brighter than the first pass. A small dark bird on dark grass is a smudge
+  // -- and this one has to be legible at two or three metres, in a frame the
+  // player is composing around somebody else.
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x6f95cf, roughness: 0.75 });
+  const breastMat = new THREE.MeshStandardMaterial({ color: 0xf3c07a, roughness: 0.8 });
+  const beakMat = new THREE.MeshStandardMaterial({ color: 0xe8a83c, roughness: 0.6 });
+  const legMat = new THREE.MeshStandardMaterial({ color: 0xd08a3a, roughness: 0.7 });
+  const wingMat = new THREE.MeshStandardMaterial({ color: 0x4a6fa5, roughness: 0.75, side: THREE.DoubleSide });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x14171f, roughness: 0.4 });
 
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), bodyMat);
-  body.scale.set(1, 0.88, 1.55);
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), bodyMat);
+  body.scale.set(1, 0.92, 1.5);
   group.add(body);
 
-  const breast = new THREE.Mesh(new THREE.SphereGeometry(0.032, 6, 5), breastMat);
-  breast.position.set(0, -0.012, 0.03);
-  breast.scale.set(0.9, 0.85, 0.9);
+  const breast = new THREE.Mesh(new THREE.SphereGeometry(0.034, 8, 6), breastMat);
+  breast.position.set(0, -0.012, 0.032);
+  breast.scale.set(0.92, 0.9, 0.95);
   group.add(breast);
 
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.028, 7, 6), bodyMat);
-  head.position.set(0, 0.022, 0.065);
+  // Bigger than life. A correctly proportioned head on a bird this size is
+  // three or four pixels at the distance it is usually seen from, and a bird
+  // you cannot find the head of does not read as facing anywhere.
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.034, 10, 8), bodyMat);
+  head.position.set(0, 0.03, 0.062);
   group.add(head);
 
-  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.009, 0.03, 5), beakMat);
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.008, 6, 5), eyeMat);
+    eye.position.set(side * 0.023, 0.038, 0.079);
+    group.add(eye);
+  }
+
+  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.011, 0.034, 6), beakMat);
   beak.rotation.x = Math.PI / 2;
-  beak.position.set(0, 0.02, 0.09);
+  beak.position.set(0, 0.026, 0.102);
   group.add(beak);
 
+  // Legs, so it stands on the grass instead of resting on its belly. Short
+  // and stubby; the body sits just clear of the ground.
+  for (const side of [-1, 1]) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.03, 5), legMat);
+    leg.position.set(side * 0.016, -0.05, 0.004);
+    group.add(leg);
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.005, 0.026), legMat);
+    foot.position.set(side * 0.016, -0.066, 0.008);
+    group.add(foot);
+  }
+
+  // Wings sit high on the flanks so that folding them back lays them along
+  // the body rather than hanging them underneath it.
   const leftWing = new THREE.Mesh(makeWingGeometry(), wingMat);
-  leftWing.position.set(0.02, 0.012, 0);
+  leftWing.position.set(0.026, 0.022, 0.004);
   const rightWing = new THREE.Mesh(makeWingGeometry(), wingMat);
-  rightWing.position.set(-0.02, 0.012, 0);
+  rightWing.position.set(-0.026, 0.022, 0.004);
   rightWing.scale.x = -1;
   group.add(leftWing, rightWing);
 
   const tail = new THREE.Mesh(makeWingGeometry(), wingMat);
-  tail.position.set(0, 0, -0.06);
-  tail.rotation.y = Math.PI / 2;
-  tail.scale.setScalar(0.85);
+  tail.position.set(0, 0.004, -0.062);
+  tail.rotation.set(0.55, Math.PI / 2, 0);
+  tail.scale.set(0.62, 0.62, 0.8);
   group.add(tail);
 
   group.userData.leftWing = leftWing;
   group.userData.rightWing = rightWing;
+  // Built at roughly 9cm nose to tail, which is life-size for a small bird
+  // and a speck on screen: at the two-and-a-bit metres the ambient layer
+  // keeps it at, it came out about fourteen pixels wide -- present in the
+  // render, invisible to the player. Scaled up to read as a bird at that
+  // distance, which matters more here than anatomical scale does, because the
+  // whole job of this thing is to be noticed arriving.
+  group.scale.setScalar(1.9);
   group.visible = false;
   group.traverse((obj) => { if (obj.isMesh) obj.castShadow = true; });
   return group;
@@ -506,7 +540,7 @@ const SCENARIOS = [
   {
     key: 'a-quiet-one',
     beats: [
-      { pose: 'idle', expression: null, hold: [1.1, 1.5] },
+      { pose: 'idle', expression: null, hold: [1.1, 1.5], cue: { bird: 'nearby', travel: 1.6 } },
       { pose: 'look-up', expression: 'relaxed', hold: [1.5, 2.0] },
       { pose: 'peace', expression: 'relaxed', hold: [2.6, 3.4], peak: true, story: '落ち着いた、小さめのピース' },
       { pose: 'idle', expression: null, hold: [1.3, 1.8] },
@@ -515,8 +549,10 @@ const SCENARIOS = [
   {
     key: 'the-routine',
     beats: [
-      { pose: 'idle', expression: 'relaxed', hold: [1.2, 1.7] },
-      { pose: 'dance', expression: 'relaxed', hold: [1.6, 2.2] },
+      { pose: 'idle', expression: 'relaxed', hold: [1.2, 1.7], cue: { bird: 'nearby', travel: 1.3 } },
+      // The dance is what startles it off the grass -- it does not just
+      // happen to leave at the same time.
+      { pose: 'dance', expression: 'relaxed', hold: [1.6, 2.2], cue: { bird: 'away', travel: 0.55 } },
       { pose: 'dance', expression: 'happy', hold: danceBeatHold, peak: true, story: 'ダンスのいちばん高いところ' },
       { pose: 'idle', expression: 'Surprised', hold: [1.0, 1.4] },
       { pose: 'wave', expression: 'relaxed', hold: [1.6, 2.2] },
@@ -527,7 +563,9 @@ const SCENARIOS = [
     key: 'kept-waiting',
     beats: [
       { pose: 'idle', expression: 'relaxed', hold: [1.2, 1.6] },
-      { pose: 'look-up', expression: 'relaxed', hold: [1.4, 1.9] },
+      // Something to keep her company while she waits, which is also what
+      // makes the sulk read as boredom rather than as temper.
+      { pose: 'look-up', expression: 'relaxed', hold: [1.4, 1.9], cue: { bird: 'nearby', travel: 1.4 } },
       { pose: 'idle', expression: 'angry', hold: [2.6, 3.4], peak: true, story: '待たされて、ちょっとむくれた顔' },
       { pose: 'wave', expression: 'happy', hold: [1.8, 2.4] },
       { pose: 'idle', expression: null, hold: [1.2, 1.6] },
@@ -536,8 +574,9 @@ const SCENARIOS = [
   {
     key: 'a-thought',
     beats: [
-      { pose: 'idle', expression: 'relaxed', hold: [1.2, 1.6] },
-      { pose: 'look-up', expression: 'sad', hold: [2.6, 3.4], peak: true, story: 'ふと空を見上げて、さみしそうな顔' },
+      { pose: 'idle', expression: 'relaxed', hold: [1.2, 1.6], cue: { bird: 'sky', travel: 1.5 } },
+      // It is not a mood out of nowhere: she is watching it go.
+      { pose: 'look-up', expression: 'sad', hold: [2.6, 3.4], peak: true, story: '飛んでいく鳥を見上げる、さみしそうな顔', cue: { bird: 'away', travel: 2.0 } },
       { pose: 'idle', expression: 'relaxed', hold: [1.4, 1.9] },
       { pose: 'peace', expression: 'happy', hold: [1.8, 2.4] },
     ],
@@ -596,20 +635,39 @@ let beatIndex = 0;
 let beatTimer = 0;
 
 // ---- The bird ----
-// The bird is the story's cause, not a decoration on top of one. Where it
-// goes is an anchor on her body (or on the ground in front of her), read live
-// every frame -- a fixed offset would plant it in mid-air the instant an arm
-// moves, and the arm moving is the entire point of the reach-out beat.
+// The bird has two jobs and they pull in opposite directions, so it has two
+// layers.
+//
+// Its first job is to be alive. It is on stage for the whole session, doing
+// bird things a few metres away: landing, hopping about, taking off again,
+// circling and coming back down somewhere else. That is the ambient layer
+// below, and it runs whenever no story has hold of it.
+//
+// Its second job is to cause things. When a scenario wants it, it comes to
+// her -- to her hand, her shoulder, the ground at her feet -- and that
+// approach is the telegraph that tells the player a moment is coming. This is
+// why the ambient layer deliberately keeps its distance: if the bird were
+// always near her, arriving near her would stop meaning anything.
+//
+// Where it goes is read live every frame from an anchor rather than copied
+// once, because a perch on her hand moves when her arm does, and the arm
+// moving is the entire point of the reach-out beat.
 const BIRD_DEPART_TIME = 0.9;
 const BIRD_CIRCLE_TIME = 1.4;
 
 let birdState = 'offstage';   // 'offstage' | 'flying' | 'settled'
 let birdAnchor = null;        // name of the anchor it is heading for / sitting on
+let birdOwner = 'ambient';    // 'ambient' | 'story'
 let birdTravel = 1.2;
+let birdArc = 0.22;           // how high it lifts mid-flight
 let birdT = 0;
+let birdSettleTime = 0;       // ambient: how long to stay put once landed
 const birdFrom = new THREE.Vector3();
-const birdFixed = new THREE.Vector3();
+const birdFixed = new THREE.Vector3();   // sky point, as an offset from her
+const birdSpot = new THREE.Vector3();    // a fixed point in the world
+let birdFacing = 0;
 let birdFlap = 0;
+let birdWingFold = 1;
 
 function bodyAnchor(boneName, outward, lift, forward = 0) {
   const node = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode(boneName) : null;
@@ -623,22 +681,24 @@ function bodyAnchor(boneName, outward, lift, forward = 0) {
     .add(new THREE.Vector3(0, lift, forward));
 }
 
+const BIRD_GROUND_Y = 0.132;   // group origin, so the feet land on the grass
+
 const BIRD_ANCHORS = {
-  shoulder: () => bodyAnchor('rightShoulder', 0.1, 0.05, 0.01),
+  shoulder: () => bodyAnchor('rightShoulder', 0.11, 0.155, 0.01),
   // On the back of the hand rather than at its origin, so it reads as perched
   // on her rather than growing out of her wrist.
-  hand: () => bodyAnchor('rightHand', 0.02, 0.035, 0.03),
+  hand: () => bodyAnchor('rightHand', 0.02, 0.135, 0.03),
   ground: () => {
     if (!vrm) return null;
     const forward = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), facing);
-    return vrm.scene.position.clone().addScaledVector(forward, 0.55).setY(0.045);
+    return vrm.scene.position.clone().addScaledVector(forward, 0.55).setY(BIRD_GROUND_Y);
   },
   // Not a perch: somewhere above and to one side, for the beat where she has
-  // noticed it but it has not come down yet.
-  sky: () => {
-    if (!vrm) return null;
-    return vrm.scene.position.clone().add(birdFixed);
-  },
+  // noticed it but it has not come down yet. Held as an offset from her so it
+  // stays put relative to her if she walks.
+  sky: () => (vrm ? vrm.scene.position.clone().add(birdFixed) : null),
+  // A fixed point in the world. Everything the ambient layer does lands here.
+  spot: () => birdSpot,
 };
 
 function birdAnchorPoint(name) {
@@ -652,13 +712,28 @@ function birdOffstage() {
   const angle = Math.random() * Math.PI * 2;
   const base = vrm ? vrm.scene.position : new THREE.Vector3();
   return new THREE.Vector3(
-    base.x + Math.sin(angle) * 2.6,
+    base.x + Math.sin(angle) * 3.2,
     base.y + 1.9 + Math.random() * 0.6,
-    base.z + Math.cos(angle) * 2.6
+    base.z + Math.cos(angle) * 3.2
   );
 }
 
-function birdGoTo(anchor, travel) {
+// A patch of ground to potter about on, at `radius` metres from her. Biased
+// toward the half of the world she is facing, because a bird behind her back
+// is a bird the player never sees.
+function birdGroundSpot(minRadius, maxRadius) {
+  const base = vrm ? vrm.scene.position : new THREE.Vector3();
+  const spread = (Math.random() - 0.5) * Math.PI * 1.3;
+  const angle = facing + spread;
+  const radius = minRadius + Math.random() * (maxRadius - minRadius);
+  return new THREE.Vector3(
+    base.x + Math.sin(angle) * radius,
+    BIRD_GROUND_Y,
+    base.z + Math.cos(angle) * radius
+  );
+}
+
+function birdGoTo(anchor, travel, arc = 0.22) {
   const target = birdAnchorPoint(anchor);
   if (!target) return;
   if (birdState === 'offstage') {
@@ -669,48 +744,131 @@ function birdGoTo(anchor, travel) {
   }
   birdAnchor = anchor;
   birdTravel = Math.max(0.2, travel);
+  birdArc = arc;
   birdT = 0;
   birdState = 'flying';
 }
 
-function birdLeave() {
+// Off the scene entirely. Ownership goes back to the ambient layer, which
+// brings it back after a pause -- the bird leaving her is a beat in the
+// story, but the bird being gone for good is not.
+function birdLeave(travel = BIRD_DEPART_TIME) {
+  birdOwner = 'ambient';
+  birdSettleTime = randRange(2.5, 5);
   if (birdState === 'offstage') return;
   birdFrom.copy(bird.position);
   birdFixed.copy(birdOffstage()).setY(birdFrom.y + 2.2);
   birdAnchor = null;
-  birdTravel = BIRD_DEPART_TIME;
+  birdTravel = Math.max(0.2, travel);
   birdT = 0;
   birdState = 'flying';
 }
 
 function birdCue(cue) {
   if (!cue) return;
-  if (cue.bird === 'away') { birdLeave(); return; }
+  birdOwner = 'story';
+  if (cue.bird === 'away') { birdLeave(cue.travel); return; }
   if (cue.bird === 'sky') {
-    // A perch point has to be recomputed every frame; a patch of sky does
-    // not, so it is picked once here and held in birdFixed as an offset from
-    // her, which keeps it stable if she walks.
     const angle = Math.random() * Math.PI * 2;
     birdFixed.set(Math.sin(angle) * 1.5, 2.1, Math.cos(angle) * 1.5);
+    birdGoTo('sky', cue.travel || BIRD_CIRCLE_TIME);
+    return;
+  }
+  if (cue.bird === 'nearby') {
+    birdSpot.copy(birdGroundSpot(1.4, 2.4));
+    birdGoTo('spot', cue.travel || 1.5);
+    return;
   }
   birdGoTo(cue.bird, cue.travel || BIRD_CIRCLE_TIME);
+}
+
+// A story is starting, or ending. If the bird is sitting on her it has to
+// leave -- it cannot still be on her shoulder when the next story opens on
+// her noticing it arrive. If it is off doing its own thing, leave it be.
+function birdRelease() {
+  if (birdOwner === 'story' && (birdAnchor === 'hand' || birdAnchor === 'shoulder')) {
+    birdLeave(0.7);
+    return;
+  }
+  birdOwner = 'ambient';
+  if (birdState === 'offstage') birdSettleTime = randRange(1.5, 4);
 }
 
 function birdReset() {
   birdState = 'offstage';
   birdAnchor = null;
+  birdOwner = 'ambient';
+  birdSettleTime = randRange(1.5, 4);
   bird.visible = false;
 }
 
+// The ambient layer: what it does when no story wants it.
+//
+// Real small birds do not potter at an even rate. They hop two or three times
+// in quick succession, stop dead for a few seconds, then fly. A single
+// "move every N seconds" timer produces a metronome, which reads as a
+// mechanism rather than as an animal -- so hops come in short streaks and the
+// long pause is between streaks, not between hops.
+const BIRD_HOP_CHANCE = 0.68;
+
+let birdHopsLeft = 0;
+
+function updateBirdAmbient(dt) {
+  if (birdState === 'flying') return;   // a move already in progress
+  birdSettleTime -= dt;
+  if (birdSettleTime > 0) return;
+
+  if (birdState === 'offstage') {
+    birdSpot.copy(birdGroundSpot(1.8, 3.2));
+    birdGoTo('spot', randRange(1.3, 1.9), 0.5);
+    birdSettleTime = randRange(0.6, 1.6);
+    return;
+  }
+
+  if (birdHopsLeft > 0 || Math.random() < BIRD_HOP_CHANCE) {
+    // A hop: a few centimetres, quick, barely off the ground.
+    // Two at minimum: drawing 1 and then decrementing gives a "streak" of a
+    // single hop, which is just the metronome again with extra steps.
+    if (birdHopsLeft <= 0) birdHopsLeft = 2 + Math.floor(Math.random() * 3);
+    birdHopsLeft -= 1;
+    const from = bird.position;
+    const angle = Math.random() * Math.PI * 2;
+    const distance = randRange(0.1, 0.3);
+    birdSpot.set(from.x + Math.sin(angle) * distance, BIRD_GROUND_Y, from.z + Math.cos(angle) * distance);
+    birdGoTo('spot', randRange(0.18, 0.28), 0.06);
+    // Mid-streak the next hop follows almost at once; the pause comes after.
+    birdSettleTime = birdHopsLeft > 0 ? randRange(0.1, 0.28) : randRange(0.9, 2.2);
+    return;
+  }
+
+  // A proper flight to somewhere else on the ground, with a real arc. It
+  // keeps its distance -- coming close to her is the story's move, and if the
+  // ambient bird did it too, the approach would stop being a telegraph.
+  birdSpot.copy(birdGroundSpot(1.5, 3.4));
+  birdGoTo('spot', randRange(0.9, 1.5), 0.55);
+  birdSettleTime = randRange(0.5, 1.5);
+}
+
 function updateBird(dt) {
+  if (birdOwner === 'ambient') updateBirdAmbient(dt);
   if (birdState === 'offstage') return;
+
+  // Wings fold against the body when it lands and open again when it goes.
+  // Before this they stayed stuck out sideways the whole time, oscillating
+  // gently -- which on a bird standing still on the grass reads less like a
+  // bird and more like a paper aeroplane.
   birdFlap += dt * 16;
-  const flap = Math.sin(birdFlap) * (birdState === 'settled' ? 0.22 : 1);
-  bird.userData.leftWing.rotation.z = flap * 0.85;
-  bird.userData.rightWing.rotation.z = -flap * 0.85;
+  const wantFold = birdState === 'settled' ? 1 : 0;
+  birdWingFold += (wantFold - birdWingFold) * Math.min(1, dt * 9);
+  const flap = Math.sin(birdFlap);
+  const sweep = 0.25 + birdWingFold * 1.25;                       // back along the body
+  const lift = flap * 0.85 * (1 - birdWingFold)                   // the beat
+    + birdWingFold * (0.12 + Math.sin(birdFlap * 0.18) * 0.03);  // a folded shiver
+  bird.userData.leftWing.rotation.set(0, sweep, lift);
+  bird.userData.rightWing.rotation.set(0, -sweep, -lift);
 
   // Leaving is the one flight with no anchor to track -- everything else
-  // homes on a point that moves with her.
+  // homes on a point that can move under it.
   const departing = birdState === 'flying' && birdAnchor === null;
   const target = departing ? birdFixed : birdAnchorPoint(birdAnchor);
   if (!target) { birdReset(); return; }
@@ -726,18 +884,27 @@ function updateBird(dt) {
     }
     const eased = 1 - (1 - t) ** 3;                          // decelerating in
     bird.position.lerpVectors(birdFrom, target, eased);
-    bird.position.y += Math.sin(t * Math.PI) * 0.22;         // a little arc on the way
+    bird.position.y += Math.sin(t * Math.PI) * birdArc;
     bird.lookAt(target.x, bird.position.y, target.z);
+    birdFacing = Math.atan2(target.x - birdFrom.x, target.z - birdFrom.z);
     if (t >= 1) { birdState = 'settled'; birdT = 0; }
     return;
   }
 
   bird.position.copy(target);
   bird.position.y += Math.sin(performance.now() * 0.004) * 0.006;  // idle bob
-  // Sitting on her, it looks at whatever she is looking at; hovering in the
-  // sky, it faces her.
-  if (birdAnchor === 'sky' && vrm) bird.lookAt(vrm.scene.position.x, target.y - 0.6, vrm.scene.position.z);
-  else bird.lookAt(target.x, target.y - 0.3, target.z + 0.6);
+  if (birdAnchor === 'sky' && vrm) {
+    // Hovering: it faces her.
+    bird.lookAt(vrm.scene.position.x, target.y - 0.6, vrm.scene.position.z);
+  } else if (birdAnchor === 'spot') {
+    // On the ground it keeps roughly the heading it landed on, with a slow
+    // look about -- a bird on a lawn is never quite still.
+    birdT += dt;
+    const look = birdFacing + Math.sin(birdT * 0.9) * 0.8 + Math.sin(birdT * 2.3) * 0.12;
+    bird.rotation.set(0, look, 0);
+  } else {
+    bird.lookAt(target.x, target.y - 0.3, target.z + 0.6);
+  }
 }
 
 // ---- Running a scenario ----
@@ -765,7 +932,7 @@ function startScenario(key) {
   const chosen = (key && scenarioByKey(key)) || scenarioByKey(scenarioBag.next());
   if (key) scenarioBag.note(chosen.key);
   currentScenario = chosen;
-  birdReset();
+  birdRelease();
   enterBeat(0);
   const beat = peakBeat(chosen);
   return { key: chosen.key, pose: beat.pose, expression: beat.expression, story: beat.story };
@@ -796,7 +963,6 @@ function runDirector(dt) {
     if (next >= currentScenario.beats.length) startScenario();
     else enterBeat(next);
   }
-  updateBird(dt);
 }
 
 const stateLabel = document.getElementById('anim-state');
@@ -1675,16 +1841,23 @@ const gazeToCamera = new THREE.Vector3();
 let gazeAngle = 0;   // smoothed signed angle from her facing to the camera
 let gazeWeight = 0;  // smoothed 0..1 interest
 
-// What her eyes are on. Normally you -- but while the bird is in the air she
-// is watching the bird, and that is most of what sells the story as cause and
-// effect rather than as two things happening near each other. Once it has
-// landed on her it is too close to track: the gaze maths divides by the
-// horizontal distance, and a target 10cm from her own head sends the yaw to
-// the stops. Perched, she looks back at the camera, which is the shot anyway.
+// What her eyes are on. Normally you -- but while a story has the bird coming
+// to her, she is watching the bird, and that is most of what sells the story
+// as cause and effect rather than as two things happening near each other.
+//
+// Only while a *story* owns it. The bird is on stage almost all the time now,
+// pottering about on the grass a few metres away, and following that with her
+// eyes would mean she never once looks at the camera. A person does glance at
+// a bird on a lawn; she is being photographed, and the shot is her face.
+//
+// Once it has landed on her it is also too close to track: the gaze maths
+// divides by the horizontal distance, and a target 10cm from her own head
+// sends the yaw to the stops. Perched, she looks back at the camera -- which
+// is the photograph anyway.
 const GAZE_BIRD_MIN_DISTANCE = 0.45;
 
 function gazeFocus() {
-  if (!bird.visible) return camera.position;
+  if (!bird.visible || birdOwner !== 'story') return camera.position;
   const dx = bird.position.x - gazeHeadPos.x;
   const dz = bird.position.z - gazeHeadPos.z;
   if (Math.hypot(dx, dz) < GAZE_BIRD_MIN_DISTANCE) return camera.position;
@@ -1833,6 +2006,9 @@ function step(dt) {
   if (!vrm) return;
 
   if (directorActive) runDirector(dt);
+  // Outside runDirector, so the bird is still there between sessions. It is
+  // part of the place, not a prop the photo game wheels on.
+  updateBird(dt);
 
   let moveX = 0;
   let moveZ = 0;
@@ -2443,7 +2619,7 @@ window.__char = {
   startScenarioForTest: (key) => { directorActive = true; return startScenario(key); },
   scenarioPeaksForTest: () => scenarioPeaks(),
   getBirdStateForTest: () => ({
-    state: birdState, visible: bird.visible,
+    state: birdState, visible: bird.visible, owner: birdOwner, anchor: birdAnchor,
     position: { x: bird.position.x, y: bird.position.y, z: bird.position.z },
   }),
   // Lets a test hold her heading still. Only the gaze tests want this: they

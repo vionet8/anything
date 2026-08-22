@@ -32640,37 +32640,53 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   }
   function makeBird() {
     const group = new Group();
-    const bodyMat = new MeshStandardMaterial({ color: 4878245, roughness: 0.75 });
-    const breastMat = new MeshStandardMaterial({ color: 15245898, roughness: 0.8 });
-    const beakMat = new MeshStandardMaterial({ color: 14263361, roughness: 0.6 });
-    const wingMat = new MeshStandardMaterial({ color: 3824266, roughness: 0.75, side: DoubleSide });
-    const body = new Mesh(new SphereGeometry(0.045, 8, 6), bodyMat);
-    body.scale.set(1, 0.88, 1.55);
+    const bodyMat = new MeshStandardMaterial({ color: 7312847, roughness: 0.75 });
+    const breastMat = new MeshStandardMaterial({ color: 15974522, roughness: 0.8 });
+    const beakMat = new MeshStandardMaterial({ color: 15247420, roughness: 0.6 });
+    const legMat = new MeshStandardMaterial({ color: 13666874, roughness: 0.7 });
+    const wingMat = new MeshStandardMaterial({ color: 4878245, roughness: 0.75, side: DoubleSide });
+    const eyeMat = new MeshStandardMaterial({ color: 1316639, roughness: 0.4 });
+    const body = new Mesh(new SphereGeometry(0.045, 10, 8), bodyMat);
+    body.scale.set(1, 0.92, 1.5);
     group.add(body);
-    const breast = new Mesh(new SphereGeometry(0.032, 6, 5), breastMat);
-    breast.position.set(0, -0.012, 0.03);
-    breast.scale.set(0.9, 0.85, 0.9);
+    const breast = new Mesh(new SphereGeometry(0.034, 8, 6), breastMat);
+    breast.position.set(0, -0.012, 0.032);
+    breast.scale.set(0.92, 0.9, 0.95);
     group.add(breast);
-    const head = new Mesh(new SphereGeometry(0.028, 7, 6), bodyMat);
-    head.position.set(0, 0.022, 0.065);
+    const head = new Mesh(new SphereGeometry(0.034, 10, 8), bodyMat);
+    head.position.set(0, 0.03, 0.062);
     group.add(head);
-    const beak = new Mesh(new ConeGeometry(9e-3, 0.03, 5), beakMat);
+    for (const side of [-1, 1]) {
+      const eye = new Mesh(new SphereGeometry(8e-3, 6, 5), eyeMat);
+      eye.position.set(side * 0.023, 0.038, 0.079);
+      group.add(eye);
+    }
+    const beak = new Mesh(new ConeGeometry(0.011, 0.034, 6), beakMat);
     beak.rotation.x = Math.PI / 2;
-    beak.position.set(0, 0.02, 0.09);
+    beak.position.set(0, 0.026, 0.102);
     group.add(beak);
+    for (const side of [-1, 1]) {
+      const leg = new Mesh(new CylinderGeometry(4e-3, 4e-3, 0.03, 5), legMat);
+      leg.position.set(side * 0.016, -0.05, 4e-3);
+      group.add(leg);
+      const foot = new Mesh(new BoxGeometry(0.014, 5e-3, 0.026), legMat);
+      foot.position.set(side * 0.016, -0.066, 8e-3);
+      group.add(foot);
+    }
     const leftWing = new Mesh(makeWingGeometry(), wingMat);
-    leftWing.position.set(0.02, 0.012, 0);
+    leftWing.position.set(0.026, 0.022, 4e-3);
     const rightWing = new Mesh(makeWingGeometry(), wingMat);
-    rightWing.position.set(-0.02, 0.012, 0);
+    rightWing.position.set(-0.026, 0.022, 4e-3);
     rightWing.scale.x = -1;
     group.add(leftWing, rightWing);
     const tail = new Mesh(makeWingGeometry(), wingMat);
-    tail.position.set(0, 0, -0.06);
-    tail.rotation.y = Math.PI / 2;
-    tail.scale.setScalar(0.85);
+    tail.position.set(0, 4e-3, -0.062);
+    tail.rotation.set(0.55, Math.PI / 2, 0);
+    tail.scale.set(0.62, 0.62, 0.8);
     group.add(tail);
     group.userData.leftWing = leftWing;
     group.userData.rightWing = rightWing;
+    group.scale.setScalar(1.9);
     group.visible = false;
     group.traverse((obj) => {
       if (obj.isMesh) obj.castShadow = true;
@@ -32882,7 +32898,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     {
       key: "a-quiet-one",
       beats: [
-        { pose: "idle", expression: null, hold: [1.1, 1.5] },
+        { pose: "idle", expression: null, hold: [1.1, 1.5], cue: { bird: "nearby", travel: 1.6 } },
         { pose: "look-up", expression: "relaxed", hold: [1.5, 2] },
         { pose: "peace", expression: "relaxed", hold: [2.6, 3.4], peak: true, story: "\u843D\u3061\u7740\u3044\u305F\u3001\u5C0F\u3055\u3081\u306E\u30D4\u30FC\u30B9" },
         { pose: "idle", expression: null, hold: [1.3, 1.8] }
@@ -32891,8 +32907,10 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     {
       key: "the-routine",
       beats: [
-        { pose: "idle", expression: "relaxed", hold: [1.2, 1.7] },
-        { pose: "dance", expression: "relaxed", hold: [1.6, 2.2] },
+        { pose: "idle", expression: "relaxed", hold: [1.2, 1.7], cue: { bird: "nearby", travel: 1.3 } },
+        // The dance is what startles it off the grass -- it does not just
+        // happen to leave at the same time.
+        { pose: "dance", expression: "relaxed", hold: [1.6, 2.2], cue: { bird: "away", travel: 0.55 } },
         { pose: "dance", expression: "happy", hold: danceBeatHold, peak: true, story: "\u30C0\u30F3\u30B9\u306E\u3044\u3061\u3070\u3093\u9AD8\u3044\u3068\u3053\u308D" },
         { pose: "idle", expression: "Surprised", hold: [1, 1.4] },
         { pose: "wave", expression: "relaxed", hold: [1.6, 2.2] },
@@ -32903,7 +32921,9 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       key: "kept-waiting",
       beats: [
         { pose: "idle", expression: "relaxed", hold: [1.2, 1.6] },
-        { pose: "look-up", expression: "relaxed", hold: [1.4, 1.9] },
+        // Something to keep her company while she waits, which is also what
+        // makes the sulk read as boredom rather than as temper.
+        { pose: "look-up", expression: "relaxed", hold: [1.4, 1.9], cue: { bird: "nearby", travel: 1.4 } },
         { pose: "idle", expression: "angry", hold: [2.6, 3.4], peak: true, story: "\u5F85\u305F\u3055\u308C\u3066\u3001\u3061\u3087\u3063\u3068\u3080\u304F\u308C\u305F\u9854" },
         { pose: "wave", expression: "happy", hold: [1.8, 2.4] },
         { pose: "idle", expression: null, hold: [1.2, 1.6] }
@@ -32912,8 +32932,9 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     {
       key: "a-thought",
       beats: [
-        { pose: "idle", expression: "relaxed", hold: [1.2, 1.6] },
-        { pose: "look-up", expression: "sad", hold: [2.6, 3.4], peak: true, story: "\u3075\u3068\u7A7A\u3092\u898B\u4E0A\u3052\u3066\u3001\u3055\u307F\u3057\u305D\u3046\u306A\u9854" },
+        { pose: "idle", expression: "relaxed", hold: [1.2, 1.6], cue: { bird: "sky", travel: 1.5 } },
+        // It is not a mood out of nowhere: she is watching it go.
+        { pose: "look-up", expression: "sad", hold: [2.6, 3.4], peak: true, story: "\u98DB\u3093\u3067\u3044\u304F\u9CE5\u3092\u898B\u4E0A\u3052\u308B\u3001\u3055\u307F\u3057\u305D\u3046\u306A\u9854", cue: { bird: "away", travel: 2 } },
         { pose: "idle", expression: "relaxed", hold: [1.4, 1.9] },
         { pose: "peace", expression: "happy", hold: [1.8, 2.4] }
       ]
@@ -32961,11 +32982,17 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   var BIRD_CIRCLE_TIME = 1.4;
   var birdState = "offstage";
   var birdAnchor = null;
+  var birdOwner = "ambient";
   var birdTravel = 1.2;
+  var birdArc = 0.22;
   var birdT = 0;
+  var birdSettleTime = 0;
   var birdFrom = new Vector3();
   var birdFixed = new Vector3();
+  var birdSpot = new Vector3();
+  var birdFacing = 0;
   var birdFlap = 0;
+  var birdWingFold = 1;
   function bodyAnchor(boneName, outward, lift, forward = 0) {
     const node = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode(boneName) : null;
     if (!node) return null;
@@ -32975,22 +33002,23 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     const side = new Vector3(1, 0, 0).applyQuaternion(rotation).normalize();
     return base.addScaledVector(side, outward).add(new Vector3(0, lift, forward));
   }
+  var BIRD_GROUND_Y = 0.132;
   var BIRD_ANCHORS = {
-    shoulder: () => bodyAnchor("rightShoulder", 0.1, 0.05, 0.01),
+    shoulder: () => bodyAnchor("rightShoulder", 0.11, 0.155, 0.01),
     // On the back of the hand rather than at its origin, so it reads as perched
     // on her rather than growing out of her wrist.
-    hand: () => bodyAnchor("rightHand", 0.02, 0.035, 0.03),
+    hand: () => bodyAnchor("rightHand", 0.02, 0.135, 0.03),
     ground: () => {
       if (!vrm) return null;
       const forward = new Vector3(0, 0, 1).applyAxisAngle(new Vector3(0, 1, 0), facing);
-      return vrm.scene.position.clone().addScaledVector(forward, 0.55).setY(0.045);
+      return vrm.scene.position.clone().addScaledVector(forward, 0.55).setY(BIRD_GROUND_Y);
     },
     // Not a perch: somewhere above and to one side, for the beat where she has
-    // noticed it but it has not come down yet.
-    sky: () => {
-      if (!vrm) return null;
-      return vrm.scene.position.clone().add(birdFixed);
-    }
+    // noticed it but it has not come down yet. Held as an offset from her so it
+    // stays put relative to her if she walks.
+    sky: () => vrm ? vrm.scene.position.clone().add(birdFixed) : null,
+    // A fixed point in the world. Everything the ambient layer does lands here.
+    spot: () => birdSpot
   };
   function birdAnchorPoint(name) {
     const fn = BIRD_ANCHORS[name];
@@ -33000,12 +33028,23 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     const angle = Math.random() * Math.PI * 2;
     const base = vrm ? vrm.scene.position : new Vector3();
     return new Vector3(
-      base.x + Math.sin(angle) * 2.6,
+      base.x + Math.sin(angle) * 3.2,
       base.y + 1.9 + Math.random() * 0.6,
-      base.z + Math.cos(angle) * 2.6
+      base.z + Math.cos(angle) * 3.2
     );
   }
-  function birdGoTo(anchor, travel) {
+  function birdGroundSpot(minRadius, maxRadius) {
+    const base = vrm ? vrm.scene.position : new Vector3();
+    const spread = (Math.random() - 0.5) * Math.PI * 1.3;
+    const angle = facing + spread;
+    const radius = minRadius + Math.random() * (maxRadius - minRadius);
+    return new Vector3(
+      base.x + Math.sin(angle) * radius,
+      BIRD_GROUND_Y,
+      base.z + Math.cos(angle) * radius
+    );
+  }
+  function birdGoTo(anchor, travel, arc = 0.22) {
     const target = birdAnchorPoint(anchor);
     if (!target) return;
     if (birdState === "offstage") {
@@ -33016,41 +33055,94 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     }
     birdAnchor = anchor;
     birdTravel = Math.max(0.2, travel);
+    birdArc = arc;
     birdT = 0;
     birdState = "flying";
   }
-  function birdLeave() {
+  function birdLeave(travel = BIRD_DEPART_TIME) {
+    birdOwner = "ambient";
+    birdSettleTime = randRange(2.5, 5);
     if (birdState === "offstage") return;
     birdFrom.copy(bird.position);
     birdFixed.copy(birdOffstage()).setY(birdFrom.y + 2.2);
     birdAnchor = null;
-    birdTravel = BIRD_DEPART_TIME;
+    birdTravel = Math.max(0.2, travel);
     birdT = 0;
     birdState = "flying";
   }
   function birdCue(cue) {
     if (!cue) return;
+    birdOwner = "story";
     if (cue.bird === "away") {
-      birdLeave();
+      birdLeave(cue.travel);
       return;
     }
     if (cue.bird === "sky") {
       const angle = Math.random() * Math.PI * 2;
       birdFixed.set(Math.sin(angle) * 1.5, 2.1, Math.cos(angle) * 1.5);
+      birdGoTo("sky", cue.travel || BIRD_CIRCLE_TIME);
+      return;
+    }
+    if (cue.bird === "nearby") {
+      birdSpot.copy(birdGroundSpot(1.4, 2.4));
+      birdGoTo("spot", cue.travel || 1.5);
+      return;
     }
     birdGoTo(cue.bird, cue.travel || BIRD_CIRCLE_TIME);
+  }
+  function birdRelease() {
+    if (birdOwner === "story" && (birdAnchor === "hand" || birdAnchor === "shoulder")) {
+      birdLeave(0.7);
+      return;
+    }
+    birdOwner = "ambient";
+    if (birdState === "offstage") birdSettleTime = randRange(1.5, 4);
   }
   function birdReset() {
     birdState = "offstage";
     birdAnchor = null;
+    birdOwner = "ambient";
+    birdSettleTime = randRange(1.5, 4);
     bird.visible = false;
   }
+  var BIRD_HOP_CHANCE = 0.68;
+  var birdHopsLeft = 0;
+  function updateBirdAmbient(dt) {
+    if (birdState === "flying") return;
+    birdSettleTime -= dt;
+    if (birdSettleTime > 0) return;
+    if (birdState === "offstage") {
+      birdSpot.copy(birdGroundSpot(1.8, 3.2));
+      birdGoTo("spot", randRange(1.3, 1.9), 0.5);
+      birdSettleTime = randRange(0.6, 1.6);
+      return;
+    }
+    if (birdHopsLeft > 0 || Math.random() < BIRD_HOP_CHANCE) {
+      if (birdHopsLeft <= 0) birdHopsLeft = 2 + Math.floor(Math.random() * 3);
+      birdHopsLeft -= 1;
+      const from = bird.position;
+      const angle = Math.random() * Math.PI * 2;
+      const distance = randRange(0.1, 0.3);
+      birdSpot.set(from.x + Math.sin(angle) * distance, BIRD_GROUND_Y, from.z + Math.cos(angle) * distance);
+      birdGoTo("spot", randRange(0.18, 0.28), 0.06);
+      birdSettleTime = birdHopsLeft > 0 ? randRange(0.1, 0.28) : randRange(0.9, 2.2);
+      return;
+    }
+    birdSpot.copy(birdGroundSpot(1.5, 3.4));
+    birdGoTo("spot", randRange(0.9, 1.5), 0.55);
+    birdSettleTime = randRange(0.5, 1.5);
+  }
   function updateBird(dt) {
+    if (birdOwner === "ambient") updateBirdAmbient(dt);
     if (birdState === "offstage") return;
     birdFlap += dt * 16;
-    const flap = Math.sin(birdFlap) * (birdState === "settled" ? 0.22 : 1);
-    bird.userData.leftWing.rotation.z = flap * 0.85;
-    bird.userData.rightWing.rotation.z = -flap * 0.85;
+    const wantFold = birdState === "settled" ? 1 : 0;
+    birdWingFold += (wantFold - birdWingFold) * Math.min(1, dt * 9);
+    const flap = Math.sin(birdFlap);
+    const sweep = 0.25 + birdWingFold * 1.25;
+    const lift = flap * 0.85 * (1 - birdWingFold) + birdWingFold * (0.12 + Math.sin(birdFlap * 0.18) * 0.03);
+    bird.userData.leftWing.rotation.set(0, sweep, lift);
+    bird.userData.rightWing.rotation.set(0, -sweep, -lift);
     const departing = birdState === "flying" && birdAnchor === null;
     const target = departing ? birdFixed : birdAnchorPoint(birdAnchor);
     if (!target) {
@@ -33068,8 +33160,9 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       }
       const eased = 1 - (1 - t) ** 3;
       bird.position.lerpVectors(birdFrom, target, eased);
-      bird.position.y += Math.sin(t * Math.PI) * 0.22;
+      bird.position.y += Math.sin(t * Math.PI) * birdArc;
       bird.lookAt(target.x, bird.position.y, target.z);
+      birdFacing = Math.atan2(target.x - birdFrom.x, target.z - birdFrom.z);
       if (t >= 1) {
         birdState = "settled";
         birdT = 0;
@@ -33078,8 +33171,15 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     }
     bird.position.copy(target);
     bird.position.y += Math.sin(performance.now() * 4e-3) * 6e-3;
-    if (birdAnchor === "sky" && vrm) bird.lookAt(vrm.scene.position.x, target.y - 0.6, vrm.scene.position.z);
-    else bird.lookAt(target.x, target.y - 0.3, target.z + 0.6);
+    if (birdAnchor === "sky" && vrm) {
+      bird.lookAt(vrm.scene.position.x, target.y - 0.6, vrm.scene.position.z);
+    } else if (birdAnchor === "spot") {
+      birdT += dt;
+      const look = birdFacing + Math.sin(birdT * 0.9) * 0.8 + Math.sin(birdT * 2.3) * 0.12;
+      bird.rotation.set(0, look, 0);
+    } else {
+      bird.lookAt(target.x, target.y - 0.3, target.z + 0.6);
+    }
   }
   function beatHold(beat) {
     const range = typeof beat.hold === "function" ? beat.hold() : beat.hold;
@@ -33098,7 +33198,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     const chosen = key && scenarioByKey(key) || scenarioByKey(scenarioBag.next());
     if (key) scenarioBag.note(chosen.key);
     currentScenario = chosen;
-    birdReset();
+    birdRelease();
     enterBeat(0);
     const beat = peakBeat(chosen);
     return { key: chosen.key, pose: beat.pose, expression: beat.expression, story: beat.story };
@@ -33123,7 +33223,6 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       if (next >= currentScenario.beats.length) startScenario();
       else enterBeat(next);
     }
-    updateBird(dt);
   }
   var stateLabel = document.getElementById("state-label");
   var loadingEl = document.getElementById("loading");
@@ -33673,7 +33772,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   var gazeWeight = 0;
   var GAZE_BIRD_MIN_DISTANCE = 0.45;
   function gazeFocus() {
-    if (!bird.visible) return camera.position;
+    if (!bird.visible || birdOwner !== "story") return camera.position;
     const dx = bird.position.x - gazeHeadPos.x;
     const dz = bird.position.z - gazeHeadPos.z;
     if (Math.hypot(dx, dz) < GAZE_BIRD_MIN_DISTANCE) return camera.position;
@@ -33767,6 +33866,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   function step(dt) {
     if (!vrm) return;
     if (directorActive) runDirector(dt);
+    updateBird(dt);
     let moveX = 0;
     let moveZ = 0;
     if (keys.forward) moveZ += 1;
@@ -34226,6 +34326,8 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     getBirdStateForTest: () => ({
       state: birdState,
       visible: bird.visible,
+      owner: birdOwner,
+      anchor: birdAnchor,
       position: { x: bird.position.x, y: bird.position.y, z: bird.position.z }
     }),
     // Lets a test hold her heading still. Only the gaze tests want this: they
