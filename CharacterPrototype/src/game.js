@@ -10,14 +10,20 @@
 // are two pages (the dev page and the published artifact) and a HUD written
 // twice is a HUD that drifts.
 
-// She works through these on her own during a session -- see the director in
+// She works through these on her own during a session -- see the scenarios in
 // main.js -- so the hints are no longer keys you press; they are kept as a
 // label for the brief chip and for anyone reading this file, not as UI copy.
+//
+// The exercise squat ('crouch', the C key) is deliberately absent. Nothing in
+// a photoshoot motivates a squat, so no scenario performs one and no brief
+// can ask for one; it stays on the keyboard for free play and nowhere else.
 export const POSES = [
   { key: 'peace', label: 'ピース' },
   { key: 'double-peace', label: 'ダブルピース' },
   { key: 'wave', label: '手を振る' },
-  { key: 'crouch', label: 'しゃがむ' },
+  { key: 'reach-out', label: '手をのばす' },
+  { key: 'crouch-look', label: 'しゃがんでのぞく' },
+  { key: 'look-up', label: '見上げる' },
   { key: 'idle', label: '自然体' },
   { key: 'dance', label: 'ダンス' },
 ];
@@ -40,27 +46,27 @@ export const BURST_OPTIONS = [
 const BURST_SPACING = 0.05;
 const DEFAULT_BURST_FRAMES = 12;
 
+// '>_<' (the model's 'Extra' morph) is deliberately not here. It replaces her
+// eyes with a drawn squeeze that is fine at a distance and falls apart in a
+// close-up, which is a framing the brief does ask for -- so it is out of the
+// game rather than out of the tight band. She can still wear it manually
+// outside a session; it is just never something a photograph is judged on.
 export const EXPRESSIONS = [
   { key: 'happy', label: '笑顔' },
   { key: 'relaxed', label: 'にっこり' },
   { key: 'Surprised', label: '驚き' },
   { key: 'angry', label: '怒り' },
   { key: 'sad', label: '悲しい' },
-  { key: 'Extra', label: '>_<' },
 ];
 
 // How much of the frame's height her head should fill. Measured off the real
 // projection rather than picked out of the air -- tools/measure_framing.js
-// prints the number at a range of camera distances.
-//
-// A third band asking for a tight close-up used to sit here too. Getting the
-// head that large in frame meant the camera at ~1.3m or closer, which is
-// closer than the model reads well at -- the texture resolution and the
-// toon shading are tuned for a normal portrait distance, not a beauty shot,
-// and it looked wrong rather than intimate. Removed rather than patched: it
-// is not a fidelity problem worth solving here, just a distance not to ask
-// the player to go to.
+// prints the number at a range of camera distances, and the camera can reach
+// 23% of the frame at its closest and 1.6% at its furthest. The bands sit
+// inside that with gaps between them, so landing one means you framed it
+// rather than happened to be nearby.
 export const FRAMINGS = [
+  { key: 'close', label: '寄り', min: 0.130, max: 0.250 },   // ~1.3m and closer
   { key: 'medium', label: '標準', min: 0.055, max: 0.105 },  // ~2m to 3m
   { key: 'wide', label: '引き', min: 0.020, max: 0.040 },    // ~4m to 8.5m
 ];
@@ -211,11 +217,22 @@ function pick(list) {
   return list[Math.floor(Math.random() * list.length)];
 }
 
-export function makeRequest(shotNumber = 1) {
+// The pose and the expression are not rolled for: they are read off the peak
+// of the story she is about to perform (`moment`, from api.startScenario).
+// That is what stops the brief asking for a double peace sign worn with a sad
+// face, and it is what makes anticipating the shot possible -- the beats
+// leading up to the peak are the telegraph.
+//
+// Framing and light stay random, because those are the player's half of the
+// problem: where to stand, how close to get, which way the sun is. Those are
+// the actual photography skills the game is for.
+export function makeRequest(shotNumber = 1, moment = null) {
   const request = {
-    pose: pick(POSES).key,
-    expression: pick(EXPRESSIONS).key,
+    pose: moment ? moment.pose : pick(POSES).key,
+    expression: moment ? moment.expression : pick(EXPRESSIONS).key,
     framing: pick(FRAMINGS).key,
+    story: moment ? moment.story : null,
+    scenario: moment ? moment.key : null,
   };
   // The light is only asked for from the second shot on. The first one is
   // enough to be learning the controls with.
@@ -225,6 +242,7 @@ export function makeRequest(shotNumber = 1) {
 
 export function describeRequest(request) {
   return {
+    story: request.story || null,
     pose: byKey(POSES, request.pose),
     expression: byKey(EXPRESSIONS, request.expression),
     framing: byKey(FRAMINGS, request.framing),
@@ -242,6 +260,7 @@ const STYLE = `
   padding: 12px 14px; pointer-events: auto; backdrop-filter: blur(6px); }
 .pg-label { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #ffb454;
   margin: 0 0 8px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.pg-story { font-size: 13px; line-height: 1.45; margin: 0 0 8px; color: #e8ebf2; }
 .pg-brief { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .pg-chip { font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
   background: #0c0e14; border: 1px solid #2a3040; }
@@ -369,7 +388,8 @@ export function initPhotoGame(api) {
     panel.append(
       el('p', 'pg-label', '撮影会'),
       el('p', 'pg-count',
-        `彼女は自分のペースでポーズや表情を変えていきます。お題に合う瞬間を逃さず、${SHOTS_PER_SESSION}枚撮ってください。`),
+        `彼女のまわりで小さな出来事が起こります。お題はその「いちばんいい瞬間」。`
+        + `前ぶれを見て身構えて、${SHOTS_PER_SESSION}枚撮ってください。`),
     );
     panel.append(renderCastPicker());
     panel.append(renderBurstPicker());
@@ -425,6 +445,11 @@ export function initPhotoGame(api) {
     const panel = el('div', 'pg-panel');
     const described = describeRequest(session.request);
     panel.append(el('p', 'pg-label', 'お題'));
+
+    // The story line, above the chips. The chips say what has to be true of
+    // the photograph; this says what is about to happen, which is the part
+    // you watch for.
+    if (described.story) panel.append(el('p', 'pg-story', described.story));
 
     const brief = el('div', 'pg-brief');
     for (const entry of [described.pose, described.expression, described.framing, described.light]) {
@@ -566,13 +591,15 @@ export function initPhotoGame(api) {
     again.focus();
   }
 
+  // The story comes first and the brief is written from it, not the other way
+  // round. api.startScenario() puts her at the top of a fresh story and hands
+  // back the peak that story is going to reach; the brief asks for that peak.
+  // So the shot is always reachable, always motivated, and always signposted
+  // by the beats that lead to it.
   function nextRequest() {
-    session.request = makeRequest(session.shots.length + 1);
+    const moment = api.startScenario ? api.startScenario() : null;
+    session.request = makeRequest(session.shots.length + 1, moment);
     session.phase = 'shooting';
-    // Guarantees the brief's exact pose+expression happens soon rather than
-    // whenever the two independent cycles happen to coincide -- see the
-    // director in main.js. Every brief gets its own countdown.
-    if (api.scheduleMoment) api.scheduleMoment(session.request.pose, session.request.expression);
     render();
   }
 

@@ -31804,7 +31804,9 @@ void main() {
     { key: "peace", label: "\u30D4\u30FC\u30B9" },
     { key: "double-peace", label: "\u30C0\u30D6\u30EB\u30D4\u30FC\u30B9" },
     { key: "wave", label: "\u624B\u3092\u632F\u308B" },
-    { key: "crouch", label: "\u3057\u3083\u304C\u3080" },
+    { key: "reach-out", label: "\u624B\u3092\u306E\u3070\u3059" },
+    { key: "crouch-look", label: "\u3057\u3083\u304C\u3093\u3067\u306E\u305E\u304F" },
+    { key: "look-up", label: "\u898B\u4E0A\u3052\u308B" },
     { key: "idle", label: "\u81EA\u7136\u4F53" },
     { key: "dance", label: "\u30C0\u30F3\u30B9" }
   ];
@@ -31820,10 +31822,11 @@ void main() {
     { key: "relaxed", label: "\u306B\u3063\u3053\u308A" },
     { key: "Surprised", label: "\u9A5A\u304D" },
     { key: "angry", label: "\u6012\u308A" },
-    { key: "sad", label: "\u60B2\u3057\u3044" },
-    { key: "Extra", label: ">_<" }
+    { key: "sad", label: "\u60B2\u3057\u3044" }
   ];
   var FRAMINGS = [
+    { key: "close", label: "\u5BC4\u308A", min: 0.13, max: 0.25 },
+    // ~1.3m and closer
     { key: "medium", label: "\u6A19\u6E96", min: 0.055, max: 0.105 },
     // ~2m to 3m
     { key: "wide", label: "\u5F15\u304D", min: 0.02, max: 0.04 }
@@ -31943,17 +31946,20 @@ void main() {
   function pick(list) {
     return list[Math.floor(Math.random() * list.length)];
   }
-  function makeRequest(shotNumber = 1) {
+  function makeRequest(shotNumber = 1, moment = null) {
     const request = {
-      pose: pick(POSES).key,
-      expression: pick(EXPRESSIONS).key,
-      framing: pick(FRAMINGS).key
+      pose: moment ? moment.pose : pick(POSES).key,
+      expression: moment ? moment.expression : pick(EXPRESSIONS).key,
+      framing: pick(FRAMINGS).key,
+      story: moment ? moment.story : null,
+      scenario: moment ? moment.key : null
     };
     if (shotNumber >= 2) request.light = pick(LIGHTS).key;
     return request;
   }
   function describeRequest(request) {
     return {
+      story: request.story || null,
       pose: byKey(POSES, request.pose),
       expression: byKey(EXPRESSIONS, request.expression),
       framing: byKey(FRAMINGS, request.framing),
@@ -31970,6 +31976,7 @@ void main() {
   padding: 12px 14px; pointer-events: auto; backdrop-filter: blur(6px); }
 .pg-label { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #ffb454;
   margin: 0 0 8px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.pg-story { font-size: 13px; line-height: 1.45; margin: 0 0 8px; color: #e8ebf2; }
 .pg-brief { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .pg-chip { font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
   background: #0c0e14; border: 1px solid #2a3040; }
@@ -32095,7 +32102,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
         el(
           "p",
           "pg-count",
-          `\u5F7C\u5973\u306F\u81EA\u5206\u306E\u30DA\u30FC\u30B9\u3067\u30DD\u30FC\u30BA\u3084\u8868\u60C5\u3092\u5909\u3048\u3066\u3044\u304D\u307E\u3059\u3002\u304A\u984C\u306B\u5408\u3046\u77AC\u9593\u3092\u9003\u3055\u305A\u3001${SHOTS_PER_SESSION}\u679A\u64AE\u3063\u3066\u304F\u3060\u3055\u3044\u3002`
+          `\u5F7C\u5973\u306E\u307E\u308F\u308A\u3067\u5C0F\u3055\u306A\u51FA\u6765\u4E8B\u304C\u8D77\u3053\u308A\u307E\u3059\u3002\u304A\u984C\u306F\u305D\u306E\u300C\u3044\u3061\u3070\u3093\u3044\u3044\u77AC\u9593\u300D\u3002\u524D\u3076\u308C\u3092\u898B\u3066\u8EAB\u69CB\u3048\u3066\u3001${SHOTS_PER_SESSION}\u679A\u64AE\u3063\u3066\u304F\u3060\u3055\u3044\u3002`
         )
       );
       panel.append(renderCastPicker());
@@ -32144,6 +32151,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       const panel = el("div", "pg-panel");
       const described = describeRequest(session.request);
       panel.append(el("p", "pg-label", "\u304A\u984C"));
+      if (described.story) panel.append(el("p", "pg-story", described.story));
       const brief = el("div", "pg-brief");
       for (const entry of [described.pose, described.expression, described.framing, described.light]) {
         if (!entry) continue;
@@ -32273,9 +32281,9 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       again.focus();
     }
     function nextRequest() {
-      session.request = makeRequest(session.shots.length + 1);
+      const moment = api.startScenario ? api.startScenario() : null;
+      session.request = makeRequest(session.shots.length + 1, moment);
       session.phase = "shooting";
-      if (api.scheduleMoment) api.scheduleMoment(session.request.pose, session.request.expression);
       render();
     }
     function setDirector(on) {
@@ -32682,7 +32690,22 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     position: new Vector3(0, 0, 0),
     heading: 0
   };
-  var keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false, peace: false, doublePeace: false, dance: false };
+  var keys = {
+    forward: false,
+    back: false,
+    left: false,
+    right: false,
+    run: false,
+    wave: false,
+    crouch: false,
+    peace: false,
+    doublePeace: false,
+    dance: false,
+    // Story poses, driven by the director rather than by the keyboard.
+    reachOut: false,
+    crouchLook: false,
+    lookUp: false
+  };
   var airborne = false;
   var velocityY = 0;
   var landingRecoverT = 0;
@@ -32745,6 +32768,17 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       case "KeyR":
         if (!directorActive) keys.dance = down;
         break;
+      // The story poses. They exist for the scenarios, but there is no reason
+      // to keep them off the keyboard in free play.
+      case "KeyF":
+        if (!directorActive) keys.reachOut = down;
+        break;
+      case "KeyG":
+        if (!directorActive) keys.crouchLook = down;
+        break;
+      case "KeyT":
+        if (!directorActive) keys.lookUp = down;
+        break;
       case "Space":
         e.preventDefault();
         if (down) startJump();
@@ -32768,6 +32802,131 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     }, { passive: false });
     touchPad.addEventListener("touchcancel", () => setTouch(false));
   }
+  var randRange = (min, max) => min + Math.random() * (max - min);
+  function setPoseKeys(name) {
+    keys.wave = name === "wave";
+    keys.crouch = name === "crouch";
+    keys.peace = name === "peace";
+    keys.doublePeace = name === "double-peace";
+    keys.dance = name === "dance";
+    keys.reachOut = name === "reach-out";
+    keys.crouchLook = name === "crouch-look";
+    keys.lookUp = name === "look-up";
+  }
+  function danceBeatHold() {
+    return [DANCE_BEAT * DANCE_BARS * 1.9, DANCE_BEAT * DANCE_BARS * 2.7];
+  }
+  var SCENARIOS = [
+    {
+      key: "bird-to-hand",
+      beats: [
+        { pose: "look-up", expression: "Surprised", hold: [1.2, 1.8], cue: { bird: "sky", travel: 1 } },
+        { pose: "reach-out", expression: "relaxed", hold: [1.5, 2], cue: { bird: "hand", travel: 1.6 } },
+        { pose: "reach-out", expression: "happy", hold: [2.8, 3.6], peak: true, story: "\u624B\u306B\u3068\u307E\u3063\u305F\u9CE5\u306B\u3001\u3046\u308C\u3057\u305D\u3046\u306A\u9854" },
+        { pose: "reach-out", expression: "Surprised", hold: [0.9, 1.2], cue: { bird: "away" } },
+        { pose: "look-up", expression: "sad", hold: [1.8, 2.4] },
+        { pose: "idle", expression: null, hold: [1.2, 1.8] }
+      ]
+    },
+    {
+      key: "bird-to-shoulder",
+      beats: [
+        { pose: "idle", expression: "relaxed", hold: [1.3, 1.8], cue: { bird: "shoulder", travel: 1.7 } },
+        { pose: "idle", expression: "Surprised", hold: [2.4, 3], peak: true, story: "\u80A9\u306B\u9CE5\u304C\u3068\u307E\u3063\u3066\u3001\u3073\u3063\u304F\u308A\u3057\u305F\u9854" },
+        { pose: "peace", expression: "happy", hold: [2.4, 3.2] },
+        { pose: "idle", expression: "relaxed", hold: [0.9, 1.2], cue: { bird: "away" } },
+        { pose: "look-up", expression: "sad", hold: [1.7, 2.3] },
+        { pose: "idle", expression: null, hold: [1.2, 1.8] }
+      ]
+    },
+    {
+      key: "bird-on-the-ground",
+      beats: [
+        { pose: "idle", expression: "Surprised", hold: [1.2, 1.7], cue: { bird: "ground", travel: 1.4 } },
+        { pose: "crouch-look", expression: "relaxed", hold: [1.5, 2] },
+        { pose: "crouch-look", expression: "happy", hold: [2.8, 3.6], peak: true, story: "\u3057\u3083\u304C\u3093\u3067\u9CE5\u3092\u306E\u305E\u304D\u3053\u3080\u3001\u3046\u308C\u3057\u305D\u3046\u306A\u9854" },
+        { pose: "crouch-look", expression: "Surprised", hold: [0.8, 1.1], cue: { bird: "away" } },
+        { pose: "look-up", expression: "sad", hold: [1.6, 2.2] },
+        { pose: "idle", expression: null, hold: [1.2, 1.8] }
+      ]
+    },
+    {
+      key: "noticing-you",
+      beats: [
+        { pose: "idle", expression: null, hold: [1.1, 1.6] },
+        { pose: "look-up", expression: "Surprised", hold: [1, 1.4] },
+        { pose: "wave", expression: "happy", hold: [2.6, 3.4], peak: true, story: "\u3053\u3061\u3089\u306B\u6C17\u3065\u3044\u3066\u3001\u624B\u3092\u632F\u308B" },
+        { pose: "peace", expression: "relaxed", hold: [1.8, 2.4] },
+        { pose: "idle", expression: null, hold: [1.2, 1.6] }
+      ]
+    },
+    {
+      key: "posing-for-you",
+      beats: [
+        { pose: "idle", expression: "relaxed", hold: [1.1, 1.5] },
+        { pose: "wave", expression: "happy", hold: [1.8, 2.4] },
+        { pose: "peace", expression: "happy", hold: [2.8, 3.6], peak: true, story: "\u30AB\u30E1\u30E9\u306B\u5411\u304B\u3063\u3066\u3001\u7B11\u9854\u3067\u30D4\u30FC\u30B9" },
+        { pose: "idle", expression: "relaxed", hold: [1.3, 1.8] }
+      ]
+    },
+    {
+      key: "getting-into-it",
+      beats: [
+        { pose: "idle", expression: "relaxed", hold: [1.1, 1.5] },
+        { pose: "peace", expression: "relaxed", hold: [1.6, 2.2] },
+        { pose: "double-peace", expression: "happy", hold: [2.8, 3.6], peak: true, story: "\u30CE\u3063\u3066\u304D\u3066\u3001\u30C0\u30D6\u30EB\u30D4\u30FC\u30B9" },
+        { pose: "wave", expression: "relaxed", hold: [1.5, 2] },
+        { pose: "idle", expression: null, hold: [1.2, 1.6] }
+      ]
+    },
+    {
+      key: "a-quiet-one",
+      beats: [
+        { pose: "idle", expression: null, hold: [1.1, 1.5] },
+        { pose: "look-up", expression: "relaxed", hold: [1.5, 2] },
+        { pose: "peace", expression: "relaxed", hold: [2.6, 3.4], peak: true, story: "\u843D\u3061\u7740\u3044\u305F\u3001\u5C0F\u3055\u3081\u306E\u30D4\u30FC\u30B9" },
+        { pose: "idle", expression: null, hold: [1.3, 1.8] }
+      ]
+    },
+    {
+      key: "the-routine",
+      beats: [
+        { pose: "idle", expression: "relaxed", hold: [1.2, 1.7] },
+        { pose: "dance", expression: "relaxed", hold: [1.6, 2.2] },
+        { pose: "dance", expression: "happy", hold: danceBeatHold, peak: true, story: "\u30C0\u30F3\u30B9\u306E\u3044\u3061\u3070\u3093\u9AD8\u3044\u3068\u3053\u308D" },
+        { pose: "idle", expression: "Surprised", hold: [1, 1.4] },
+        { pose: "wave", expression: "relaxed", hold: [1.6, 2.2] },
+        { pose: "idle", expression: null, hold: [1.2, 1.6] }
+      ]
+    },
+    {
+      key: "kept-waiting",
+      beats: [
+        { pose: "idle", expression: "relaxed", hold: [1.2, 1.6] },
+        { pose: "look-up", expression: "relaxed", hold: [1.4, 1.9] },
+        { pose: "idle", expression: "angry", hold: [2.6, 3.4], peak: true, story: "\u5F85\u305F\u3055\u308C\u3066\u3001\u3061\u3087\u3063\u3068\u3080\u304F\u308C\u305F\u9854" },
+        { pose: "wave", expression: "happy", hold: [1.8, 2.4] },
+        { pose: "idle", expression: null, hold: [1.2, 1.6] }
+      ]
+    },
+    {
+      key: "a-thought",
+      beats: [
+        { pose: "idle", expression: "relaxed", hold: [1.2, 1.6] },
+        { pose: "look-up", expression: "sad", hold: [2.6, 3.4], peak: true, story: "\u3075\u3068\u7A7A\u3092\u898B\u4E0A\u3052\u3066\u3001\u3055\u307F\u3057\u305D\u3046\u306A\u9854" },
+        { pose: "idle", expression: "relaxed", hold: [1.4, 1.9] },
+        { pose: "peace", expression: "happy", hold: [1.8, 2.4] }
+      ]
+    }
+  ];
+  var scenarioByKey = (key) => SCENARIOS.find((entry) => entry.key === key);
+  var peakBeat = (scenario) => scenario.beats.find((beat) => beat.peak) || scenario.beats[0];
+  function scenarioPeaks() {
+    return SCENARIOS.map((scenario) => {
+      const beat = peakBeat(scenario);
+      return { key: scenario.key, pose: beat.pose, expression: beat.expression, story: beat.story };
+    });
+  }
   function makeShuffleBag(items) {
     let deck = [];
     let last = null;
@@ -32786,168 +32945,183 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
         }
         last = deck.pop();
         return last;
+      },
+      // Records a draw the caller made itself, so an explicitly chosen story
+      // does not then come straight back out of the bag as the next one.
+      note(item) {
+        last = item;
       }
     };
   }
-  var randRange = (min, max) => min + Math.random() * (max - min);
-  function setPoseKeys(name) {
-    keys.wave = name === "wave";
-    keys.crouch = name === "crouch";
-    keys.peace = name === "peace";
-    keys.doublePeace = name === "double-peace";
-    keys.dance = name === "dance";
-  }
-  var DIRECTOR_POSES = ["peace", "double-peace", "wave", "crouch", "dance", "idle"];
-  var DIRECTOR_POSE_HOLD = {
-    peace: [2.6, 4.2],
-    "double-peace": [2.6, 4.2],
-    wave: [2.2, 3.6],
-    crouch: [2, 3.2],
-    idle: [1.4, 2.4]
-  };
-  var DIRECTOR_EXPRESSION_HOLD = [1.8, 3.2];
-  function poseHoldRange(name) {
-    if (name === "dance") return [DANCE_BEAT * DANCE_BARS * 1.9, DANCE_BEAT * DANCE_BARS * 2.7];
-    return DIRECTOR_POSE_HOLD[name];
-  }
-  var directorPoseBag = null;
-  var directorExpressionBag = null;
-  var directorPoseTimer = 0;
-  var directorExpressionTimer = 0;
-  var MOMENT_DELAY = [2.5, 6.5];
-  var BIRD_APPROACH_TIME = 1.1;
+  var scenarioBag = null;
+  var currentScenario = null;
+  var beatIndex = 0;
+  var beatTimer = 0;
   var BIRD_DEPART_TIME = 0.9;
-  var pendingMoment = null;
+  var BIRD_CIRCLE_TIME = 1.4;
   var birdState = "offstage";
+  var birdAnchor = null;
+  var birdTravel = 1.2;
   var birdT = 0;
-  var birdPerchTime = 2.5;
-  var birdFlap = 0;
   var birdFrom = new Vector3();
-  var birdTo = new Vector3();
-  function scheduleMoment(pose, expression) {
-    if (!DIRECTOR_POSES.includes(pose)) {
-      pendingMoment = null;
-      return;
-    }
-    const [lo, hi] = poseHoldRange(pose);
-    pendingMoment = {
-      pose,
-      expression,
-      birdArmed: false,
-      remaining: randRange(...MOMENT_DELAY),
-      holdDuration: randRange(lo, hi)
-    };
-  }
-  function shoulderAnchor() {
-    const node = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode("rightShoulder") : null;
+  var birdFixed = new Vector3();
+  var birdFlap = 0;
+  function bodyAnchor(boneName, outward, lift, forward = 0) {
+    const node = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode(boneName) : null;
     if (!node) return null;
     node.updateWorldMatrix(true, false);
     const base = new Vector3().setFromMatrixPosition(node.matrixWorld);
-    const outward = new Vector3(1, 0, 0).applyQuaternion(new Quaternion().setFromRotationMatrix(node.matrixWorld)).normalize();
-    return base.addScaledVector(outward, 0.1).add(new Vector3(0, 0.05, 0.01));
+    const rotation = new Quaternion().setFromRotationMatrix(node.matrixWorld);
+    const side = new Vector3(1, 0, 0).applyQuaternion(rotation).normalize();
+    return base.addScaledVector(side, outward).add(new Vector3(0, lift, forward));
   }
-  function startBirdVisit(perchSeconds) {
-    const target = shoulderAnchor();
-    if (!target) return;
+  var BIRD_ANCHORS = {
+    shoulder: () => bodyAnchor("rightShoulder", 0.1, 0.05, 0.01),
+    // On the back of the hand rather than at its origin, so it reads as perched
+    // on her rather than growing out of her wrist.
+    hand: () => bodyAnchor("rightHand", 0.02, 0.035, 0.03),
+    ground: () => {
+      if (!vrm) return null;
+      const forward = new Vector3(0, 0, 1).applyAxisAngle(new Vector3(0, 1, 0), facing);
+      return vrm.scene.position.clone().addScaledVector(forward, 0.55).setY(0.045);
+    },
+    // Not a perch: somewhere above and to one side, for the beat where she has
+    // noticed it but it has not come down yet.
+    sky: () => {
+      if (!vrm) return null;
+      return vrm.scene.position.clone().add(birdFixed);
+    }
+  };
+  function birdAnchorPoint(name) {
+    const fn = BIRD_ANCHORS[name];
+    return fn ? fn() : null;
+  }
+  function birdOffstage() {
     const angle = Math.random() * Math.PI * 2;
-    birdFrom.set(
-      target.x + Math.sin(angle) * 2.2,
-      target.y + 0.9 + Math.random() * 0.5,
-      target.z + Math.cos(angle) * 2.2
+    const base = vrm ? vrm.scene.position : new Vector3();
+    return new Vector3(
+      base.x + Math.sin(angle) * 2.6,
+      base.y + 1.9 + Math.random() * 0.6,
+      base.z + Math.cos(angle) * 2.6
     );
-    birdPerchTime = perchSeconds;
-    birdState = "approach";
+  }
+  function birdGoTo(anchor, travel) {
+    const target = birdAnchorPoint(anchor);
+    if (!target) return;
+    if (birdState === "offstage") {
+      birdFrom.copy(birdOffstage());
+      bird.visible = true;
+    } else {
+      birdFrom.copy(bird.position);
+    }
+    birdAnchor = anchor;
+    birdTravel = Math.max(0.2, travel);
     birdT = 0;
-    bird.visible = true;
+    birdState = "flying";
+  }
+  function birdLeave() {
+    if (birdState === "offstage") return;
+    birdFrom.copy(bird.position);
+    birdFixed.copy(birdOffstage()).setY(birdFrom.y + 2.2);
+    birdAnchor = null;
+    birdTravel = BIRD_DEPART_TIME;
+    birdT = 0;
+    birdState = "flying";
+  }
+  function birdCue(cue) {
+    if (!cue) return;
+    if (cue.bird === "away") {
+      birdLeave();
+      return;
+    }
+    if (cue.bird === "sky") {
+      const angle = Math.random() * Math.PI * 2;
+      birdFixed.set(Math.sin(angle) * 1.5, 2.1, Math.cos(angle) * 1.5);
+    }
+    birdGoTo(cue.bird, cue.travel || BIRD_CIRCLE_TIME);
+  }
+  function birdReset() {
+    birdState = "offstage";
+    birdAnchor = null;
+    bird.visible = false;
   }
   function updateBird(dt) {
     if (birdState === "offstage") return;
     birdFlap += dt * 16;
-    const flap = Math.sin(birdFlap) * (birdState === "perched" ? 0.25 : 1);
+    const flap = Math.sin(birdFlap) * (birdState === "settled" ? 0.22 : 1);
     bird.userData.leftWing.rotation.z = flap * 0.85;
     bird.userData.rightWing.rotation.z = -flap * 0.85;
-    const target = shoulderAnchor();
+    const departing = birdState === "flying" && birdAnchor === null;
+    const target = departing ? birdFixed : birdAnchorPoint(birdAnchor);
     if (!target) {
-      birdState = "offstage";
-      bird.visible = false;
+      birdReset();
       return;
     }
-    if (birdState === "approach") {
-      birdT += dt / BIRD_APPROACH_TIME;
+    if (birdState === "flying") {
+      birdT += dt / birdTravel;
       const t = Math.min(1, birdT);
+      if (departing) {
+        bird.position.lerpVectors(birdFrom, target, t * t);
+        bird.lookAt(target);
+        if (t >= 1) birdReset();
+        return;
+      }
       const eased = 1 - (1 - t) ** 3;
       bird.position.lerpVectors(birdFrom, target, eased);
       bird.position.y += Math.sin(t * Math.PI) * 0.22;
       bird.lookAt(target.x, bird.position.y, target.z);
       if (t >= 1) {
-        birdState = "perched";
+        birdState = "settled";
         birdT = 0;
       }
-    } else if (birdState === "perched") {
-      bird.position.copy(target);
-      bird.position.y += Math.sin(performance.now() * 4e-3) * 6e-3;
-      bird.lookAt(target.x, target.y - 0.3, target.z + 0.6);
-      birdT += dt;
-      if (birdT >= birdPerchTime) {
-        birdTo.set(target.x + (Math.random() - 0.5) * 2, target.y + 2.4, target.z + (Math.random() - 0.5) * 2);
-        birdFrom.copy(target);
-        birdState = "depart";
-        birdT = 0;
-      }
-    } else if (birdState === "depart") {
-      birdT += dt / BIRD_DEPART_TIME;
-      const t = Math.min(1, birdT);
-      bird.position.lerpVectors(birdFrom, birdTo, t * t);
-      bird.lookAt(birdTo.x, birdTo.y, birdTo.z);
-      if (t >= 1) {
-        birdState = "offstage";
-        bird.visible = false;
-      }
+      return;
     }
+    bird.position.copy(target);
+    bird.position.y += Math.sin(performance.now() * 4e-3) * 6e-3;
+    if (birdAnchor === "sky" && vrm) bird.lookAt(vrm.scene.position.x, target.y - 0.6, vrm.scene.position.z);
+    else bird.lookAt(target.x, target.y - 0.3, target.z + 0.6);
+  }
+  function beatHold(beat) {
+    const range = typeof beat.hold === "function" ? beat.hold() : beat.hold;
+    return randRange(range[0], range[1]);
+  }
+  function enterBeat(index) {
+    beatIndex = index;
+    const beat = currentScenario.beats[index];
+    setPoseKeys(beat.pose);
+    heldExpression = beat.expression;
+    beatTimer = beatHold(beat);
+    birdCue(beat.cue);
+  }
+  function startScenario(key) {
+    if (!scenarioBag) scenarioBag = makeShuffleBag(SCENARIOS.map((entry) => entry.key));
+    const chosen = key && scenarioByKey(key) || scenarioByKey(scenarioBag.next());
+    if (key) scenarioBag.note(chosen.key);
+    currentScenario = chosen;
+    birdReset();
+    enterBeat(0);
+    const beat = peakBeat(chosen);
+    return { key: chosen.key, pose: beat.pose, expression: beat.expression, story: beat.story };
   }
   function startDirector() {
     directorActive = true;
-    directorPoseBag = makeShuffleBag(DIRECTOR_POSES);
-    directorExpressionBag = makeShuffleBag([...Object.values(FACE_KEYS), null]);
-    directorPoseTimer = 0;
-    directorExpressionTimer = 0;
-    pendingMoment = null;
+    scenarioBag = makeShuffleBag(SCENARIOS.map((entry) => entry.key));
+    startScenario();
   }
   function stopDirector() {
     directorActive = false;
+    currentScenario = null;
     setPoseKeys("idle");
     heldExpression = null;
-    pendingMoment = null;
-    birdState = "offstage";
-    bird.visible = false;
+    birdReset();
   }
   function runDirector(dt) {
-    if (pendingMoment) {
-      pendingMoment.remaining -= dt;
-      if (!pendingMoment.birdArmed && pendingMoment.remaining <= BIRD_APPROACH_TIME) {
-        startBirdVisit(pendingMoment.holdDuration);
-        pendingMoment.birdArmed = true;
-      }
-      if (pendingMoment.remaining <= 0) {
-        setPoseKeys(pendingMoment.pose);
-        heldExpression = pendingMoment.expression;
-        directorPoseTimer = pendingMoment.holdDuration;
-        directorExpressionTimer = pendingMoment.holdDuration;
-        pendingMoment = null;
-      }
-    } else {
-      directorPoseTimer -= dt;
-      if (directorPoseTimer <= 0) {
-        const next = directorPoseBag.next();
-        setPoseKeys(next);
-        const [lo, hi] = poseHoldRange(next);
-        directorPoseTimer = randRange(lo, hi);
-      }
-      directorExpressionTimer -= dt;
-      if (directorExpressionTimer <= 0) {
-        heldExpression = directorExpressionBag.next();
-        directorExpressionTimer = randRange(...DIRECTOR_EXPRESSION_HOLD);
-      }
+    if (!currentScenario) startScenario();
+    beatTimer -= dt;
+    if (beatTimer <= 0) {
+      const next = beatIndex + 1;
+      if (next >= currentScenario.beats.length) startScenario();
+      else enterBeat(next);
     }
     updateBird(dt);
   }
@@ -32956,6 +33130,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   function setAnimName(name) {
     if (state.animName === name) return;
     state.animName = name;
+    notePoseChange(name);
     if (stateLabel) {
       stateLabel.textContent = name;
       stateLabel.dataset.state = name;
@@ -33182,7 +33357,8 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
             if (on) startDirector();
             else stopDirector();
           },
-          scheduleMoment
+          startScenario,
+          scenarioPeaks
         });
       }
     }, (err) => {
@@ -33406,6 +33582,53 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     bones.head.rotation.x = Math.sin(actionCycle * 0.5) * 0.02;
     setAnimName("idle");
   }
+  function applyReachOut(dt) {
+    actionCycle += dt * 1.1;
+    bones.rightUpperArm.rotation.set(-1.2, 0.25, 1.5);
+    bones.rightLowerArm.rotation.set(0, 0.32, 0);
+    bones.rightHand.rotation.set(0.55, 0, 0);
+    bones.chest.rotation.set(0.02, -0.16, 0);
+    bones.head.rotation.set(0.14 + Math.sin(actionCycle) * 0.01, -0.3, 0.04);
+    setAnimName("reach-out");
+  }
+  var CROUCH_LOOK_DEPTH = 0.58;
+  var CROUCH_LOOK_SPLAY = 0.06;
+  var CROUCH_LOOK_TOE_OUT = 0.1;
+  var crouchArmOverride = null;
+  function applyCrouchLook(dt) {
+    actionCycle += dt * 1.4;
+    const squat = CROUCH_LOOK_DEPTH;
+    const SPLAY = squat * CROUCH_LOOK_SPLAY;
+    const TOE_OUT = squat * CROUCH_LOOK_TOE_OUT;
+    bones.leftUpperLeg.rotation.set(-squat * 1.6, -TOE_OUT, SPLAY);
+    bones.rightUpperLeg.rotation.set(-squat * 1.6, TOE_OUT, -SPLAY);
+    bones.leftLowerLeg.rotation.x = squat * 2.3;
+    bones.rightLowerLeg.rotation.x = squat * 2.3;
+    bones.hips.position.y = hipsBaseY - squat * 0.471;
+    bones.hips.position.z = -squat * 0.144;
+    bones.chest.rotation.set(squat * 0.3, 0, 0);
+    const ux = crouchArmOverride ? crouchArmOverride.ux : -0.75;
+    const fx = crouchArmOverride ? crouchArmOverride.fx : 0.45;
+    bones.leftUpperArm.rotation.set(ux, 0, ARM_DOWN_Z);
+    bones.rightUpperArm.rotation.set(ux, 0, -ARM_DOWN_Z);
+    const fy = crouchArmOverride ? crouchArmOverride.fy : 0.35;
+    bones.leftLowerArm.rotation.set(fx, -fy, 0);
+    bones.rightLowerArm.rotation.set(fx, fy, 0);
+    bones.leftFoot.rotation.x = -squat * 0.6;
+    bones.rightFoot.rotation.x = -squat * 0.6;
+    bones.head.rotation.set(0.34 + Math.sin(actionCycle) * 0.015, 0.06, 0);
+    setAnimName("crouch-look");
+  }
+  function applyLookUp(dt) {
+    actionCycle += dt * 1.2;
+    bones.head.rotation.set(-0.52 + Math.sin(actionCycle * 0.7) * 0.02, -0.12, 0.05);
+    bones.chest.rotation.set(-0.13, -0.05, 0);
+    bones.leftUpperArm.rotation.set(0, 0, ARM_DOWN_Z + 0.06);
+    bones.rightUpperArm.rotation.set(0, 0, -ARM_DOWN_Z - 0.06);
+    bones.leftLowerArm.rotation.set(0.1, -0.12, 0);
+    bones.rightLowerArm.rotation.set(0.1, 0.12, 0);
+    setAnimName("look-up");
+  }
   var JUMP_MAX_HEIGHT = JUMP_VELOCITY * JUMP_VELOCITY / (2 * JUMP_GRAVITY);
   function applyJump() {
     const tuck = MathUtils.clamp(state.position.y / JUMP_MAX_HEIGHT, 0, 1);
@@ -33448,12 +33671,21 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   var gazeToCamera = new Vector3();
   var gazeAngle = 0;
   var gazeWeight = 0;
+  var GAZE_BIRD_MIN_DISTANCE = 0.45;
+  function gazeFocus() {
+    if (!bird.visible) return camera.position;
+    const dx = bird.position.x - gazeHeadPos.x;
+    const dz = bird.position.z - gazeHeadPos.z;
+    if (Math.hypot(dx, dz) < GAZE_BIRD_MIN_DISTANCE) return camera.position;
+    return bird.position;
+  }
   function applyGaze(dt) {
     const rawHead = vrm.humanoid.getRawBoneNode("head");
     if (!rawHead) return;
     rawHead.updateWorldMatrix(true, false);
     gazeHeadPos.setFromMatrixPosition(rawHead.matrixWorld);
-    gazeToCamera.copy(camera.position).sub(gazeHeadPos);
+    const focus = gazeFocus();
+    gazeToCamera.copy(focus).sub(gazeHeadPos);
     const horizontal = Math.hypot(gazeToCamera.x, gazeToCamera.z) || 1e-6;
     const fx = Math.sin(state.heading);
     const fz = Math.cos(state.heading);
@@ -33474,7 +33706,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     ) * gazeWeight;
     bones.head.rotation.y += headYaw;
     const lookYaw = state.heading + gazeAngle * gazeWeight;
-    const rise = (camera.position.y - gazeHeadPos.y) * gazeWeight * (GAZE_TARGET_DISTANCE / horizontal);
+    const rise = (focus.y - gazeHeadPos.y) * gazeWeight * (GAZE_TARGET_DISTANCE / horizontal);
     gazeTarget.position.set(
       gazeHeadPos.x + Math.sin(lookYaw) * GAZE_TARGET_DISTANCE,
       gazeHeadPos.y + rise,
@@ -33582,13 +33814,102 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       else if (keys.doublePeace) applyDoublePeace(dt);
       else if (keys.peace) applyPeace(dt);
       else if (keys.dance) applyDance(dt);
+      else if (keys.reachOut) applyReachOut(dt);
+      else if (keys.crouchLook) applyCrouchLook(dt);
+      else if (keys.lookUp) applyLookUp(dt);
       else applyIdle(dt);
     }
+    blendPoseChange(dt);
     applyGaze(dt);
     conformPoseToRig();
     applyFace(dt, action);
     vrm.update(dt);
     updateCamera();
+  }
+  var POSE_BLEND_TIME = 0.42;
+  var POSE_BLEND_FAST = 0.12;
+  var FAST_BLEND_POSES = /* @__PURE__ */ new Set(["jump", "walk", "run"]);
+  var poseBlendTime = POSE_BLEND_TIME;
+  var BLEND_BONES = [
+    "hips",
+    "spine",
+    "chest",
+    "neck",
+    "head",
+    "leftUpperArm",
+    "leftLowerArm",
+    "leftHand",
+    "rightUpperArm",
+    "rightLowerArm",
+    "rightHand",
+    "leftUpperLeg",
+    "leftLowerLeg",
+    "leftFoot",
+    "rightUpperLeg",
+    "rightLowerLeg",
+    "rightFoot"
+  ];
+  var prevAuthored = makePoseBuffer();
+  var blendFrom = makePoseBuffer();
+  var prevAuthoredValid = false;
+  var blendRemaining = 0;
+  function makePoseBuffer() {
+    const buffer = { rotations: {}, hips: { y: 0, z: 0 } };
+    for (const name of BLEND_BONES) buffer.rotations[name] = { x: 0, y: 0, z: 0 };
+    return buffer;
+  }
+  function capturePose(buffer) {
+    for (const name of BLEND_BONES) {
+      const bone = bones[name];
+      if (!bone) continue;
+      const slot = buffer.rotations[name];
+      slot.x = bone.rotation.x;
+      slot.y = bone.rotation.y;
+      slot.z = bone.rotation.z;
+    }
+    if (bones.hips) {
+      buffer.hips.y = bones.hips.position.y;
+      buffer.hips.z = bones.hips.position.z;
+    }
+  }
+  function copyPose(from, to) {
+    for (const name of BLEND_BONES) {
+      const source = from.rotations[name];
+      const target = to.rotations[name];
+      target.x = source.x;
+      target.y = source.y;
+      target.z = source.z;
+    }
+    to.hips.y = from.hips.y;
+    to.hips.z = from.hips.z;
+  }
+  function notePoseChange(name) {
+    if (!prevAuthoredValid) return;
+    copyPose(prevAuthored, blendFrom);
+    poseBlendTime = FAST_BLEND_POSES.has(name) ? POSE_BLEND_FAST : POSE_BLEND_TIME;
+    blendRemaining = poseBlendTime;
+  }
+  function blendPoseChange(dt) {
+    if (blendRemaining > 0) {
+      blendRemaining = Math.max(0, blendRemaining - dt);
+      const linear = 1 - blendRemaining / poseBlendTime;
+      const t = linear * linear * (3 - 2 * linear);
+      const previous = 1 - t;
+      for (const name of BLEND_BONES) {
+        const bone = bones[name];
+        const was = blendFrom.rotations[name];
+        if (!bone) continue;
+        bone.rotation.x = bone.rotation.x * t + was.x * previous;
+        bone.rotation.y = bone.rotation.y * t + was.y * previous;
+        bone.rotation.z = bone.rotation.z * t + was.z * previous;
+      }
+      if (bones.hips) {
+        bones.hips.position.y = bones.hips.position.y * t + blendFrom.hips.y * previous;
+        bones.hips.position.z = bones.hips.position.z * t + blendFrom.hips.z * previous;
+      }
+    }
+    capturePose(prevAuthored);
+    prevAuthoredValid = true;
   }
   var HEAD_HEIGHT = 0.16;
   var projected = new Vector3();
@@ -33857,10 +34178,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     // before returning, which lands the rig back in idle — measuring after it
     // silently reports the idle pose for every action.
     holdActionForTest: (name, durationMs) => {
-      keys.wave = name === "wave";
-      keys.crouch = name === "crouch";
-      keys.peace = name === "peace";
-      keys.doublePeace = name === "double-peace";
+      setPoseKeys(name);
       const stepMs = 16;
       let elapsed = 0;
       while (elapsed < durationMs) {
@@ -33870,7 +34188,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       return window.__char.getState();
     },
     releaseActionsForTest: () => {
-      keys.wave = keys.crouch = keys.peace = keys.doublePeace = false;
+      setPoseKeys("idle");
       step(1e-3);
     },
     setPausedForTest: (on) => {
@@ -33887,12 +34205,29 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     // Where the sun actually ended up, so a light-direction measurement can be
     // checked against the thing itself rather than against the angle asked for.
     getSunForTest: () => ({ x: sun.position.x, y: sun.position.y, z: sun.position.z }),
+    getScenarioForTest: () => currentScenario ? {
+      key: currentScenario.key,
+      beatIndex,
+      beat: currentScenario.beats[beatIndex],
+      beatTimer
+    } : null,
+    // Turns the director on as well: a scenario is a sequence of timed beats,
+    // and runDirector -- the thing that advances them -- only runs while the
+    // director has the strings. Starting one without it leaves her frozen on
+    // beat zero forever.
+    setCrouchArmOverrideForTest: (v) => {
+      crouchArmOverride = v;
+    },
+    startScenarioForTest: (key) => {
+      directorActive = true;
+      return startScenario(key);
+    },
+    scenarioPeaksForTest: () => scenarioPeaks(),
     getBirdStateForTest: () => ({
       state: birdState,
       visible: bird.visible,
       position: { x: bird.position.x, y: bird.position.y, z: bird.position.z }
     }),
-    getPendingMomentForTest: () => pendingMoment ? { ...pendingMoment } : null,
     // Lets a test hold her heading still. Only the gaze tests want this: they
     // put the camera at a known angle off her facing, which she would otherwise
     // turn to cancel out.

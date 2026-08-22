@@ -738,9 +738,10 @@ test('the director can be switched off, which gives manual control back', async 
 });
 
 test('a session runs three shots and ends in an album', async ({ page }) => {
-  // Three photographs, each captured on the frame after its click, plus the
-  // model load — comfortably past the suite's default 20s.
-  test.setTimeout(60000);
+  // Three photographs, each of which is a real burst captured over real time,
+  // plus a pick, plus the model load. On a loaded machine that has come in at
+  // a shade over a minute, so the budget is 90s rather than 60s.
+  test.setTimeout(90000);
   await page.getByRole('button', { name: '撮影を始める' }).click();
   expect(await page.evaluate(() => window.__game.getPhase())).toBe('shooting');
 
@@ -762,17 +763,32 @@ test('a session runs three shots and ends in an album', async ({ page }) => {
   await expect(page.locator('.pg-album img')).toHaveCount(3);
 });
 
-test('the framing brief never asks for the close-up band', async ({ page }) => {
-  // Close-up looked wrong at the distance it required and was removed rather
-  // than fixed -- this checks it actually stopped being offered, over enough
-  // rolls that a lingering 'close' would show up.
+test('the brief covers every framing band and never asks for the >_< face', async ({ page }) => {
+  test.setTimeout(40000);
+  // Two guards in one loop, because each round trip to the page costs real
+  // time and forty of them twice over runs past the test timeout on its own.
+  //
+  // Close-up: briefly removed by mistake -- the thing that did not survive a
+  // tight frame was the '>_<' expression, not the frame. It is back.
+  // '>_<': it replaces her eyes with a drawn squeeze, so it is not something
+  // a photograph is judged on. It stays on the 6 key for free play.
   const framings = new Set();
-  for (let i = 0; i < 40; i++) {
-    await page.evaluate(() => window.__game.startForTest());
-    framings.add((await page.evaluate(() => window.__game.getRequest())).framing);
+  const expressions = new Set();
+  for (let i = 0; i < 24; i++) {
+    const request = await page.evaluate(() => {
+      window.__game.startForTest();
+      return window.__game.getRequest();
+    });
+    framings.add(request.framing);
+    expressions.add(request.expression);
   }
-  expect(framings.has('close')).toBe(false);
-  expect(framings.size).toBeGreaterThan(1); // still varies between the remaining bands
+  expect([...framings].sort()).toEqual(['close', 'medium', 'wide']);
+  expect(expressions.has('Extra')).toBe(false);
+
+  // And no scenario peak wears it either, which is the other way it could
+  // reach a brief now that briefs are written from peaks.
+  const peaks = await page.evaluate(() => window.__char.scenarioPeaksForTest());
+  expect(peaks.some((peak) => peak.expression === 'Extra')).toBe(false);
 });
 
 test('the brief\'s exact pose and expression are guaranteed to happen soon, not left to coincidence', async ({ page }) => {
@@ -780,10 +796,11 @@ test('the brief\'s exact pose and expression are guaranteed to happen soon, not 
   await page.getByRole('button', { name: '撮影を始める' }).click();
   const request = await page.evaluate(() => window.__game.getRequest());
 
-  // The moment is scheduled within a bounded delay (main.js: MOMENT_DELAY,
-  // 2.5-6.5s) rather than waiting on two independent cycles to coincide,
-  // which is the bug this fixes: a fresh session used to be able to run for
-  // many pose/expression cycles without the requested pair ever lining up.
+  // The brief is written from the peak of the story she is about to perform
+  // (main.js: startScenario), so the pair is not a coincidence of two
+  // independent cycles -- it is a beat two or three into a scripted sequence.
+  // A fresh session used to be able to run for many pose/expression cycles
+  // without the requested pair ever lining up.
   let matched = false;
   for (let i = 0; i < 30 && !matched; i++) {
     const state = await page.evaluate(() => window.__char.getState());
@@ -796,36 +813,99 @@ test('the brief\'s exact pose and expression are guaranteed to happen soon, not 
   expect(matched, `looking for pose=${request.pose} expression=${request.expression}`).toBe(true);
 });
 
-test('a bird telegraphs the guaranteed moment, landing as it fires and leaving as it ends', async ({ page }) => {
-  test.setTimeout(30000);
-  await page.getByRole('button', { name: '撮影を始める' }).click();
-  const request = await page.evaluate(() => window.__game.getRequest());
-
-  let perchedAtMatch = null;
-  let sawApproach = false;
-  for (let i = 0; i < 30; i++) {
-    const bird = await page.evaluate(() => window.__char.getBirdStateForTest());
-    if (bird.state === 'approach') sawApproach = true;
-    if (bird.state === 'perched' && perchedAtMatch === null) {
-      const state = await page.evaluate(() => window.__char.getState());
-      perchedAtMatch = state.animName === request.pose && state.expression === request.expression;
-    }
-    await page.waitForTimeout(300);
+// Watch one scenario from its first beat to its last, sampling as fast as the
+// round trip allows, and assert on the record afterwards. Two separate loops
+// -- one per thing being checked -- do not work here: a full story runs about
+// twenty seconds, and the second loop starts wherever the first one stopped.
+async function traceScenario(page, key, seconds) {
+  await page.evaluate((name) => window.__char.startScenarioForTest(name), key);
+  const trace = [];
+  const until = Date.now() + seconds * 1000;
+  while (Date.now() < until) {
+    const frame = await page.evaluate(() => {
+      const scenario = window.__char.getScenarioForTest();
+      const state = window.__char.getState();
+      return {
+        key: scenario && scenario.key,
+        beat: scenario && scenario.beatIndex,
+        pose: state.animName,
+        expression: state.expressionWeight >= 0.6 ? state.expression : null,
+        bird: window.__char.getBirdStateForTest().state,
+      };
+    });
+    // Stop *before* recording, not after: one story runs straight into the
+    // next, so a frame sampled a moment late belongs to a later run and would
+    // show up as the beat counter going backwards. Checking the beat index as
+    // well as the key matters because the next story drawn can be this one
+    // again.
+    const previous = trace[trace.length - 1];
+    if (frame.key !== key) break;
+    if (previous && frame.beat < previous.beat) break;
+    trace.push(frame);
+    await page.waitForTimeout(150);
   }
+  return trace;
+}
 
-  expect(sawApproach, 'the bird flew in ahead of the moment').toBe(true);
-  expect(perchedAtMatch, 'she was on-brief while the bird was perched').toBe(true);
+test('the bird causes her reaction rather than accompanying it', async ({ page }) => {
+  // The first version of the bird was explicitly decoupled from what she was
+  // doing -- a generic "something is about to happen" tell that flew in on a
+  // timer while a shuffle bag picked her pose. That is the opposite of a
+  // story. Now the bird only appears in the scenarios that are about it, and
+  // in those the landing comes before the beat it motivates.
+  test.setTimeout(60000);
+  const trace = await traceScenario(page, 'bird-to-hand', 30);
 
-  // It does not linger once the moment it was telegraphing has passed.
-  let sawOffstageAgain = false;
-  for (let i = 0; i < 40; i++) {
-    if ((await page.evaluate(() => window.__char.getBirdStateForTest())).state === 'offstage') {
-      sawOffstageAgain = true;
-      break;
-    }
-    await page.waitForTimeout(300);
+  expect(trace.some((f) => f.bird === 'flying'), 'the bird flew in').toBe(true);
+  // Perched on her hand while she is delighted at it -- the cause and the
+  // reaction in the same frame.
+  expect(
+    trace.some((f) => f.bird === 'settled' && f.pose === 'reach-out' && f.expression === 'happy'),
+    'it was perched while she was delighted at it',
+  ).toBe(true);
+  // And the sad beat comes after it has gone, not at some unrelated moment.
+  const left = trace.findIndex((f) => f.bird === 'settled');
+  const sad = trace.findIndex((f) => f.expression === 'sad');
+  expect(sad, 'she was sad at some point').toBeGreaterThan(-1);
+  expect(sad, 'the sadness came after the bird had been and gone').toBeGreaterThan(left);
+  expect(trace[sad].bird, 'the bird was already gone by then').toBe('offstage');
+});
+
+test('every scenario peak is a pair a brief could sensibly ask for', async ({ page }) => {
+  // The complaint this answers: a double peace sign worn with a sad face.
+  // Briefs are now written from scenario peaks, so the guard is on the peaks
+  // themselves -- each one has to name a real pose, a real expression, and a
+  // line of Japanese saying what is happening.
+  const peaks = await page.evaluate(() => window.__char.scenarioPeaksForTest());
+  expect(peaks.length).toBeGreaterThanOrEqual(8);
+  const poses = new Set();
+  for (const peak of peaks) {
+    expect(typeof peak.pose).toBe('string');
+    expect(typeof peak.expression).toBe('string');
+    expect(peak.story, `${peak.key} has no story line`).toBeTruthy();
+    poses.add(peak.pose);
   }
-  expect(sawOffstageAgain, 'the bird left again after its visit').toBe(true);
+  // Not every peak is the same pose in a different hat.
+  expect(poses.size).toBeGreaterThanOrEqual(5);
+  // The exercise squat has no reason to happen in a photoshoot.
+  expect(poses.has('crouch')).toBe(false);
+});
+
+test('a scenario runs its beats in order rather than cutting at random', async ({ page }) => {
+  test.setTimeout(60000);
+  const trace = await traceScenario(page, 'posing-for-you', 30);
+  const beats = [];
+  for (const frame of trace) {
+    if (beats[beats.length - 1] !== frame.beat) beats.push(frame.beat);
+  }
+  expect(beats).toEqual([0, 1, 2, 3]);
+
+  // Each beat is one pose held for a while, not a pose per frame.
+  const poses = [];
+  for (const frame of trace) {
+    if (poses[poses.length - 1] !== frame.pose) poses.push(frame.pose);
+  }
+  expect(poses).toEqual(['idle', 'wave', 'peace', 'idle']);
 });
 
 test('the burst frame count is the player\'s choice and the shutter honours it', async ({ page }) => {
@@ -854,7 +934,9 @@ test('the burst frame count is the player\'s choice and the shutter honours it',
 });
 
 test('retaking a burst discards it without spending a shot', async ({ page }) => {
-  test.setTimeout(30000);
+  // Two full bursts captured over real time, back to back, on top of the
+  // model load. 30s was not enough for that on a loaded machine.
+  test.setTimeout(60000);
   await page.getByRole('button', { name: '撮影を始める' }).click();
   await page.locator('.pg-shutter').click();
   await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });

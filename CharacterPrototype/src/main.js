@@ -187,8 +187,8 @@ for (let i = 0; i < 10; i++) {
 }
 
 // ---- Bird ----
-// A visiting bird, built once and re-used for every visit -- see startBirdVisit
-// / updateBird below, next to the director that decides when she arrives.
+// A visiting bird, built once and re-used for every visit. What it does and
+// why is down with the scenarios that send it -- see birdCue / updateBird.
 // One flat triangle, reused for both wings (mirrored) and the tail.
 function makeWingGeometry() {
   const geometry = new THREE.BufferGeometry();
@@ -267,7 +267,12 @@ const state = {
   heading: 0,
 };
 
-const keys = { forward: false, back: false, left: false, right: false, run: false, wave: false, crouch: false, peace: false, doublePeace: false, dance: false };
+const keys = {
+  forward: false, back: false, left: false, right: false, run: false,
+  wave: false, crouch: false, peace: false, doublePeace: false, dance: false,
+  // Story poses, driven by the director rather than by the keyboard.
+  reachOut: false, crouchLook: false, lookUp: false,
+};
 
 // Jump is a one-shot trigger (a single keydown), not a held state like the
 // others, so it lives outside `keys` and is driven by startJump() directly.
@@ -349,6 +354,17 @@ function onKey(e, down) {
     case 'KeyR':
       if (!directorActive) keys.dance = down;
       break;
+    // The story poses. They exist for the scenarios, but there is no reason
+    // to keep them off the keyboard in free play.
+    case 'KeyF':
+      if (!directorActive) keys.reachOut = down;
+      break;
+    case 'KeyG':
+      if (!directorActive) keys.crouchLook = down;
+      break;
+    case 'KeyT':
+      if (!directorActive) keys.lookUp = down;
+      break;
     case 'Space':
       e.preventDefault(); // stop the page from scrolling on spacebar
       if (down) startJump();
@@ -368,17 +384,185 @@ if (touchPad) {
 
 // ---- Director ----
 // During a photo session she runs her own routine rather than waiting on
-// keys: a pose and an expression, each held a while, changing on their own
-// clocks. The player's job moves entirely to the camera -- watch, frame, and
+// keys: the player's job moves entirely to the camera -- watch, frame, and
 // catch it -- which is also the one thing a touchscreen with no keyboard
 // could never do through key-driven poses in the first place.
 //
-// A shuffle bag rather than a fresh random pick each time: plain randomness
-// can string together an unlucky run and leave a requested pose or
-// expression waiting far longer than feels fair. A bag guarantees every
-// option turns up within one pass through it, so however unlucky the order,
-// there is a hard bound on the wait -- the same trick a lot of falling-block
-// games use to keep the piece you need from disappearing for fifty draws.
+// What she runs is a *scenario*, not a shuffle. The first version of this
+// drew a pose and an expression out of two independent bags on two
+// independent clocks, and it was wrong in three separate ways at once:
+//
+//   - It produced pairs nothing could motivate. A double peace sign worn
+//     with a sad face is not a moment; it is two dice landing.
+//   - It cut between poses with no reason, so a squat arrived out of nowhere
+//     in the middle of a photoshoot.
+//   - It could not be anticipated. A burst fired on a hunch missed, because
+//     there was no hunch to have -- the next beat was a coin flip, and the
+//     player was left counting turns waiting for the brief to come up.
+//
+// A scenario fixes all three by being a little story with a cause in it. The
+// bird flies in, so she looks up; it comes to her hand, so she holds one out;
+// it lands, so she is delighted; it leaves, so she watches it go. Each beat
+// is the reason for the next, the peak of the story is the shot the brief
+// asks for, and the beats before the peak are the telegraph that lets you
+// know when to hold the shutter down.
+const randRange = (min, max) => min + Math.random() * (max - min);
+
+function setPoseKeys(name) {
+  keys.wave = name === 'wave';
+  keys.crouch = name === 'crouch';
+  keys.peace = name === 'peace';
+  keys.doublePeace = name === 'double-peace';
+  keys.dance = name === 'dance';
+  keys.reachOut = name === 'reach-out';
+  keys.crouchLook = name === 'crouch-look';
+  keys.lookUp = name === 'look-up';
+}
+
+// A function rather than a constant: DANCE_BEAT and DANCE_BARS are defined
+// further down, alongside the routine itself, and this only ever runs after
+// the whole module has loaded -- but it would be a temporal-dead-zone crash
+// to reference them from a const initialised up here. A dance beat is held
+// long enough to loop the routine twice, since the whole point of that one is
+// repeated shots at a peak that lasts a fraction of a second.
+function danceBeatHold() {
+  return [DANCE_BEAT * DANCE_BARS * 1.9, DANCE_BEAT * DANCE_BARS * 2.7];
+}
+
+// ---- Scenarios ----
+// A beat is a pose, a face, and how long she stays there. `cue` fires at the
+// start of the beat and is what makes the *next* beat make sense -- the bird
+// is sent to her hand on the beat where she reaches out, so that it lands
+// just as the delight beat begins. `peak: true` marks the beat a brief is
+// generated from: the photograph the story exists to produce.
+//
+// Holds are ranges rather than fixed numbers so the same story does not play
+// back beat-for-beat identically; the order never changes, only the timing,
+// which is the part that keeps anticipating it a skill rather than a
+// stopwatch.
+const SCENARIOS = [
+  {
+    key: 'bird-to-hand',
+    beats: [
+      { pose: 'look-up', expression: 'Surprised', hold: [1.2, 1.8], cue: { bird: 'sky', travel: 1.0 } },
+      { pose: 'reach-out', expression: 'relaxed', hold: [1.5, 2.0], cue: { bird: 'hand', travel: 1.6 } },
+      { pose: 'reach-out', expression: 'happy', hold: [2.8, 3.6], peak: true, story: '手にとまった鳥に、うれしそうな顔' },
+      { pose: 'reach-out', expression: 'Surprised', hold: [0.9, 1.2], cue: { bird: 'away' } },
+      { pose: 'look-up', expression: 'sad', hold: [1.8, 2.4] },
+      { pose: 'idle', expression: null, hold: [1.2, 1.8] },
+    ],
+  },
+  {
+    key: 'bird-to-shoulder',
+    beats: [
+      { pose: 'idle', expression: 'relaxed', hold: [1.3, 1.8], cue: { bird: 'shoulder', travel: 1.7 } },
+      { pose: 'idle', expression: 'Surprised', hold: [2.4, 3.0], peak: true, story: '肩に鳥がとまって、びっくりした顔' },
+      { pose: 'peace', expression: 'happy', hold: [2.4, 3.2] },
+      { pose: 'idle', expression: 'relaxed', hold: [0.9, 1.2], cue: { bird: 'away' } },
+      { pose: 'look-up', expression: 'sad', hold: [1.7, 2.3] },
+      { pose: 'idle', expression: null, hold: [1.2, 1.8] },
+    ],
+  },
+  {
+    key: 'bird-on-the-ground',
+    beats: [
+      { pose: 'idle', expression: 'Surprised', hold: [1.2, 1.7], cue: { bird: 'ground', travel: 1.4 } },
+      { pose: 'crouch-look', expression: 'relaxed', hold: [1.5, 2.0] },
+      { pose: 'crouch-look', expression: 'happy', hold: [2.8, 3.6], peak: true, story: 'しゃがんで鳥をのぞきこむ、うれしそうな顔' },
+      { pose: 'crouch-look', expression: 'Surprised', hold: [0.8, 1.1], cue: { bird: 'away' } },
+      { pose: 'look-up', expression: 'sad', hold: [1.6, 2.2] },
+      { pose: 'idle', expression: null, hold: [1.2, 1.8] },
+    ],
+  },
+  {
+    key: 'noticing-you',
+    beats: [
+      { pose: 'idle', expression: null, hold: [1.1, 1.6] },
+      { pose: 'look-up', expression: 'Surprised', hold: [1.0, 1.4] },
+      { pose: 'wave', expression: 'happy', hold: [2.6, 3.4], peak: true, story: 'こちらに気づいて、手を振る' },
+      { pose: 'peace', expression: 'relaxed', hold: [1.8, 2.4] },
+      { pose: 'idle', expression: null, hold: [1.2, 1.6] },
+    ],
+  },
+  {
+    key: 'posing-for-you',
+    beats: [
+      { pose: 'idle', expression: 'relaxed', hold: [1.1, 1.5] },
+      { pose: 'wave', expression: 'happy', hold: [1.8, 2.4] },
+      { pose: 'peace', expression: 'happy', hold: [2.8, 3.6], peak: true, story: 'カメラに向かって、笑顔でピース' },
+      { pose: 'idle', expression: 'relaxed', hold: [1.3, 1.8] },
+    ],
+  },
+  {
+    key: 'getting-into-it',
+    beats: [
+      { pose: 'idle', expression: 'relaxed', hold: [1.1, 1.5] },
+      { pose: 'peace', expression: 'relaxed', hold: [1.6, 2.2] },
+      { pose: 'double-peace', expression: 'happy', hold: [2.8, 3.6], peak: true, story: 'ノってきて、ダブルピース' },
+      { pose: 'wave', expression: 'relaxed', hold: [1.5, 2.0] },
+      { pose: 'idle', expression: null, hold: [1.2, 1.6] },
+    ],
+  },
+  {
+    key: 'a-quiet-one',
+    beats: [
+      { pose: 'idle', expression: null, hold: [1.1, 1.5] },
+      { pose: 'look-up', expression: 'relaxed', hold: [1.5, 2.0] },
+      { pose: 'peace', expression: 'relaxed', hold: [2.6, 3.4], peak: true, story: '落ち着いた、小さめのピース' },
+      { pose: 'idle', expression: null, hold: [1.3, 1.8] },
+    ],
+  },
+  {
+    key: 'the-routine',
+    beats: [
+      { pose: 'idle', expression: 'relaxed', hold: [1.2, 1.7] },
+      { pose: 'dance', expression: 'relaxed', hold: [1.6, 2.2] },
+      { pose: 'dance', expression: 'happy', hold: danceBeatHold, peak: true, story: 'ダンスのいちばん高いところ' },
+      { pose: 'idle', expression: 'Surprised', hold: [1.0, 1.4] },
+      { pose: 'wave', expression: 'relaxed', hold: [1.6, 2.2] },
+      { pose: 'idle', expression: null, hold: [1.2, 1.6] },
+    ],
+  },
+  {
+    key: 'kept-waiting',
+    beats: [
+      { pose: 'idle', expression: 'relaxed', hold: [1.2, 1.6] },
+      { pose: 'look-up', expression: 'relaxed', hold: [1.4, 1.9] },
+      { pose: 'idle', expression: 'angry', hold: [2.6, 3.4], peak: true, story: '待たされて、ちょっとむくれた顔' },
+      { pose: 'wave', expression: 'happy', hold: [1.8, 2.4] },
+      { pose: 'idle', expression: null, hold: [1.2, 1.6] },
+    ],
+  },
+  {
+    key: 'a-thought',
+    beats: [
+      { pose: 'idle', expression: 'relaxed', hold: [1.2, 1.6] },
+      { pose: 'look-up', expression: 'sad', hold: [2.6, 3.4], peak: true, story: 'ふと空を見上げて、さみしそうな顔' },
+      { pose: 'idle', expression: 'relaxed', hold: [1.4, 1.9] },
+      { pose: 'peace', expression: 'happy', hold: [1.8, 2.4] },
+    ],
+  },
+];
+
+const scenarioByKey = (key) => SCENARIOS.find((entry) => entry.key === key);
+const peakBeat = (scenario) => scenario.beats.find((beat) => beat.peak) || scenario.beats[0];
+
+// Every pose and expression a brief can legitimately ask for is, by
+// construction, one that some scenario's peak actually produces. Exported to
+// the photo game so the brief is generated from the story rather than from a
+// list that happens to sit next to it.
+function scenarioPeaks() {
+  return SCENARIOS.map((scenario) => {
+    const beat = peakBeat(scenario);
+    return { key: scenario.key, pose: beat.pose, expression: beat.expression, story: beat.story };
+  });
+}
+
+// A shuffle bag over the scenarios, not over the poses. Plain randomness can
+// string together an unlucky run and show the same story three times in a
+// session of three; a bag guarantees every story turns up within one pass, so
+// there is a hard bound on the repeat -- the same trick a lot of
+// falling-block games use to keep the piece you need from disappearing.
 function makeShuffleBag(items) {
   let deck = [];
   let last = null;
@@ -392,210 +576,225 @@ function makeShuffleBag(items) {
   return {
     next() {
       if (deck.length === 0) refill();
-      // Swap away an immediate repeat of what she was just doing, when there
-      // is something to swap with -- otherwise two draws in a row can land on
-      // the same pose and read as nothing having changed.
+      // Swap away an immediate repeat of what she just did, when there is
+      // something to swap with.
       if (deck.length > 1 && deck[deck.length - 1] === last) {
         [deck[deck.length - 1], deck[deck.length - 2]] = [deck[deck.length - 2], deck[deck.length - 1]];
       }
       last = deck.pop();
       return last;
     },
+    // Records a draw the caller made itself, so an explicitly chosen story
+    // does not then come straight back out of the bag as the next one.
+    note(item) { last = item; },
   };
 }
 
-const randRange = (min, max) => min + Math.random() * (max - min);
+let scenarioBag = null;
+let currentScenario = null;
+let beatIndex = 0;
+let beatTimer = 0;
 
-function setPoseKeys(name) {
-  keys.wave = name === 'wave';
-  keys.crouch = name === 'crouch';
-  keys.peace = name === 'peace';
-  keys.doublePeace = name === 'double-peace';
-  keys.dance = name === 'dance';
-}
-
-// How long each pose is held, in seconds, drawn per visit. Dance runs long
-// enough to loop the routine more than twice, since the whole point of that
-// one is repeated shots at a peak that lasts a fraction of a second -- one
-// pass through it would often mean one chance, or none.
-const DIRECTOR_POSES = ['peace', 'double-peace', 'wave', 'crouch', 'dance', 'idle'];
-const DIRECTOR_POSE_HOLD = {
-  peace: [2.6, 4.2],
-  'double-peace': [2.6, 4.2],
-  wave: [2.2, 3.6],
-  crouch: [2.0, 3.2],
-  idle: [1.4, 2.4],
-};
-const DIRECTOR_EXPRESSION_HOLD = [1.8, 3.2];
-
-// A function rather than a table entry: DANCE_BEAT and DANCE_BARS are defined
-// further down, alongside the routine itself, and this only ever runs after
-// the whole module has finished loading -- but it would be a temporal-dead-
-// zone crash to reference them from a const initialised up here.
-function poseHoldRange(name) {
-  if (name === 'dance') return [DANCE_BEAT * DANCE_BARS * 1.9, DANCE_BEAT * DANCE_BARS * 2.7];
-  return DIRECTOR_POSE_HOLD[name];
-}
-
-let directorPoseBag = null;
-let directorExpressionBag = null;
-let directorPoseTimer = 0;
-let directorExpressionTimer = 0;
-
-// ---- The guaranteed moment ----
-// Pose and expression cycling on two independent clocks means the exact pair
-// a brief asks for is a coincidence of both landing at once, and coincidences
-// can take a long time to happen -- reported back as "however many turns
-// until it shows up", which is a fair complaint. So the brief's pose and
-// expression are not left to chance: scheduleMoment() below arms a countdown,
-// somewhere between about 2.5 and 6.5 seconds out, and when it fires it
-// simply forces that exact pair live for a normal hold's worth of time,
-// interrupting whatever she was doing. Every brief gets one of these, so the
-// wait has a hard, short ceiling regardless of how the bags happen to fall.
-//
-// The bird (above) is what makes that forced cut read as motivated rather
-// than glitchy: it starts its approach so its landing lines up with the
-// moment firing, stays exactly as long as the moment holds, and leaves as it
-// ends. It is not tied to any particular pose or expression -- it is a
-// generic "something is about to happen" tell, wearing a bird's shape.
-const MOMENT_DELAY = [2.5, 6.5];
-const BIRD_APPROACH_TIME = 1.1;
+// ---- The bird ----
+// The bird is the story's cause, not a decoration on top of one. Where it
+// goes is an anchor on her body (or on the ground in front of her), read live
+// every frame -- a fixed offset would plant it in mid-air the instant an arm
+// moves, and the arm moving is the entire point of the reach-out beat.
 const BIRD_DEPART_TIME = 0.9;
+const BIRD_CIRCLE_TIME = 1.4;
 
-let pendingMoment = null; // { pose, expression, remaining, holdDuration, birdArmed }
-let birdState = 'offstage'; // 'offstage' | 'approach' | 'perched' | 'depart'
+let birdState = 'offstage';   // 'offstage' | 'flying' | 'settled'
+let birdAnchor = null;        // name of the anchor it is heading for / sitting on
+let birdTravel = 1.2;
 let birdT = 0;
-let birdPerchTime = 2.5;
-let birdFlap = 0;
 const birdFrom = new THREE.Vector3();
-const birdTo = new THREE.Vector3();
+const birdFixed = new THREE.Vector3();
+let birdFlap = 0;
 
-function scheduleMoment(pose, expression) {
-  if (!DIRECTOR_POSES.includes(pose)) { pendingMoment = null; return; }
-  const [lo, hi] = poseHoldRange(pose);
-  pendingMoment = {
-    pose, expression, birdArmed: false,
-    remaining: randRange(...MOMENT_DELAY),
-    holdDuration: randRange(lo, hi),
-  };
-}
-
-// Just outside her right shoulder in world space, tracking however she is
-// currently posed -- a fixed offset from the body origin would plant the
-// bird in mid-air the moment an arm moves.
-function shoulderAnchor() {
-  const node = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode('rightShoulder') : null;
+function bodyAnchor(boneName, outward, lift, forward = 0) {
+  const node = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode(boneName) : null;
   if (!node) return null;
   node.updateWorldMatrix(true, false);
   const base = new THREE.Vector3().setFromMatrixPosition(node.matrixWorld);
-  const outward = new THREE.Vector3(1, 0, 0)
-    .applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(node.matrixWorld))
-    .normalize();
-  return base.addScaledVector(outward, 0.1).add(new THREE.Vector3(0, 0.05, 0.01));
+  const rotation = new THREE.Quaternion().setFromRotationMatrix(node.matrixWorld);
+  const side = new THREE.Vector3(1, 0, 0).applyQuaternion(rotation).normalize();
+  return base
+    .addScaledVector(side, outward)
+    .add(new THREE.Vector3(0, lift, forward));
 }
 
-function startBirdVisit(perchSeconds) {
-  const target = shoulderAnchor();
-  if (!target) return;
+const BIRD_ANCHORS = {
+  shoulder: () => bodyAnchor('rightShoulder', 0.1, 0.05, 0.01),
+  // On the back of the hand rather than at its origin, so it reads as perched
+  // on her rather than growing out of her wrist.
+  hand: () => bodyAnchor('rightHand', 0.02, 0.035, 0.03),
+  ground: () => {
+    if (!vrm) return null;
+    const forward = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), facing);
+    return vrm.scene.position.clone().addScaledVector(forward, 0.55).setY(0.045);
+  },
+  // Not a perch: somewhere above and to one side, for the beat where she has
+  // noticed it but it has not come down yet.
+  sky: () => {
+    if (!vrm) return null;
+    return vrm.scene.position.clone().add(birdFixed);
+  },
+};
+
+function birdAnchorPoint(name) {
+  const fn = BIRD_ANCHORS[name];
+  return fn ? fn() : null;
+}
+
+// Somewhere off-stage to enter from, or to leave towards: a random bearing at
+// a distance, so the same story does not always play out on the same side.
+function birdOffstage() {
   const angle = Math.random() * Math.PI * 2;
-  birdFrom.set(
-    target.x + Math.sin(angle) * 2.2,
-    target.y + 0.9 + Math.random() * 0.5,
-    target.z + Math.cos(angle) * 2.2
+  const base = vrm ? vrm.scene.position : new THREE.Vector3();
+  return new THREE.Vector3(
+    base.x + Math.sin(angle) * 2.6,
+    base.y + 1.9 + Math.random() * 0.6,
+    base.z + Math.cos(angle) * 2.6
   );
-  birdPerchTime = perchSeconds;
-  birdState = 'approach';
+}
+
+function birdGoTo(anchor, travel) {
+  const target = birdAnchorPoint(anchor);
+  if (!target) return;
+  if (birdState === 'offstage') {
+    birdFrom.copy(birdOffstage());
+    bird.visible = true;
+  } else {
+    birdFrom.copy(bird.position);
+  }
+  birdAnchor = anchor;
+  birdTravel = Math.max(0.2, travel);
   birdT = 0;
-  bird.visible = true;
+  birdState = 'flying';
+}
+
+function birdLeave() {
+  if (birdState === 'offstage') return;
+  birdFrom.copy(bird.position);
+  birdFixed.copy(birdOffstage()).setY(birdFrom.y + 2.2);
+  birdAnchor = null;
+  birdTravel = BIRD_DEPART_TIME;
+  birdT = 0;
+  birdState = 'flying';
+}
+
+function birdCue(cue) {
+  if (!cue) return;
+  if (cue.bird === 'away') { birdLeave(); return; }
+  if (cue.bird === 'sky') {
+    // A perch point has to be recomputed every frame; a patch of sky does
+    // not, so it is picked once here and held in birdFixed as an offset from
+    // her, which keeps it stable if she walks.
+    const angle = Math.random() * Math.PI * 2;
+    birdFixed.set(Math.sin(angle) * 1.5, 2.1, Math.cos(angle) * 1.5);
+  }
+  birdGoTo(cue.bird, cue.travel || BIRD_CIRCLE_TIME);
+}
+
+function birdReset() {
+  birdState = 'offstage';
+  birdAnchor = null;
+  bird.visible = false;
 }
 
 function updateBird(dt) {
   if (birdState === 'offstage') return;
   birdFlap += dt * 16;
-  const flap = Math.sin(birdFlap) * (birdState === 'perched' ? 0.25 : 1);
+  const flap = Math.sin(birdFlap) * (birdState === 'settled' ? 0.22 : 1);
   bird.userData.leftWing.rotation.z = flap * 0.85;
   bird.userData.rightWing.rotation.z = -flap * 0.85;
 
-  const target = shoulderAnchor();
-  if (!target) { birdState = 'offstage'; bird.visible = false; return; }
+  // Leaving is the one flight with no anchor to track -- everything else
+  // homes on a point that moves with her.
+  const departing = birdState === 'flying' && birdAnchor === null;
+  const target = departing ? birdFixed : birdAnchorPoint(birdAnchor);
+  if (!target) { birdReset(); return; }
 
-  if (birdState === 'approach') {
-    birdT += dt / BIRD_APPROACH_TIME;
+  if (birdState === 'flying') {
+    birdT += dt / birdTravel;
     const t = Math.min(1, birdT);
-    const eased = 1 - (1 - t) ** 3;
-    bird.position.lerpVectors(birdFrom, target, eased);
-    bird.position.y += Math.sin(t * Math.PI) * 0.22; // a little arc on the way in
-    bird.lookAt(target.x, bird.position.y, target.z);
-    if (t >= 1) { birdState = 'perched'; birdT = 0; }
-  } else if (birdState === 'perched') {
-    bird.position.copy(target);
-    bird.position.y += Math.sin(performance.now() * 0.004) * 0.006; // idle bob
-    bird.lookAt(target.x, target.y - 0.3, target.z + 0.6);
-    birdT += dt;
-    if (birdT >= birdPerchTime) {
-      birdTo.set(target.x + (Math.random() - 0.5) * 2, target.y + 2.4, target.z + (Math.random() - 0.5) * 2);
-      birdFrom.copy(target);
-      birdState = 'depart';
-      birdT = 0;
+    if (departing) {
+      bird.position.lerpVectors(birdFrom, target, t * t);   // accelerating away
+      bird.lookAt(target);
+      if (t >= 1) birdReset();
+      return;
     }
-  } else if (birdState === 'depart') {
-    birdT += dt / BIRD_DEPART_TIME;
-    const t = Math.min(1, birdT);
-    bird.position.lerpVectors(birdFrom, birdTo, t * t);
-    bird.lookAt(birdTo.x, birdTo.y, birdTo.z);
-    if (t >= 1) { birdState = 'offstage'; bird.visible = false; }
+    const eased = 1 - (1 - t) ** 3;                          // decelerating in
+    bird.position.lerpVectors(birdFrom, target, eased);
+    bird.position.y += Math.sin(t * Math.PI) * 0.22;         // a little arc on the way
+    bird.lookAt(target.x, bird.position.y, target.z);
+    if (t >= 1) { birdState = 'settled'; birdT = 0; }
+    return;
   }
+
+  bird.position.copy(target);
+  bird.position.y += Math.sin(performance.now() * 0.004) * 0.006;  // idle bob
+  // Sitting on her, it looks at whatever she is looking at; hovering in the
+  // sky, it faces her.
+  if (birdAnchor === 'sky' && vrm) bird.lookAt(vrm.scene.position.x, target.y - 0.6, vrm.scene.position.z);
+  else bird.lookAt(target.x, target.y - 0.3, target.z + 0.6);
+}
+
+// ---- Running a scenario ----
+function beatHold(beat) {
+  const range = typeof beat.hold === 'function' ? beat.hold() : beat.hold;
+  return randRange(range[0], range[1]);
+}
+
+function enterBeat(index) {
+  beatIndex = index;
+  const beat = currentScenario.beats[index];
+  setPoseKeys(beat.pose);
+  heldExpression = beat.expression;
+  beatTimer = beatHold(beat);
+  birdCue(beat.cue);
+}
+
+// Starts a specific story, or the next one out of the bag. Returns its peak
+// so the photo game can write the brief from the shot the story is going to
+// produce -- which is what stops a brief asking for a double peace sign with
+// a sad face, and what makes firing a burst on a hunch a real skill rather
+// than a bet against a random number.
+function startScenario(key) {
+  if (!scenarioBag) scenarioBag = makeShuffleBag(SCENARIOS.map((entry) => entry.key));
+  const chosen = (key && scenarioByKey(key)) || scenarioByKey(scenarioBag.next());
+  if (key) scenarioBag.note(chosen.key);
+  currentScenario = chosen;
+  birdReset();
+  enterBeat(0);
+  const beat = peakBeat(chosen);
+  return { key: chosen.key, pose: beat.pose, expression: beat.expression, story: beat.story };
 }
 
 function startDirector() {
   directorActive = true;
-  directorPoseBag = makeShuffleBag(DIRECTOR_POSES);
-  // A blank draw sits in the same bag as the six expressions, so her face
-  // also gets an occasional rest at whatever the pose's own default is,
-  // rather than performing a named expression every single beat.
-  directorExpressionBag = makeShuffleBag([...Object.values(FACE_KEYS), null]);
-  directorPoseTimer = 0;
-  directorExpressionTimer = 0;
-  pendingMoment = null;
+  scenarioBag = makeShuffleBag(SCENARIOS.map((entry) => entry.key));
+  startScenario();
 }
 
 function stopDirector() {
   directorActive = false;
+  currentScenario = null;
   setPoseKeys('idle');
   heldExpression = null;
-  pendingMoment = null;
-  birdState = 'offstage';
-  bird.visible = false;
+  birdReset();
 }
 
 function runDirector(dt) {
-  if (pendingMoment) {
-    pendingMoment.remaining -= dt;
-    // Time the approach to land exactly as the moment fires.
-    if (!pendingMoment.birdArmed && pendingMoment.remaining <= BIRD_APPROACH_TIME) {
-      startBirdVisit(pendingMoment.holdDuration);
-      pendingMoment.birdArmed = true;
-    }
-    if (pendingMoment.remaining <= 0) {
-      setPoseKeys(pendingMoment.pose);
-      heldExpression = pendingMoment.expression;
-      directorPoseTimer = pendingMoment.holdDuration;
-      directorExpressionTimer = pendingMoment.holdDuration;
-      pendingMoment = null;
-    }
-  } else {
-    directorPoseTimer -= dt;
-    if (directorPoseTimer <= 0) {
-      const next = directorPoseBag.next();
-      setPoseKeys(next);
-      const [lo, hi] = poseHoldRange(next);
-      directorPoseTimer = randRange(lo, hi);
-    }
-    directorExpressionTimer -= dt;
-    if (directorExpressionTimer <= 0) {
-      heldExpression = directorExpressionBag.next();
-      directorExpressionTimer = randRange(...DIRECTOR_EXPRESSION_HOLD);
-    }
+  if (!currentScenario) startScenario();
+  beatTimer -= dt;
+  if (beatTimer <= 0) {
+    const next = beatIndex + 1;
+    // One story runs straight into the next rather than parking her in an
+    // idle pose between them; she is meant to be doing something whenever
+    // the player looks up from the results screen.
+    if (next >= currentScenario.beats.length) startScenario();
+    else enterBeat(next);
   }
   updateBird(dt);
 }
@@ -605,6 +804,7 @@ const stateLabel = document.getElementById('anim-state');
 function setAnimName(name) {
   if (state.animName === name) return;
   state.animName = name;
+  notePoseChange(name);
   if (stateLabel) {
     stateLabel.textContent = 'state: ' + name;
     stateLabel.dataset.state = name;
@@ -870,7 +1070,8 @@ CHARACTER_SOURCES.forEach((source, index) => {
         takeBurst,
         encodeFrame,
         setDirectorActive: (on) => { if (on) startDirector(); else stopDirector(); },
-        scheduleMoment,
+        startScenario,
+        scenarioPeaks,
       });
     }
   }, (err) => {
@@ -1282,6 +1483,114 @@ function applyIdle(dt) {
   setAnimName('idle');
 }
 
+// ---- Story poses ----
+// These three exist to give the bird's visit something to happen to. A pose
+// with no cause is the thing that read as wrong before -- she would drop into
+// a squat mid-photoshoot for no reason -- so each of these is written to be
+// legible as a reaction: offering a perch, crouching down to look at
+// something, watching it leave.
+
+// Right arm held out, palm up, for the bird to land on. Measured rather than
+// eyeballed: tools/measure_pose.js reports the hand ~0.36m in front of her
+// chest and level with it, which is where a hand you are offering actually
+// goes -- higher reads as a salute and lower as holding a bag.
+// Solved on the rig rather than guessed. The first attempt (-1.02, -0.12,
+// 0.62) read as a scarecrow: measured in her own frame it put the hand 0.53
+// out to the side and only 0.06 in front of her, because on this arm the Z
+// term is what swings the limb away from the body and X alone cannot pull it
+// round to the front. tools/measure_pose-style sweep over (x, y, z) picked
+// these, which land the hand 0.43 in front, 0.15 to her right and 0.19 below
+// the head -- an offered hand just under her chin, which is also where a bird
+// perched on it stays in the same frame as her face on a close-up.
+function applyReachOut(dt) {
+  actionCycle += dt * 1.1;
+  bones.rightUpperArm.rotation.set(-1.2, 0.25, 1.5);
+  bones.rightLowerArm.rotation.set(0, 0.32, 0);
+  // Palm turned up, which is both what makes it an offer and what gives the
+  // bird a surface. Same twist axis as the wave's palm-to-camera roll.
+  bones.rightHand.rotation.set(0.55, 0, 0);
+  bones.chest.rotation.set(0.02, -0.16, 0);
+  // Watching her own hand rather than the camera -- her attention is on the
+  // bird, and a face pointed at the lens would undo that.
+  bones.head.rotation.set(0.14 + Math.sin(actionCycle) * 0.01, -0.3, 0.04);
+  setAnimName('reach-out');
+}
+
+// Crouched down and holding it, looking at something on the ground. The
+// existing 'crouch' is a rhythmic squat -- an exercise, which is why it read
+// as bizarre when the director dropped it into a photo session unprompted.
+// This one goes down once and stays, with a reason to be down there.
+// Shallower than the exercise squat's full depth, and with the knees almost
+// together rather than splayed. Both are modesty, not style: she is wearing a
+// short skirt, and the deep splayed version -- which is what the exercise
+// squat does, correctly, as an exercise -- shows underwear from the front at
+// exactly the framing the brief asks a close-up for. Screenshotted from the
+// front and the three-quarter before and after.
+const CROUCH_LOOK_DEPTH = 0.58;   // fraction of the squat's full depth
+const CROUCH_LOOK_SPLAY = 0.06;   // knees nearly closed
+const CROUCH_LOOK_TOE_OUT = 0.1;
+let crouchArmOverride = null;
+
+function applyCrouchLook(dt) {
+  actionCycle += dt * 1.4;
+  const squat = CROUCH_LOOK_DEPTH;
+  // The same balance solution as applyCrouch: the shin pitches the knee
+  // forward of the ankle and the hips translate forward as they drop, or the
+  // whole mass centre ends up behind the heel and she should topple.
+  const SPLAY = squat * CROUCH_LOOK_SPLAY;
+  const TOE_OUT = squat * CROUCH_LOOK_TOE_OUT;
+  bones.leftUpperLeg.rotation.set(-squat * 1.6, -TOE_OUT, SPLAY);
+  bones.rightUpperLeg.rotation.set(-squat * 1.6, TOE_OUT, -SPLAY);
+  bones.leftLowerLeg.rotation.x = squat * 2.3;
+  bones.rightLowerLeg.rotation.x = squat * 2.3;
+  bones.hips.position.y = hipsBaseY - squat * 0.471;
+  bones.hips.position.z = -squat * 0.144;
+  bones.chest.rotation.set(squat * 0.3, 0, 0);
+  // Hands resting on the knees -- the same arm solution as the exercise
+  // squat, which was measured to land the hand within 0.03 of the knee joint
+  // and checked from three angles. Reusing it rather than authoring a second
+  // set of numbers, because the two poses put the knees in the same place.
+  //
+  // The Z sign is the trap here, and the first attempt fell into it. On this
+  // rig the right arm hangs at -ARM_DOWN_Z (+1.3) and the left at ARM_DOWN_Z
+  // (-1.3); writing +1.02 on the left and -1.02 on the right is not "arms
+  // forward a little", it is each arm swung past vertical and across her own
+  // body. The sign has to stay.
+  const ux = crouchArmOverride ? crouchArmOverride.ux : -0.75;
+  const fx = crouchArmOverride ? crouchArmOverride.fx : 0.45;
+  bones.leftUpperArm.rotation.set(ux, 0, ARM_DOWN_Z);
+  bones.rightUpperArm.rotation.set(ux, 0, -ARM_DOWN_Z);
+  const fy = crouchArmOverride ? crouchArmOverride.fy : 0.35;
+  bones.leftLowerArm.rotation.set(fx, -fy, 0);
+  bones.rightLowerArm.rotation.set(fx, fy, 0);
+  // Same ankle counter-rotation as the exercise squat: the foot inherits the
+  // shin's forward pitch and tips onto its toe unless it is pushed back.
+  bones.leftFoot.rotation.x = -squat * 0.6;
+  bones.rightFoot.rotation.x = -squat * 0.6;
+  // Head down at whatever she crouched to look at, with a little life in it.
+  bones.head.rotation.set(0.34 + Math.sin(actionCycle) * 0.015, 0.06, 0);
+  setAnimName('crouch-look');
+}
+
+// Head up, following something leaving. Paired with the sad expression this
+// is the shot the bird's departure exists to create.
+function applyLookUp(dt) {
+  actionCycle += dt * 1.2;
+  // Negative X on the head pitches it up -- the same direction the dance's
+  // peak uses when she throws her head back.
+  // -0.34 was too polite to read as looking up at all once she is also
+  // turned to face the camera; from the front it just looked like standing.
+  bones.head.rotation.set(-0.52 + Math.sin(actionCycle * 0.7) * 0.02, -0.12, 0.05);
+  bones.chest.rotation.set(-0.13, -0.05, 0);
+  // Arms fallen still at her sides, a fraction away from the body: hands
+  // clamped flat to the thighs reads as standing to attention.
+  bones.leftUpperArm.rotation.set(0, 0, ARM_DOWN_Z + 0.06);
+  bones.rightUpperArm.rotation.set(0, 0, -ARM_DOWN_Z - 0.06);
+  bones.leftLowerArm.rotation.set(0.1, -0.12, 0);
+  bones.rightLowerArm.rotation.set(0.1, 0.12, 0);
+  setAnimName('look-up');
+}
+
 const JUMP_MAX_HEIGHT = (JUMP_VELOCITY * JUMP_VELOCITY) / (2 * JUMP_GRAVITY);
 
 function applyJump() {
@@ -1366,13 +1675,30 @@ const gazeToCamera = new THREE.Vector3();
 let gazeAngle = 0;   // smoothed signed angle from her facing to the camera
 let gazeWeight = 0;  // smoothed 0..1 interest
 
+// What her eyes are on. Normally you -- but while the bird is in the air she
+// is watching the bird, and that is most of what sells the story as cause and
+// effect rather than as two things happening near each other. Once it has
+// landed on her it is too close to track: the gaze maths divides by the
+// horizontal distance, and a target 10cm from her own head sends the yaw to
+// the stops. Perched, she looks back at the camera, which is the shot anyway.
+const GAZE_BIRD_MIN_DISTANCE = 0.45;
+
+function gazeFocus() {
+  if (!bird.visible) return camera.position;
+  const dx = bird.position.x - gazeHeadPos.x;
+  const dz = bird.position.z - gazeHeadPos.z;
+  if (Math.hypot(dx, dz) < GAZE_BIRD_MIN_DISTANCE) return camera.position;
+  return bird.position;
+}
+
 function applyGaze(dt) {
   const rawHead = vrm.humanoid.getRawBoneNode('head');
   if (!rawHead) return;
   rawHead.updateWorldMatrix(true, false);
   gazeHeadPos.setFromMatrixPosition(rawHead.matrixWorld);
 
-  gazeToCamera.copy(camera.position).sub(gazeHeadPos);
+  const focus = gazeFocus();
+  gazeToCamera.copy(focus).sub(gazeHeadPos);
   const horizontal = Math.hypot(gazeToCamera.x, gazeToCamera.z) || 1e-6;
 
   // Signed angle about Y from where she is facing to where the camera is.
@@ -1408,7 +1734,7 @@ function applyGaze(dt) {
   const lookYaw = state.heading + gazeAngle * gazeWeight;
   // Scaled to the target distance so the pitch stays the angle to the camera
   // rather than shrinking as the camera pulls back.
-  const rise = (camera.position.y - gazeHeadPos.y) * gazeWeight * (GAZE_TARGET_DISTANCE / horizontal);
+  const rise = (focus.y - gazeHeadPos.y) * gazeWeight * (GAZE_TARGET_DISTANCE / horizontal);
   gazeTarget.position.set(
     gazeHeadPos.x + Math.sin(lookYaw) * GAZE_TARGET_DISTANCE,
     gazeHeadPos.y + rise,
@@ -1579,15 +1905,136 @@ function step(dt) {
     else if (keys.doublePeace) applyDoublePeace(dt);
     else if (keys.peace) applyPeace(dt);
     else if (keys.dance) applyDance(dt);
+    else if (keys.reachOut) applyReachOut(dt);
+    else if (keys.crouchLook) applyCrouchLook(dt);
+    else if (keys.lookUp) applyLookUp(dt);
     else applyIdle(dt);
   }
 
+  blendPoseChange(dt);
   applyGaze(dt);
   conformPoseToRig();
   applyFace(dt, action);
 
   vrm.update(dt);
   updateCamera();
+}
+
+// ---- Pose cross-fade ----
+// Every pose in this file writes absolute bone rotations every frame, so
+// switching between two of them used to be a hard cut: one frame standing,
+// the next frame fully squatted. That is most of what read as "sudden" about
+// the director's pose changes -- not only that a squat had no reason, but
+// that she teleported into it.
+//
+// This holds a snapshot of the bones as they were at the instant of a switch
+// and eases the new pose in over it. It runs after the pose functions and
+// before conformPoseToRig, so both sides of the blend are in the same
+// authored space -- blending after the mirror conjugation would mix two
+// different conventions and produce a pose that is neither.
+const POSE_BLEND_TIME = 0.42;
+// A jump is a snap by nature -- it lasts well under a second, and easing into
+// it over 0.42s smears the launch into a slow rise. Walking is the same: the
+// stride is already a continuous cycle, so a long fade into it reads as her
+// sliding before her legs catch up.
+const POSE_BLEND_FAST = 0.12;
+const FAST_BLEND_POSES = new Set(['jump', 'walk', 'run']);
+let poseBlendTime = POSE_BLEND_TIME;
+// Every bone a pose function can touch. Written out rather than derived from
+// `bones`, because the finger bones are set by the peace signs through their
+// own path and re-blending them fights that.
+const BLEND_BONES = [
+  'hips', 'spine', 'chest', 'neck', 'head',
+  'leftUpperArm', 'leftLowerArm', 'leftHand',
+  'rightUpperArm', 'rightLowerArm', 'rightHand',
+  'leftUpperLeg', 'leftLowerLeg', 'leftFoot',
+  'rightUpperLeg', 'rightLowerLeg', 'rightFoot',
+];
+
+// Two preallocated buffers rather than fresh objects: this runs every frame,
+// and a per-frame object literal per bone is garbage the collector then has
+// to find during the exact animation it would be visible in.
+const prevAuthored = makePoseBuffer();
+const blendFrom = makePoseBuffer();
+let prevAuthoredValid = false;
+let blendRemaining = 0;
+
+function makePoseBuffer() {
+  const buffer = { rotations: {}, hips: { y: 0, z: 0 } };
+  for (const name of BLEND_BONES) buffer.rotations[name] = { x: 0, y: 0, z: 0 };
+  return buffer;
+}
+
+function capturePose(buffer) {
+  for (const name of BLEND_BONES) {
+    const bone = bones[name];
+    if (!bone) continue;
+    const slot = buffer.rotations[name];
+    slot.x = bone.rotation.x;
+    slot.y = bone.rotation.y;
+    slot.z = bone.rotation.z;
+  }
+  if (bones.hips) {
+    buffer.hips.y = bones.hips.position.y;
+    buffer.hips.z = bones.hips.position.z;
+  }
+}
+
+function copyPose(from, to) {
+  for (const name of BLEND_BONES) {
+    const source = from.rotations[name];
+    const target = to.rotations[name];
+    target.x = source.x;
+    target.y = source.y;
+    target.z = source.z;
+  }
+  to.hips.y = from.hips.y;
+  to.hips.z = from.hips.z;
+}
+
+// Called by setAnimName, which every pose function already ends with, so a
+// pose does not have to remember to announce itself twice.
+//
+// The frame this is called on has already had the *new* pose written to the
+// bones, so the pose to fade out of is not readable here -- it is the one
+// captured at the end of the previous frame. Hence prevAuthored, which
+// step() refreshes after every blend.
+function notePoseChange(name) {
+  if (!prevAuthoredValid) return;
+  copyPose(prevAuthored, blendFrom);
+  poseBlendTime = FAST_BLEND_POSES.has(name) ? POSE_BLEND_FAST : POSE_BLEND_TIME;
+  blendRemaining = poseBlendTime;
+}
+
+function blendPoseChange(dt) {
+  if (blendRemaining > 0) {
+    blendRemaining = Math.max(0, blendRemaining - dt);
+    // Smoothstep rather than linear: a linear cross-fade starts and stops
+    // abruptly, which on a whole-body change is its own kind of visible.
+    const linear = 1 - blendRemaining / poseBlendTime;
+    const t = linear * linear * (3 - 2 * linear);
+    const previous = 1 - t;
+
+    for (const name of BLEND_BONES) {
+      const bone = bones[name];
+      const was = blendFrom.rotations[name];
+      if (!bone) continue;
+      bone.rotation.x = bone.rotation.x * t + was.x * previous;
+      bone.rotation.y = bone.rotation.y * t + was.y * previous;
+      bone.rotation.z = bone.rotation.z * t + was.z * previous;
+    }
+    if (bones.hips) {
+      bones.hips.position.y = bones.hips.position.y * t + blendFrom.hips.y * previous;
+      bones.hips.position.z = bones.hips.position.z * t + blendFrom.hips.z * previous;
+    }
+  }
+
+  // Captured after the blend, so interrupting a cross-fade half way fades
+  // out of where she visibly is rather than snapping back to the pose she
+  // was already leaving. Still before conformPoseToRig, so everything the
+  // blend touches stays in one convention.
+  capturePose(prevAuthored);
+  prevAuthoredValid = true;
 }
 
 // ---- What the photo game needs to see ----
@@ -1957,10 +2404,7 @@ window.__char = {
   // before returning, which lands the rig back in idle — measuring after it
   // silently reports the idle pose for every action.
   holdActionForTest: (name, durationMs) => {
-    keys.wave = name === 'wave';
-    keys.crouch = name === 'crouch';
-    keys.peace = name === 'peace';
-    keys.doublePeace = name === 'double-peace';
+    setPoseKeys(name);
     const stepMs = 16;
     let elapsed = 0;
     while (elapsed < durationMs) {
@@ -1970,7 +2414,7 @@ window.__char = {
     return window.__char.getState();
   },
   releaseActionsForTest: () => {
-    keys.wave = keys.crouch = keys.peace = keys.doublePeace = false;
+    setPoseKeys('idle');
     step(0.001);
   },
   setPausedForTest: (on) => { paused = on; },
@@ -1985,11 +2429,23 @@ window.__char = {
   // Where the sun actually ended up, so a light-direction measurement can be
   // checked against the thing itself rather than against the angle asked for.
   getSunForTest: () => ({ x: sun.position.x, y: sun.position.y, z: sun.position.z }),
+  getScenarioForTest: () => (currentScenario ? {
+    key: currentScenario.key,
+    beatIndex,
+    beat: currentScenario.beats[beatIndex],
+    beatTimer,
+  } : null),
+  // Turns the director on as well: a scenario is a sequence of timed beats,
+  // and runDirector -- the thing that advances them -- only runs while the
+  // director has the strings. Starting one without it leaves her frozen on
+  // beat zero forever.
+  setCrouchArmOverrideForTest: (v) => { crouchArmOverride = v; },
+  startScenarioForTest: (key) => { directorActive = true; return startScenario(key); },
+  scenarioPeaksForTest: () => scenarioPeaks(),
   getBirdStateForTest: () => ({
     state: birdState, visible: bird.visible,
     position: { x: bird.position.x, y: bird.position.y, z: bird.position.z },
   }),
-  getPendingMomentForTest: () => (pendingMoment ? { ...pendingMoment } : null),
   // Lets a test hold her heading still. Only the gaze tests want this: they
   // put the camera at a known angle off her facing, which she would otherwise
   // turn to cancel out.
