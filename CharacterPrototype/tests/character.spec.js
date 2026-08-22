@@ -466,6 +466,32 @@ test('idle turns the character to face the camera instead of staying at the last
   expect(idleState.heading).not.toBeCloseTo(afterMove.heading, 1);
 });
 
+test('every character in the cast holds the same peace sign', async ({ page }) => {
+  test.setTimeout(60000);
+  // The three sample avatars share one skeleton, which is the whole reason the
+  // hand-authored poses can be written once. This is the check on that claim:
+  // the fingers are the fussiest thing in the file, so if a rig differs
+  // anywhere it shows up here first.
+  await page.waitForFunction(() => window.__game.listCastForTest().length === 3, null, { timeout: 30000 });
+  const cast = await page.evaluate(() => window.__game.listCastForTest());
+  expect(cast.map((member) => member.key)).toEqual(['a', 'b', 'c']);
+
+  for (const member of cast) {
+    await page.evaluate((key) => window.__game.setCharacterForTest(key), member.key);
+    await page.waitForTimeout(200);
+    const measured = await measureHands(page, 'peace', ['right']);
+    const local = handFrame(measured, 'right');
+    const thumbTip = local(measured['J_Bip_R_Thumb3_end']);
+    const ringMiddle = local(measured.rightRingIntermediate);
+
+    const sideways = Math.hypot(thumbTip.up - ringMiddle.up, thumbTip.across - ringMiddle.across);
+    const clearance = thumbTip.palm - ringMiddle.palm;
+    expect(sideways, `${member.label}: thumb alongside the ring finger`).toBeLessThan(1.6);
+    expect(clearance, `${member.label}: thumb on top of the ring finger`).toBeGreaterThan(0.3);
+    expect(clearance, `${member.label}: thumb on top of the ring finger`).toBeLessThan(1.6);
+  }
+});
+
 // ---- The photo game ----
 
 // Park the camera dead in front of her head at a given distance, which is what

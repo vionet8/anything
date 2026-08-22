@@ -132,6 +132,11 @@ const STYLE = `
 .pg-chip[data-ok="true"] { border-color: #7ee787; color: #7ee787; }
 .pg-chip small { font-weight: 400; color: #8b93a7; margin-left: 4px; }
 .pg-count { font-size: 11px; color: #8b93a7; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.pg-cast { display: flex; gap: 6px; margin-top: 10px; }
+.pg-pick { flex: 1; padding: 8px 0; font: inherit; font-size: 13px; font-weight: 600;
+  color: #8b93a7; background: #0c0e14; border: 1px solid #2a3040; border-radius: 6px;
+  cursor: pointer; }
+.pg-pick[data-on="true"] { color: #0c0e14; background: #e8ebf2; border-color: #e8ebf2; }
 .pg-button { display: block; width: 100%; margin-top: 10px; padding: 10px; font: inherit;
   font-size: 14px; font-weight: 600; color: #0c0e14; background: #ffb454; border: 0;
   border-radius: 6px; cursor: pointer; pointer-events: auto; }
@@ -206,6 +211,7 @@ export function initPhotoGame(api) {
       el('p', 'pg-label', '撮影会'),
       el('p', 'pg-count', `お題どおりのポーズと表情をさせて、${SHOTS_PER_SESSION}枚撮ります。`),
     );
+    panel.append(renderCastPicker());
     const start = el('button', 'pg-button', '撮影を始める');
     start.addEventListener('click', () => {
       session.shots = [];
@@ -213,6 +219,25 @@ export function initPhotoGame(api) {
     });
     panel.append(start);
     root.append(panel);
+  }
+
+  // Only offered between sessions: swapping the model mid-brief would reset
+  // the pose she is holding, and the shot you were lining up with it.
+  function renderCastPicker() {
+    const row = el('div', 'pg-cast');
+    const cast = api.listCast ? api.listCast() : [];
+    if (cast.length < 2) return row;
+    const current = api.getCharacter ? api.getCharacter() : null;
+    for (const member of cast) {
+      const button = el('button', 'pg-pick', member.label);
+      button.dataset.on = String(member.key === current);
+      button.addEventListener('click', () => {
+        api.setCharacter(member.key);
+        render();
+      });
+      row.append(button);
+    }
+    return row;
   }
 
   function renderShooting() {
@@ -390,8 +415,20 @@ export function initPhotoGame(api) {
         resolve({ score: shot.score, bytes: shot.dataUrl.length });
       });
     }),
+    listCastForTest: () => (api.listCast ? api.listCast() : []),
+    setCharacterForTest: (key) => { api.setCharacter(key); render(); },
+    getCharacterForTest: () => (api.getCharacter ? api.getCharacter() : null),
     poseForTest: api.setPose,
     expressionForTest: api.setExpression,
     measureForTest: api.measureFraming,
+  };
+
+  return {
+    // The cast arrives one download at a time, so the picker has to be told
+    // when there is someone new to offer. Only redrawn between sessions —
+    // rebuilding the panel mid-brief would throw away the live chip states.
+    castChanged() {
+      if (session.phase === 'free') render();
+    },
   };
 }

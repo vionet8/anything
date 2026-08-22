@@ -32187,6 +32187,11 @@ void main() {
 .pg-chip[data-ok="true"] { border-color: #7ee787; color: #7ee787; }
 .pg-chip small { font-weight: 400; color: #8b93a7; margin-left: 4px; }
 .pg-count { font-size: 11px; color: #8b93a7; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.pg-cast { display: flex; gap: 6px; margin-top: 10px; }
+.pg-pick { flex: 1; padding: 8px 0; font: inherit; font-size: 13px; font-weight: 600;
+  color: #8b93a7; background: #0c0e14; border: 1px solid #2a3040; border-radius: 6px;
+  cursor: pointer; }
+.pg-pick[data-on="true"] { color: #0c0e14; background: #e8ebf2; border-color: #e8ebf2; }
 .pg-button { display: block; width: 100%; margin-top: 10px; padding: 10px; font: inherit;
   font-size: 14px; font-weight: 600; color: #0c0e14; background: #ffb454; border: 0;
   border-radius: 6px; cursor: pointer; pointer-events: auto; }
@@ -32253,6 +32258,7 @@ void main() {
         el("p", "pg-label", "\u64AE\u5F71\u4F1A"),
         el("p", "pg-count", `\u304A\u984C\u3069\u304A\u308A\u306E\u30DD\u30FC\u30BA\u3068\u8868\u60C5\u3092\u3055\u305B\u3066\u3001${SHOTS_PER_SESSION}\u679A\u64AE\u308A\u307E\u3059\u3002`)
       );
+      panel.append(renderCastPicker());
       const start = el("button", "pg-button", "\u64AE\u5F71\u3092\u59CB\u3081\u308B");
       start.addEventListener("click", () => {
         session.shots = [];
@@ -32260,6 +32266,22 @@ void main() {
       });
       panel.append(start);
       root.append(panel);
+    }
+    function renderCastPicker() {
+      const row = el("div", "pg-cast");
+      const cast2 = api.listCast ? api.listCast() : [];
+      if (cast2.length < 2) return row;
+      const current = api.getCharacter ? api.getCharacter() : null;
+      for (const member of cast2) {
+        const button = el("button", "pg-pick", member.label);
+        button.dataset.on = String(member.key === current);
+        button.addEventListener("click", () => {
+          api.setCharacter(member.key);
+          render();
+        });
+        row.append(button);
+      }
+      return row;
     }
     function renderShooting() {
       const panel = el("div", "pg-panel");
@@ -32426,9 +32448,23 @@ void main() {
           resolve({ score: shot.score, bytes: shot.dataUrl.length });
         });
       }),
+      listCastForTest: () => api.listCast ? api.listCast() : [],
+      setCharacterForTest: (key) => {
+        api.setCharacter(key);
+        render();
+      },
+      getCharacterForTest: () => api.getCharacter ? api.getCharacter() : null,
       poseForTest: api.setPose,
       expressionForTest: api.setExpression,
       measureForTest: api.measureFraming
+    };
+    return {
+      // The cast arrives one download at a time, so the picker has to be told
+      // when there is someone new to offer. Only redrawn between sessions —
+      // rebuilding the panel mid-brief would throw away the live chip states.
+      castChanged() {
+        if (session.phase === "free") render();
+      }
     };
   }
 
@@ -32632,10 +32668,10 @@ void main() {
     { match: /Bust/, dragForce: 0.8, stiffness: 1.3 },
     { match: /^HairJoint/, dragForce: 0.78 }
   ];
-  function calmSpringBones() {
-    if (!vrm || !vrm.springBoneManager) return 0;
+  function calmSpringBones(target) {
+    if (!target || !target.springBoneManager) return 0;
     let adjusted = 0;
-    for (const joint of vrm.springBoneManager.joints) {
+    for (const joint of target.springBoneManager.joints) {
       const rule = SPRING_TUNING.find((entry) => entry.match.test(joint.bone.name));
       if (!rule) continue;
       if (rule.dragForce !== void 0) joint.settings.dragForce = rule.dragForce;
@@ -32680,23 +32716,39 @@ void main() {
   var loader = new GLTFLoader();
   loader.register(cspSafeTextures);
   loader.register((parser) => new VRMLoaderPlugin(parser));
-  var modelBuffer = base64ToArrayBuffer(window.__MODEL_BASE64__);
-  loader.parse(
-    modelBuffer,
-    "",
-    (gltf) => {
-      vrm = gltf.userData.vrm;
-      VRMUtils.rotateVRM0(vrm);
-      modelYaw = vrm.scene.rotation.y;
-      rigIsMirrored = modelYaw !== 0;
-      vrm.scene.traverse((obj) => {
+  var CHARACTER_SOURCES = [
+    { key: "b", label: "B", url: "assets/char-b.vrm" }
+  ];
+  var cast = [];
+  var activeCharacter = null;
+  var photoGame = null;
+  function loadCharacter(source) {
+    return new Promise((resolve, reject) => {
+      loader.parse(
+        base64ToArrayBuffer(window.__MODEL_BASE64__),
+        "",
+        (gltf) => resolve(setUpCharacter(gltf, source)),
+        reject
+      );
+    });
+  }
+  function setUpCharacter(gltf, source) {
+    const loaded = { key: source.key, label: source.label, bones: {} };
+    loaded.vrm = gltf.userData.vrm;
+    {
+      const vrm2 = loaded.vrm;
+      VRMUtils.rotateVRM0(vrm2);
+      loaded.modelYaw = vrm2.scene.rotation.y;
+      loaded.rigIsMirrored = loaded.modelYaw !== 0;
+      vrm2.scene.traverse((obj) => {
         if (obj.isMesh) {
           obj.castShadow = true;
           obj.receiveShadow = true;
         }
       });
-      scene.add(vrm.scene);
-      vrm.humanoid.resetNormalizedPose();
+      vrm2.scene.visible = false;
+      scene.add(vrm2.scene);
+      vrm2.humanoid.resetNormalizedPose();
       const names = [
         "hips",
         "spine",
@@ -32747,34 +32799,66 @@ void main() {
         "leftLittleDistal"
       ];
       for (const name of names) {
-        bones[name] = vrm.humanoid.getNormalizedBoneNode(name);
+        loaded.bones[name] = vrm2.humanoid.getNormalizedBoneNode(name);
       }
-      hipsBaseY = bones.hips.position.y;
-      if (vrm.lookAt) vrm.lookAt.target = gazeTarget;
-      calmSpringBones();
-      state.ready = true;
-      window.__char.ready = true;
-      if (loadingEl) loadingEl.style.display = "none";
-      initPhotoGame({
-        getState: () => window.__char.getState(),
-        measureFraming,
-        takePhoto,
-        setPose: (name) => {
-          keys.wave = name === "wave";
-          keys.crouch = name === "crouch";
-          keys.peace = name === "peace";
-          keys.doublePeace = name === "double-peace";
-        },
-        setExpression: (name) => {
-          heldExpression = name;
-        }
-      });
-    },
-    (err) => {
-      console.error("Failed to load VRM character", err);
-      if (loadingEl) loadingEl.textContent = "\u30E2\u30C7\u30EB\u306E\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F";
+      loaded.hipsBaseY = loaded.bones.hips.position.y;
+      if (vrm2.lookAt) vrm2.lookAt.target = gazeTarget;
+      calmSpringBones(vrm2);
     }
-  );
+    return loaded;
+  }
+  function setActiveCharacter(key) {
+    const next = cast.find((entry) => entry.key === key);
+    if (!next || next === activeCharacter) return;
+    if (activeCharacter) activeCharacter.vrm.scene.visible = false;
+    activeCharacter = next;
+    vrm = next.vrm;
+    modelYaw = next.modelYaw;
+    rigIsMirrored = next.rigIsMirrored;
+    hipsBaseY = next.hipsBaseY;
+    for (const name of Object.keys(bones)) delete bones[name];
+    Object.assign(bones, next.bones);
+    vrm.scene.visible = true;
+    vrm.scene.position.copy(state.position);
+    vrm.scene.rotation.y = facing + modelYaw;
+    if (vrm.lookAt) vrm.lookAt.target = gazeTarget;
+  }
+  CHARACTER_SOURCES.forEach((source, index) => {
+    loadCharacter(source).then((loaded) => {
+      cast.push(loaded);
+      cast.sort((a, b) => CHARACTER_SOURCES.findIndex((s) => s.key === a.key) - CHARACTER_SOURCES.findIndex((s) => s.key === b.key));
+      if (activeCharacter) {
+        if (photoGame) photoGame.castChanged();
+        return;
+      }
+      {
+        setActiveCharacter(loaded.key);
+        state.ready = true;
+        window.__char.ready = true;
+        if (loadingEl) loadingEl.style.display = "none";
+        photoGame = initPhotoGame({
+          getState: () => window.__char.getState(),
+          measureFraming,
+          takePhoto,
+          listCast: () => cast.map((entry) => ({ key: entry.key, label: entry.label })),
+          getCharacter: () => activeCharacter ? activeCharacter.key : null,
+          setCharacter: setActiveCharacter,
+          setPose: (name) => {
+            keys.wave = name === "wave";
+            keys.crouch = name === "crouch";
+            keys.peace = name === "peace";
+            keys.doublePeace = name === "double-peace";
+          },
+          setExpression: (name) => {
+            heldExpression = name;
+          }
+        });
+      }
+    }, (err) => {
+      console.error(`Failed to load VRM character ${source.key}`, err);
+      if (loadingEl) loadingEl.textContent = "\u30E2\u30C7\u30EB\u306E\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F";
+    });
+  });
   camera.position.set(0, 2.6, -4.5);
   var controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 1.1, 0);

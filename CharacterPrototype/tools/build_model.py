@@ -42,12 +42,27 @@ MAX_EDGE_COLOR = 768
 MAX_EDGE_AUX = 512
 JPEG_QUALITY = 88
 
-# VRoid's own AvatarSample_B, mirrored in a public samples repo. The models are
-# redistributable under VRoid's sample-model terms (see the VRM meta block:
-# author "VRoid", redistribution allowed for everyone).
+# VRoid's own sample avatars, mirrored in a public samples repo. The models are
+# redistributable under VRoid's sample-model terms (checked in each file's VRM
+# meta block: author "VRoid", allowed user "Everyone").
 UPSTREAM_URL = (
-    "https://raw.githubusercontent.com/madjin/vrm-samples/master/vroid/stable/AvatarSample_B.vrm"
+    "https://raw.githubusercontent.com/madjin/vrm-samples/master/vroid/stable/{sample}.vrm"
 )
+
+# The cast. All three share one skeleton -- 54 humanoid bones under identical
+# names -- which is why the hand-authored poses work on every one of them
+# without a per-character variant. Checked rather than assumed; the same is
+# true of the facial morph parts, except that C is missing the two the ">_<"
+# expression is built from, so that one face is A and B only.
+#
+# Only B is restyled. A and C are their own characters and arrive as they are;
+# the recolour was a request about her, not a house style.
+CHARACTERS = [
+    {'key': 'a', 'sample': 'AvatarSample_A', 'label': 'A'},
+    {'key': 'b', 'sample': 'AvatarSample_B', 'label': 'B',
+     'recolour_hair': True, 'lighten_skin': True, 'remove_rings': True},
+    {'key': 'c', 'sample': 'AvatarSample_C', 'label': 'C'},
+]
 
 # --- Recolour ---------------------------------------------------------------
 # Hair: hue is *set*, not rotated, so the result is the same blue no matter what
@@ -537,25 +552,26 @@ def rebuild(js, binary, new_payloads):
     return js, bytes(out)
 
 
-def fetch_source(path):
-    """Download the upstream sample model on first run.
+def fetch_source(path, sample):
+    """Download an upstream sample model on first run.
 
-    Kept out of git (it is 15MB) but pinned to an exact URL so the build stays
-    reproducible without carrying the blob around.
+    Kept out of git (they are 15MB each) but pinned to exact URLs so the build
+    stays reproducible without carrying the blobs around.
     """
     import urllib.request
 
+    url = UPSTREAM_URL.format(sample=sample)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    print(f"downloading {UPSTREAM_URL}")
-    urllib.request.urlretrieve(UPSTREAM_URL, path)
+    print(f"downloading {url}")
+    urllib.request.urlretrieve(url, path)
 
 
-def main():
-    source = os.path.join(PROJECT, "assets", "source", "AvatarSample_B.vrm")
-    target = os.path.join(PROJECT, "assets", "girl.vrm")
+def build_character(character):
+    source = os.path.join(PROJECT, "assets", "source", f"{character['sample']}.vrm")
+    target = os.path.join(PROJECT, "assets", f"char-{character['key']}.vrm")
 
     if not os.path.exists(source):
-        fetch_source(source)
+        fetch_source(source, character["sample"])
 
     js, binary = read_glb(source)
     before = os.path.getsize(source)
@@ -571,36 +587,40 @@ def main():
     payloads = image_payloads(js, binary)
     names = {i: (img.get("name") or "") for i, img in enumerate(js.get("images", []))}
 
-    hair_images = set()
-    for mat in js["extensions"]["VRM"].get("materialProperties", []):
-        if not hair_material_key(mat.get("name", "")):
-            continue
-        for slot in ("_MainTex", "_ShadeTexture", "_EmissionMap"):
-            tex_index = (mat.get("textureProperties") or {}).get(slot)
-            if tex_index is not None:
-                hair_images.add(js["textures"][tex_index]["source"])
-    for i in hair_images:
-        payloads[i] = recolour_hair(payloads[i])
-    print(f"hair textures recoloured: {len(hair_images)}")
+    if character.get("recolour_hair"):
+        hair_images = set()
+        for mat in js["extensions"]["VRM"].get("materialProperties", []):
+            if not hair_material_key(mat.get("name", "")):
+                continue
+            for slot in ("_MainTex", "_ShadeTexture", "_EmissionMap"):
+                tex_index = (mat.get("textureProperties") or {}).get(slot)
+                if tex_index is not None:
+                    hair_images.add(js["textures"][tex_index]["source"])
+        for i in hair_images:
+            payloads[i] = recolour_hair(payloads[i])
+        print(f"  hair textures recoloured: {len(hair_images)}")
 
     # Rings before the skin lift, so the pixels they leave behind are ordinary
     # skin by the time the lift runs and come out the same colour as the finger
     # around them, rather than as a patch at the upstream tone.
-    for i, name in names.items():
-        if name != RING_IMAGE:
-            continue
-        size = Image.open(io.BytesIO(payloads[i])).size[0]
-        payloads[i], painted = remove_rings(payloads[i], finger_uv_mask(js, binary, size))
-        print(f"ring pixels repainted as skin: {painted}")
-        # Loudly, rather than quietly shipping the rings back: this whole step
-        # is a colour match against an upstream file, and the failure mode if
-        # that file ever changes is finding nothing and saying nothing.
-        assert painted > 5000, f"ring mask matched almost nothing ({painted}px)"
+    if character.get("remove_rings"):
+        for i, name in names.items():
+            if name != RING_IMAGE:
+                continue
+            size = Image.open(io.BytesIO(payloads[i])).size[0]
+            payloads[i], painted = remove_rings(payloads[i], finger_uv_mask(js, binary, size))
+            print(f"  ring pixels repainted as skin: {painted}")
+            # Loudly, rather than quietly shipping the rings back: this whole
+            # step is a colour match against an upstream file, and the failure
+            # mode if that file ever changes is finding nothing and saying
+            # nothing.
+            assert painted > 5000, f"ring mask matched almost nothing ({painted}px)"
 
-    skin_images = [i for i, name in names.items() if name in SKIN_IMAGES]
-    for i in skin_images:
-        payloads[i] = lighten_skin(payloads[i])
-    print(f"skin textures lightened: {len(skin_images)}")
+    if character.get("lighten_skin"):
+        skin_images = [i for i, name in names.items() if name in SKIN_IMAGES]
+        for i in skin_images:
+            payloads[i] = lighten_skin(payloads[i])
+        print(f"  skin textures lightened: {len(skin_images)}")
 
     aux = aux_image_indices(js)
     new_payloads = {}
@@ -611,7 +631,19 @@ def main():
     js, binary = rebuild(js, binary, new_payloads)
     write_glb(target, js, binary)
     after = os.path.getsize(target)
-    print(f"{before / 1048576:.2f}MB -> {after / 1048576:.2f}MB  ({target})")
+    print(f"  {before / 1048576:.2f}MB -> {after / 1048576:.2f}MB  ({os.path.basename(target)})")
+    return after
+
+
+def main():
+    wanted = sys.argv[1:]
+    total = 0
+    for character in CHARACTERS:
+        if wanted and character["key"] not in wanted:
+            continue
+        print(f"{character['label']} ({character['sample']})")
+        total += build_character(character)
+    print(f"total {total / 1048576:.2f}MB")
 
 
 if __name__ == "__main__":

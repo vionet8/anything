@@ -62,8 +62,23 @@ const loader = new GLTFLoader();`,
   ],
   [
     'so it is parsed, not loaded from a URL',
-    "loader.load(\n  'assets/girl.vrm',",
-    "const modelBuffer = base64ToArrayBuffer(window.__MODEL_BASE64__);\n\nloader.parse(\n  modelBuffer,\n  '',",
+    "    loader.load(source.url, (gltf) => resolve(setUpCharacter(gltf, source)), undefined, reject);",
+    "    loader.parse(base64ToArrayBuffer(window.__MODEL_BASE64__), '',\n"
+    + "      (gltf) => resolve(setUpCharacter(gltf, source)), reject);",
+  ],
+  [
+    // The artifact is the preview that runs inside a chat, and everything it
+    // shows has to be inlined in the page — three characters of base64 is past
+    // the size a published artifact may be. The real build fetches all three
+    // as files and has no such ceiling.
+    'the artifact previews one character, not the whole cast',
+    "  { key: 'a', label: 'A', url: 'assets/char-a.vrm' },\n",
+    '',
+  ],
+  [
+    'the artifact previews one character, not the whole cast (2)',
+    "  { key: 'c', label: 'C', url: 'assets/char-c.vrm' },\n",
+    '',
   ],
   [
     // entry.js is generated into artifact-build/, one directory over from the
@@ -79,17 +94,10 @@ const loader = new GLTFLoader();`,
     "    window.__char.ready = true;\n    if (loadingEl) loadingEl.style.display = 'none';\n",
   ],
   [
-    // loader.parse takes (data, path, onLoad, onError) — one argument fewer
-    // than loader.load, so the progress slot the dev page passes has to go or
-    // the error handler lands in it and never fires.
-    'drop the progress-callback slot loader.parse does not have',
-    "  },\n  undefined,\n  (err) => {",
-    "  },\n  (err) => {",
-  ],
-  [
     'and report failure in it',
-    "    console.error('Failed to load VRM character', err);",
-    "    console.error('Failed to load VRM character', err);\n    if (loadingEl) loadingEl.textContent = 'モデルの読み込みに失敗しました';",
+    "    console.error(`Failed to load VRM character ${source.key}`, err);",
+    "    console.error(`Failed to load VRM character ${source.key}`, err);\n"
+    + "    if (loadingEl) loadingEl.textContent = 'モデルの読み込みに失敗しました';",
   ],
 ];
 
@@ -119,7 +127,7 @@ function bundle() {
 }
 
 function assemble() {
-  const model = readFileSync(p('assets', 'girl.vrm')).toString('base64');
+  const model = readFileSync(p('assets', 'char-b.vrm')).toString('base64');
   writeFileSync(p('artifact-build', 'model.b64'), model);
 
   const template = readFileSync(p('artifact-build', 'template.html'), 'utf8');

@@ -262,10 +262,10 @@ const SPRING_TUNING = [
   { match: /^HairJoint/, dragForce: 0.78 },
 ];
 
-function calmSpringBones() {
-  if (!vrm || !vrm.springBoneManager) return 0;
+function calmSpringBones(target) {
+  if (!target || !target.springBoneManager) return 0;
   let adjusted = 0;
-  for (const joint of vrm.springBoneManager.joints) {
+  for (const joint of target.springBoneManager.joints) {
     const rule = SPRING_TUNING.find((entry) => entry.match.test(joint.bone.name));
     if (!rule) continue;
     if (rule.dragForce !== undefined) joint.settings.dragForce = rule.dragForce;
@@ -332,22 +332,40 @@ const loader = new GLTFLoader();
 loader.register(cspSafeTextures);
 loader.register((parser) => new VRMLoaderPlugin(parser));
 
-const modelBuffer = base64ToArrayBuffer(window.__MODEL_BASE64__);
+// The cast, in the order the picker offers them. All three are VRoid's own
+// sample avatars and share one skeleton, which is why every pose in this file
+// works on all of them without a per-character variant.
+const CHARACTER_SOURCES = [
+  { key: 'b', label: 'B', url: 'assets/char-b.vrm' },
+];
 
-loader.parse(
-  modelBuffer,
-  '',
-  (gltf) => {
-    vrm = gltf.userData.vrm;
+// Loaded characters, keyed the same way. Only one is in the scene at a time.
+const cast = [];
+let activeCharacter = null;
+let photoGame = null;
+
+function loadCharacter(source) {
+  return new Promise((resolve, reject) => {
+    loader.parse(base64ToArrayBuffer(window.__MODEL_BASE64__), '',
+      (gltf) => resolve(setUpCharacter(gltf, source)), reject);
+  });
+}
+
+function setUpCharacter(gltf, source) {
+  const loaded = { key: source.key, label: source.label, bones: {} };
+  loaded.vrm = gltf.userData.vrm;
+  {
+    const vrm = loaded.vrm;
     VRMUtils.rotateVRM0(vrm); // no-op for VRM1 models, safe either way
-    modelYaw = vrm.scene.rotation.y;
-    rigIsMirrored = modelYaw !== 0;
+    loaded.modelYaw = vrm.scene.rotation.y;
+    loaded.rigIsMirrored = loaded.modelYaw !== 0;
     vrm.scene.traverse((obj) => {
       if (obj.isMesh) {
         obj.castShadow = true;
         obj.receiveShadow = true;
       }
     });
+    vrm.scene.visible = false;
     scene.add(vrm.scene);
 
     vrm.humanoid.resetNormalizedPose();
@@ -371,7 +389,7 @@ loader.parse(
       'leftLittleProximal', 'leftLittleIntermediate', 'leftLittleDistal',
     ];
     for (const name of names) {
-      bones[name] = vrm.humanoid.getNormalizedBoneNode(name);
+      loaded.bones[name] = vrm.humanoid.getNormalizedBoneNode(name);
     }
 
     // The normalized hips bone's own rest position already encodes standing
@@ -379,36 +397,79 @@ loader.parse(
     // are not) — capture it so pose code can offset FROM it instead of
     // overwriting it with world-origin (0,0,0), which was collapsing her
     // pelvis reference down to ground level and sinking the whole lower body.
-    hipsBaseY = bones.hips.position.y;
+    loaded.hipsBaseY = loaded.bones.hips.position.y;
 
     // Hand the eyes a target to follow. autoUpdate means VRM re-reads its
     // world position on every vrm.update(), so applyGaze only has to move it.
     if (vrm.lookAt) vrm.lookAt.target = gazeTarget;
 
-    calmSpringBones();
+    calmSpringBones(vrm);
+  }
+  return loaded;
+}
 
-    state.ready = true;
-    window.__char.ready = true;
+// Swapping the active character swaps the whole set of globals the pose code
+// writes through. They stay module-level rather than being threaded through
+// every pose function: the poses are written against "the character", and
+// there is only ever one of those on stage.
+function setActiveCharacter(key) {
+  const next = cast.find((entry) => entry.key === key);
+  if (!next || next === activeCharacter) return;
+  if (activeCharacter) activeCharacter.vrm.scene.visible = false;
+
+  activeCharacter = next;
+  vrm = next.vrm;
+  modelYaw = next.modelYaw;
+  rigIsMirrored = next.rigIsMirrored;
+  hipsBaseY = next.hipsBaseY;
+  for (const name of Object.keys(bones)) delete bones[name];
+  Object.assign(bones, next.bones);
+
+  vrm.scene.visible = true;
+  vrm.scene.position.copy(state.position);
+  vrm.scene.rotation.y = facing + modelYaw;
+  if (vrm.lookAt) vrm.lookAt.target = gazeTarget;
+}
+
+// The first character to arrive goes on stage and starts the page; the rest
+// load behind her. Waiting for all three would hold the whole page on the
+// slowest download for no reason.
+CHARACTER_SOURCES.forEach((source, index) => {
+  loadCharacter(source).then((loaded) => {
+    cast.push(loaded);
+    cast.sort((a, b) => CHARACTER_SOURCES.findIndex((s) => s.key === a.key)
+      - CHARACTER_SOURCES.findIndex((s) => s.key === b.key));
+    if (activeCharacter) {
+      if (photoGame) photoGame.castChanged();
+      return;
+    }
+    {
+      setActiveCharacter(loaded.key);
+      state.ready = true;
+      window.__char.ready = true;
     if (loadingEl) loadingEl.style.display = 'none';
 
-    initPhotoGame({
-      getState: () => window.__char.getState(),
-      measureFraming,
-      takePhoto,
-      setPose: (name) => {
-        keys.wave = name === 'wave';
-        keys.crouch = name === 'crouch';
-        keys.peace = name === 'peace';
-        keys.doublePeace = name === 'double-peace';
-      },
-      setExpression: (name) => { heldExpression = name; },
-    });
-  },
-  (err) => {
-    console.error('Failed to load VRM character', err);
+      photoGame = initPhotoGame({
+        getState: () => window.__char.getState(),
+        measureFraming,
+        takePhoto,
+        listCast: () => cast.map((entry) => ({ key: entry.key, label: entry.label })),
+        getCharacter: () => (activeCharacter ? activeCharacter.key : null),
+        setCharacter: setActiveCharacter,
+        setPose: (name) => {
+          keys.wave = name === 'wave';
+          keys.crouch = name === 'crouch';
+          keys.peace = name === 'peace';
+          keys.doublePeace = name === 'double-peace';
+        },
+        setExpression: (name) => { heldExpression = name; },
+      });
+    }
+  }, (err) => {
+    console.error(`Failed to load VRM character ${source.key}`, err);
     if (loadingEl) loadingEl.textContent = 'モデルの読み込みに失敗しました';
-  }
-);
+  });
+});
 
 // ---- Camera: orbit around the character, drag to look from any angle ----
 // (this is also how you can actually see her face — the old fixed
