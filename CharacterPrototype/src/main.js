@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+import { initPhotoGame } from './game.js';
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xbfd9e8, 28, 75);
@@ -377,6 +378,19 @@ loader.load(
 
     state.ready = true;
     window.__char.ready = true;
+
+    initPhotoGame({
+      getState: () => window.__char.getState(),
+      measureFraming,
+      takePhoto,
+      setPose: (name) => {
+        keys.wave = name === 'wave';
+        keys.crouch = name === 'crouch';
+        keys.peace = name === 'peace';
+        keys.doublePeace = name === 'double-peace';
+      },
+      setExpression: (name) => { heldExpression = name; },
+    });
   },
   undefined,
   (err) => {
@@ -390,7 +404,11 @@ loader.load(
 camera.position.set(0, 2.6, -4.5);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.1, 0);
-controls.minDistance = 1.8;
+// Close enough for a real portrait. It used to stop at 1.8m, which is a full
+// figure — at that range her head is 9% of the frame height, so "寄り" and
+// "標準" were the same picture and there was nothing for the photo game's
+// framing brief to ask for.
+controls.minDistance = 0.7;
 controls.maxDistance = 12;
 controls.maxPolarAngle = Math.PI * 0.49;
 controls.enableDamping = true;
@@ -1016,6 +1034,52 @@ function step(dt) {
   updateCamera();
 }
 
+// ---- What the photo game needs to see ----
+// How much of the frame her head fills, and where in the frame it sits. Both
+// come out of the same projection, in fractions of the viewport rather than
+// pixels, so a phone in portrait and a desktop window are judged on what the
+// picture actually looks like rather than on how far away the camera is.
+const HEAD_HEIGHT = 0.16;   // metres, head bone to the top of her hair
+
+const projected = new THREE.Vector3();
+const projectedTop = new THREE.Vector3();
+
+function measureFraming() {
+  const head = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode('head') : null;
+  if (!head) return null;
+  head.updateWorldMatrix(true, false);
+  projected.setFromMatrixPosition(head.matrixWorld);
+  projectedTop.copy(projected).setY(projected.y + HEAD_HEIGHT);
+
+  // Behind the camera projects to nonsense, so say so rather than reporting a
+  // confident number for a shot she is not in.
+  const depth = projected.clone().sub(camera.position).dot(
+    camera.getWorldDirection(new THREE.Vector3())
+  );
+
+  projected.project(camera);
+  projectedTop.project(camera);
+  const faceSize = Math.abs(projectedTop.y - projected.y) / 2;
+
+  return {
+    // NDC is -1..1; halved so these read as "fraction of the frame from the
+    // centre", which is how the framing rules are written.
+    x: projected.x / 2,
+    y: projected.y / 2,
+    faceSize,
+    behindCamera: depth <= 0,
+  };
+}
+
+// A photo has to be taken in the same tick as the render that produced it: the
+// drawing buffer is cleared between frames, so reading it any later hands back
+// a blank canvas. The game asks here and gets the picture on the next frame.
+let pendingShot = null;
+
+function takePhoto(callback) {
+  pendingShot = callback;
+}
+
 // Set by the test hooks so a screenshot can catch a moment that the real-time
 // loop would otherwise have run straight past — the apex of a jump lasts about
 // one frame, and the rAF loop lands her before the screenshot is taken.
@@ -1026,6 +1090,15 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.1);
   if (!paused) step(dt);
   renderer.render(scene, camera);
+  if (pendingShot) {
+    const deliver = pendingShot;
+    pendingShot = null;
+    deliver({
+      dataUrl: renderer.domElement.toDataURL('image/jpeg', 0.85),
+      state: window.__char.getState(),
+      framing: measureFraming(),
+    });
+  }
 }
 animate();
 

@@ -66,9 +66,25 @@ const loader = new GLTFLoader();`,
     "const modelBuffer = base64ToArrayBuffer(window.__MODEL_BASE64__);\n\nloader.parse(\n  modelBuffer,\n  '',",
   ],
   [
+    // entry.js is generated into artifact-build/, one directory over from the
+    // source it is generated from, so main.js's sibling imports have to be
+    // re-pointed at src/.
+    'the generated entry sits beside the bundle, not beside its source',
+    "from './game.js'",
+    "from '../src/game.js'",
+  ],
+  [
     'clear the loading overlay on success',
-    "    state.ready = true;\n    window.__char.ready = true;\n  },\n  undefined,",
-    "    state.ready = true;\n    window.__char.ready = true;\n    if (loadingEl) loadingEl.style.display = 'none';\n  },",
+    "    window.__char.ready = true;\n",
+    "    window.__char.ready = true;\n    if (loadingEl) loadingEl.style.display = 'none';\n",
+  ],
+  [
+    // loader.parse takes (data, path, onLoad, onError) — one argument fewer
+    // than loader.load, so the progress slot the dev page passes has to go or
+    // the error handler lands in it and never fires.
+    'drop the progress-callback slot loader.parse does not have',
+    "  },\n  undefined,\n  (err) => {",
+    "  },\n  (err) => {",
   ],
   [
     'and report failure in it',

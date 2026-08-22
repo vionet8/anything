@@ -466,6 +466,97 @@ test('idle turns the character to face the camera instead of staying at the last
   expect(idleState.heading).not.toBeCloseTo(afterMove.heading, 1);
 });
 
+// ---- The photo game ----
+
+// Park the camera dead in front of her head at a given distance, which is what
+// the framing bands are expressed in terms of.
+async function frameHerAt(page, metres) {
+  await page.evaluate((distance) => {
+    const head = window.__char.getBoneWorld('head');
+    window.__char.setCameraForTest(
+      { x: head.x, y: head.y, z: head.z - distance },
+      { x: head.x, y: head.y, z: head.z }
+    );
+  }, metres);
+}
+
+async function shootOnBrief(page, brief, { pose, expression, metres }) {
+  await page.evaluate((request) => window.__game.startForTest(request), brief);
+  await frameHerAt(page, metres);
+  if (pose) await page.keyboard.down(pose);
+  if (expression) await page.keyboard.down(expression);
+  await page.waitForTimeout(900); // poses and expressions both ease in
+  const shot = await page.evaluate(() => window.__game.shootForTest());
+  if (pose) await page.keyboard.up(pose);
+  if (expression) await page.keyboard.up(expression);
+  return shot;
+}
+
+test('a shot that matches the brief scores three stars', async ({ page }) => {
+  const shot = await shootOnBrief(page,
+    { pose: 'peace', expression: 'happy', framing: 'medium' },
+    { pose: 'KeyV', expression: 'Digit1', metres: 2.4 });
+
+  expect(shot.score.stars).toBe(3);
+  for (const part of shot.score.parts) {
+    if (part.key === 'centred') continue; // scored on a curve, not pass/fail
+    expect(part.ok, part.label).toBe(true);
+  }
+});
+
+test('the shutter returns an actual photograph', async ({ page }) => {
+  const shot = await shootOnBrief(page,
+    { pose: 'peace', expression: 'happy', framing: 'medium' },
+    { pose: 'KeyV', expression: 'Digit1', metres: 2.4 });
+  // A JPEG of an empty canvas is a couple of KB; a rendered frame is far more.
+  // This is the check that the capture happens in the same tick as the render
+  // it belongs to — read a frame late and the buffer is already cleared.
+  expect(shot.bytes).toBeGreaterThan(20000);
+});
+
+test('the wrong pose cannot buy stars with good framing', async ({ page }) => {
+  const shot = await shootOnBrief(page,
+    { pose: 'double-peace', expression: 'happy', framing: 'medium' },
+    { pose: 'KeyV', expression: 'Digit1', metres: 2.4 }); // peace, not double
+
+  expect(shot.score.parts.find((part) => part.key === 'pose').ok).toBe(false);
+  expect(shot.score.parts.find((part) => part.key === 'framing').ok).toBe(true);
+  expect(shot.score.stars).toBeLessThanOrEqual(1);
+});
+
+test('the framing bands tell a tight shot from a loose one', async ({ page }) => {
+  const close = await shootOnBrief(page,
+    { pose: 'peace', expression: 'happy', framing: 'close' },
+    { pose: 'KeyV', expression: 'Digit1', metres: 1.2 });
+  const tooFar = await shootOnBrief(page,
+    { pose: 'peace', expression: 'happy', framing: 'close' },
+    { pose: 'KeyV', expression: 'Digit1', metres: 5.0 });
+
+  expect(close.score.parts.find((part) => part.key === 'framing').ok).toBe(true);
+  expect(tooFar.score.parts.find((part) => part.key === 'framing').ok).toBe(false);
+});
+
+// Driven through the real buttons rather than the test hooks, because the
+// thing under test here is the session flow itself: three shots, a result
+// after each, and an album at the end.
+test('a session runs three shots and ends in an album', async ({ page }) => {
+  // Three photographs, each captured on the frame after its click, plus the
+  // model load — comfortably past the suite's default 20s.
+  test.setTimeout(60000);
+  await page.getByRole('button', { name: '撮影を始める' }).click();
+  expect(await page.evaluate(() => window.__game.getPhase())).toBe('shooting');
+
+  for (let shot = 1; shot <= 3; shot++) {
+    await page.locator('.pg-shutter').click();
+    await expect(page.locator('.pg-stars')).toBeVisible();
+    expect(await page.evaluate(() => window.__game.getShots())).toHaveLength(shot);
+    await page.locator('.pg-card .pg-button').first().click();
+  }
+
+  expect(await page.evaluate(() => window.__game.getPhase())).toBe('album');
+  await expect(page.locator('.pg-album img')).toHaveCount(3);
+});
+
 // How far off the camera she is standing, in degrees, measured rather than
 // inferred from `heading`: she moves while walking, so the direction to the
 // camera is not the direction it started in.

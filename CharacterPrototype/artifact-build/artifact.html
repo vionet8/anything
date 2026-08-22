@@ -32089,6 +32089,349 @@ void main() {
   VRMUtils.removeUnnecessaryVertices = removeUnnecessaryVertices;
   VRMUtils.rotateVRM0 = rotateVRM0;
 
+  // src/game.js
+  var POSES = [
+    { key: "peace", label: "\u30D4\u30FC\u30B9", hint: "V" },
+    { key: "double-peace", label: "\u30C0\u30D6\u30EB\u30D4\u30FC\u30B9", hint: "B" },
+    { key: "wave", label: "\u624B\u3092\u632F\u308B", hint: "E" },
+    { key: "crouch", label: "\u3057\u3083\u304C\u3080", hint: "C" },
+    { key: "idle", label: "\u81EA\u7136\u4F53", hint: "\u2014" }
+  ];
+  var EXPRESSIONS = [
+    { key: "happy", label: "\u7B11\u9854", hint: "1" },
+    { key: "relaxed", label: "\u306B\u3063\u3053\u308A", hint: "2" },
+    { key: "Surprised", label: "\u9A5A\u304D", hint: "3" },
+    { key: "angry", label: "\u6012\u308A", hint: "4" },
+    { key: "sad", label: "\u60B2\u3057\u3044", hint: "5" },
+    { key: "Extra", label: ">_<", hint: "6" }
+  ];
+  var FRAMINGS = [
+    { key: "close", label: "\u5BC4\u308A", min: 0.13, max: 0.25 },
+    // ~1.3m and closer
+    { key: "medium", label: "\u6A19\u6E96", min: 0.055, max: 0.105 },
+    // ~2m to 3m
+    { key: "wide", label: "\u5F15\u304D", min: 0.02, max: 0.04 }
+    // ~4m to 8.5m
+  ];
+  var SHOTS_PER_SESSION = 3;
+  var POINTS = { pose: 25, expression: 25, inFrame: 15, framing: 20, centred: 15 };
+  var STAR_THRESHOLDS = [85, 60, 30];
+  var EXPRESSION_SETTLED = 0.6;
+  var byKey = (list, key) => list.find((entry) => entry.key === key);
+  function scoreShot(request, shot) {
+    const framing = shot.framing;
+    const band = byKey(FRAMINGS, request.framing);
+    const parts = [];
+    const poseOk = shot.state.animName === request.pose;
+    parts.push({ key: "pose", label: "\u30DD\u30FC\u30BA", ok: poseOk, points: poseOk ? POINTS.pose : 0 });
+    const expressionOk = shot.state.expression === request.expression && shot.state.expressionWeight >= EXPRESSION_SETTLED;
+    parts.push({
+      key: "expression",
+      label: "\u8868\u60C5",
+      ok: expressionOk,
+      points: expressionOk ? POINTS.expression : 0
+    });
+    const inFrame = !!framing && !framing.behindCamera && Math.abs(framing.x) < 0.45 && Math.abs(framing.y) < 0.45;
+    parts.push({ key: "inFrame", label: "\u9854\u304C\u5199\u3063\u3066\u3044\u308B", ok: inFrame, points: inFrame ? POINTS.inFrame : 0 });
+    const framingOk = inFrame && framing.faceSize >= band.min && framing.faceSize <= band.max;
+    parts.push({
+      key: "framing",
+      label: band.label,
+      ok: framingOk,
+      points: framingOk ? POINTS.framing : 0
+    });
+    const offCentre = inFrame ? Math.hypot(framing.x, framing.y) : 1;
+    const centred = Math.max(0, 1 - offCentre / 0.35);
+    parts.push({
+      key: "centred",
+      label: "\u69CB\u56F3",
+      ok: centred > 0.5,
+      points: Math.round(POINTS.centred * centred)
+    });
+    const total = parts.reduce((sum, part) => sum + part.points, 0);
+    const rank = STAR_THRESHOLDS.findIndex((threshold) => total >= threshold);
+    let stars = rank === -1 ? 0 : 3 - rank;
+    if (!(poseOk && expressionOk)) stars = Math.min(stars, 1);
+    return { total, stars, parts };
+  }
+  function pick(list) {
+    return list[Math.floor(Math.random() * list.length)];
+  }
+  function makeRequest() {
+    return {
+      pose: pick(POSES).key,
+      expression: pick(EXPRESSIONS).key,
+      framing: pick(FRAMINGS).key
+    };
+  }
+  function describeRequest(request) {
+    return {
+      pose: byKey(POSES, request.pose),
+      expression: byKey(EXPRESSIONS, request.expression),
+      framing: byKey(FRAMINGS, request.framing)
+    };
+  }
+  var STYLE = `
+.pg-root { position: fixed; inset: 0; pointer-events: none; z-index: 5;
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif;
+  color: #e8ebf2; }
+.pg-root * { box-sizing: border-box; }
+.pg-panel { position: absolute; top: 16px; right: 16px; width: min(280px, calc(100vw - 32px));
+  background: rgba(22, 25, 34, 0.9); border: 1px solid #2a3040; border-radius: 6px;
+  padding: 12px 14px; pointer-events: auto; backdrop-filter: blur(6px); }
+.pg-label { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #ffb454;
+  margin: 0 0 8px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.pg-brief { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.pg-chip { font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+  background: #0c0e14; border: 1px solid #2a3040; }
+.pg-chip[data-ok="true"] { border-color: #7ee787; color: #7ee787; }
+.pg-chip small { font-weight: 400; color: #8b93a7; margin-left: 4px; }
+.pg-count { font-size: 11px; color: #8b93a7; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.pg-button { display: block; width: 100%; margin-top: 10px; padding: 10px; font: inherit;
+  font-size: 14px; font-weight: 600; color: #0c0e14; background: #ffb454; border: 0;
+  border-radius: 6px; cursor: pointer; pointer-events: auto; }
+.pg-button:disabled { opacity: 0.45; cursor: default; }
+.pg-button.pg-ghost { color: #e8ebf2; background: transparent; border: 1px solid #2a3040; }
+.pg-shutter { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%);
+  width: 68px; height: 68px; border-radius: 50%; background: #ffb454; border: 4px solid #0c0e14;
+  box-shadow: 0 0 0 2px #ffb454; cursor: pointer; pointer-events: auto; }
+.pg-shutter:active { transform: translateX(-50%) scale(0.94); }
+.pg-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+.pg-flash.pg-firing { animation: pg-flash 0.4s ease-out; }
+@keyframes pg-flash { from { opacity: 0.85; } to { opacity: 0; } }
+.pg-sheet { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(8, 10, 16, 0.82); pointer-events: auto; padding: 20px; overflow-y: auto; }
+.pg-card { width: min(420px, 100%); background: #161922; border: 1px solid #2a3040;
+  border-radius: 8px; padding: 20px; text-align: center; }
+.pg-card h2 { margin: 0 0 4px; font-size: 18px; }
+.pg-card p { margin: 0 0 14px; font-size: 13px; color: #8b93a7; line-height: 1.6; }
+.pg-stars { font-size: 30px; letter-spacing: 6px; color: #ffb454; margin: 6px 0; }
+.pg-total { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 26px; font-weight: 700; }
+.pg-parts { list-style: none; margin: 12px 0; padding: 0; text-align: left; }
+.pg-parts li { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0;
+  font-size: 13px; border-bottom: 1px solid #232838; }
+.pg-parts li[data-ok="false"] { color: #8b93a7; }
+/* A fixed box rather than one that grows to the image: the photo is a data URL
+   that decodes a moment after the card is built, and sizing to it makes the
+   whole card jump \u2014 and the button under it move out from under the cursor. */
+.pg-shot { width: 100%; height: 44vh; object-fit: contain; border-radius: 6px;
+  border: 1px solid #2a3040; display: block; background: #0c0e14; }
+.pg-album { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+.pg-album img { width: 100%; border-radius: 4px; border: 1px solid #2a3040; display: block; }
+/* On a narrow screen the top corners belong to the controls panel, so the
+   brief moves down beside the shutter rather than sitting on top of it. */
+@media (max-width: 560px) {
+  .pg-panel { top: auto; bottom: 104px; left: 16px; right: 16px; width: auto; }
+  .pg-card { padding: 14px; }
+}
+@media (prefers-reduced-motion: reduce) { .pg-flash.pg-firing { animation: none; } }
+`;
+  function initPhotoGame(api) {
+    const root = document.createElement("div");
+    root.className = "pg-root";
+    const style = document.createElement("style");
+    style.textContent = STYLE;
+    document.head.appendChild(style);
+    document.body.appendChild(root);
+    const session = { shots: [], request: null, phase: "free" };
+    const el = (tag, className, html) => {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (html !== void 0) node.innerHTML = html;
+      return node;
+    };
+    function render() {
+      root.innerHTML = "";
+      if (session.phase === "free") return renderFree();
+      if (session.phase === "shooting") return renderShooting();
+      if (session.phase === "result") return renderResult();
+      if (session.phase === "album") return renderAlbum();
+    }
+    function renderFree() {
+      const panel = el("div", "pg-panel");
+      panel.append(
+        el("p", "pg-label", "\u64AE\u5F71\u4F1A"),
+        el("p", "pg-count", `\u304A\u984C\u3069\u304A\u308A\u306E\u30DD\u30FC\u30BA\u3068\u8868\u60C5\u3092\u3055\u305B\u3066\u3001${SHOTS_PER_SESSION}\u679A\u64AE\u308A\u307E\u3059\u3002`)
+      );
+      const start = el("button", "pg-button", "\u64AE\u5F71\u3092\u59CB\u3081\u308B");
+      start.addEventListener("click", () => {
+        session.shots = [];
+        nextRequest();
+      });
+      panel.append(start);
+      root.append(panel);
+    }
+    function renderShooting() {
+      const panel = el("div", "pg-panel");
+      const described = describeRequest(session.request);
+      panel.append(el("p", "pg-label", "\u304A\u984C"));
+      const brief = el("div", "pg-brief");
+      const live = api.getState();
+      const chips = [
+        { entry: described.pose, ok: live.animName === session.request.pose },
+        {
+          entry: described.expression,
+          ok: live.expression === session.request.expression && live.expressionWeight >= EXPRESSION_SETTLED
+        },
+        { entry: described.framing, ok: framingLive() }
+      ];
+      for (const chip of chips) {
+        const node = el(
+          "span",
+          "pg-chip",
+          `${chip.entry.label}${chip.entry.hint ? `<small>${chip.entry.hint}</small>` : ""}`
+        );
+        node.dataset.ok = String(chip.ok);
+        brief.append(node);
+      }
+      panel.append(brief);
+      panel.append(el("p", "pg-count", `${session.shots.length + 1} / ${SHOTS_PER_SESSION} \u679A\u76EE`));
+      root.append(panel);
+      const shutter = el("button", "pg-shutter");
+      shutter.setAttribute("aria-label", "\u30B7\u30E3\u30C3\u30BF\u30FC");
+      shutter.addEventListener("click", shoot);
+      root.append(shutter, el("div", "pg-flash"));
+    }
+    function framingLive() {
+      const framing = api.measureFraming();
+      if (!framing || framing.behindCamera) return false;
+      const band = byKey(FRAMINGS, session.request.framing);
+      return framing.faceSize >= band.min && framing.faceSize <= band.max && Math.abs(framing.x) < 0.45 && Math.abs(framing.y) < 0.45;
+    }
+    function renderResult() {
+      const shot = session.shots[session.shots.length - 1];
+      const sheet = el("div", "pg-sheet");
+      const card = el("div", "pg-card");
+      const image = el("img", "pg-shot");
+      image.src = shot.dataUrl;
+      image.alt = "\u64AE\u5F71\u3057\u305F\u5199\u771F";
+      card.append(
+        image,
+        el("div", "pg-stars", "\u2605".repeat(shot.score.stars) + "\u2606".repeat(3 - shot.score.stars)),
+        el("div", "pg-total", `${shot.score.total}`)
+      );
+      const list = el("ul", "pg-parts");
+      for (const part of shot.score.parts) {
+        const item = el("li", null, `<span>${part.label}</span><span>${part.points}</span>`);
+        item.dataset.ok = String(part.ok);
+        list.append(item);
+      }
+      card.append(list);
+      const next = el(
+        "button",
+        "pg-button",
+        session.shots.length >= SHOTS_PER_SESSION ? "\u7D50\u679C\u3092\u898B\u308B" : "\u6B21\u306E\u304A\u984C\u3078"
+      );
+      next.addEventListener("click", () => {
+        if (session.shots.length >= SHOTS_PER_SESSION) {
+          session.phase = "album";
+          render();
+        } else {
+          nextRequest();
+        }
+      });
+      card.append(next);
+      sheet.append(card);
+      root.append(sheet);
+      next.focus();
+    }
+    function renderAlbum() {
+      const total = session.shots.reduce((sum, shot) => sum + shot.score.total, 0);
+      const stars = session.shots.reduce((sum, shot) => sum + shot.score.stars, 0);
+      const sheet = el("div", "pg-sheet");
+      const card = el("div", "pg-card");
+      card.append(el("h2", null, "\u64AE\u5F71\u7D42\u4E86"), el("p", null, `\u2605 ${stars} / ${SHOTS_PER_SESSION * 3}`));
+      const album = el("div", "pg-album");
+      for (const shot of session.shots) {
+        const image = el("img");
+        image.src = shot.dataUrl;
+        image.alt = "\u64AE\u5F71\u3057\u305F\u5199\u771F";
+        album.append(image);
+      }
+      card.append(album, el("div", "pg-total", `${total}`));
+      const again = el("button", "pg-button", "\u3082\u3046\u4E00\u5EA6");
+      again.addEventListener("click", () => {
+        session.shots = [];
+        nextRequest();
+      });
+      const quit = el("button", "pg-button pg-ghost", "\u3084\u3081\u308B");
+      quit.addEventListener("click", () => {
+        session.phase = "free";
+        render();
+      });
+      card.append(again, quit);
+      sheet.append(card);
+      root.append(sheet);
+      again.focus();
+    }
+    function nextRequest() {
+      session.request = makeRequest();
+      session.phase = "shooting";
+      render();
+    }
+    function shoot() {
+      const flash = root.querySelector(".pg-flash");
+      if (flash) flash.classList.add("pg-firing");
+      api.takePhoto((shot) => {
+        shot.score = scoreShot(session.request, shot);
+        shot.request = session.request;
+        session.shots.push(shot);
+        session.phase = "result";
+        render();
+      });
+    }
+    let sinceRefresh = 0;
+    function tick() {
+      requestAnimationFrame(tick);
+      if (session.phase !== "shooting") return;
+      sinceRefresh += 1;
+      if (sinceRefresh < 6) return;
+      sinceRefresh = 0;
+      renderShootingChips();
+    }
+    function renderShootingChips() {
+      const chips = root.querySelectorAll(".pg-chip");
+      if (chips.length !== 3) return;
+      const live = api.getState();
+      chips[0].dataset.ok = String(live.animName === session.request.pose);
+      chips[1].dataset.ok = String(live.expression === session.request.expression && live.expressionWeight >= EXPRESSION_SETTLED);
+      chips[2].dataset.ok = String(framingLive());
+    }
+    window.addEventListener("keydown", (event) => {
+      if (event.code !== "Enter" && event.code !== "NumpadEnter") return;
+      if (session.phase === "shooting") shoot();
+    });
+    render();
+    tick();
+    window.__game = {
+      scoreShot,
+      getPhase: () => session.phase,
+      getRequest: () => session.request,
+      getShots: () => session.shots.map((shot) => ({ score: shot.score, request: shot.request })),
+      // Set the brief instead of rolling for it, so a test can ask for the shot
+      // it is about to take.
+      startForTest: (request) => {
+        session.shots = [];
+        session.request = request || makeRequest();
+        session.phase = "shooting";
+        render();
+      },
+      shootForTest: () => new Promise((resolve) => {
+        api.takePhoto((shot) => {
+          shot.score = scoreShot(session.request, shot);
+          shot.request = session.request;
+          session.shots.push(shot);
+          session.phase = "result";
+          render();
+          resolve({ score: shot.score, bytes: shot.dataUrl.length });
+        });
+      }),
+      poseForTest: api.setPose,
+      expressionForTest: api.setExpression,
+      measureForTest: api.measureFraming
+    };
+  }
+
   // artifact-build/entry.js
   var canvas = document.getElementById("scene");
   var scene = new Scene();
@@ -32412,6 +32755,20 @@ void main() {
       state.ready = true;
       window.__char.ready = true;
       if (loadingEl) loadingEl.style.display = "none";
+      initPhotoGame({
+        getState: () => window.__char.getState(),
+        measureFraming,
+        takePhoto,
+        setPose: (name) => {
+          keys.wave = name === "wave";
+          keys.crouch = name === "crouch";
+          keys.peace = name === "peace";
+          keys.doublePeace = name === "double-peace";
+        },
+        setExpression: (name) => {
+          heldExpression = name;
+        }
+      });
     },
     (err) => {
       console.error("Failed to load VRM character", err);
@@ -32421,7 +32778,7 @@ void main() {
   camera.position.set(0, 2.6, -4.5);
   var controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 1.1, 0);
-  controls.minDistance = 1.8;
+  controls.minDistance = 0.7;
   controls.maxDistance = 12;
   controls.maxPolarAngle = Math.PI * 0.49;
   controls.enableDamping = true;
@@ -32773,12 +33130,49 @@ void main() {
     vrm.update(dt);
     updateCamera();
   }
+  var HEAD_HEIGHT = 0.16;
+  var projected = new Vector3();
+  var projectedTop = new Vector3();
+  function measureFraming() {
+    const head = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode("head") : null;
+    if (!head) return null;
+    head.updateWorldMatrix(true, false);
+    projected.setFromMatrixPosition(head.matrixWorld);
+    projectedTop.copy(projected).setY(projected.y + HEAD_HEIGHT);
+    const depth = projected.clone().sub(camera.position).dot(
+      camera.getWorldDirection(new Vector3())
+    );
+    projected.project(camera);
+    projectedTop.project(camera);
+    const faceSize = Math.abs(projectedTop.y - projected.y) / 2;
+    return {
+      // NDC is -1..1; halved so these read as "fraction of the frame from the
+      // centre", which is how the framing rules are written.
+      x: projected.x / 2,
+      y: projected.y / 2,
+      faceSize,
+      behindCamera: depth <= 0
+    };
+  }
+  var pendingShot = null;
+  function takePhoto(callback) {
+    pendingShot = callback;
+  }
   var paused = false;
   function animate() {
     requestAnimationFrame(animate);
     const dt = Math.min(clock.getDelta(), 0.1);
     if (!paused) step(dt);
     renderer.render(scene, camera);
+    if (pendingShot) {
+      const deliver = pendingShot;
+      pendingShot = null;
+      deliver({
+        dataUrl: renderer.domElement.toDataURL("image/jpeg", 0.85),
+        state: window.__char.getState(),
+        framing: measureFraming()
+      });
+    }
   }
   animate();
   window.addEventListener("resize", () => {
