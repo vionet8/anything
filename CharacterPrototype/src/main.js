@@ -186,6 +186,70 @@ for (let i = 0; i < 10; i++) {
   scene.add(hill);
 }
 
+// ---- Bird ----
+// A visiting bird, built once and re-used for every visit -- see startBirdVisit
+// / updateBird below, next to the director that decides when she arrives.
+// One flat triangle, reused for both wings (mirrored) and the tail.
+function makeWingGeometry() {
+  const geometry = new THREE.BufferGeometry();
+  const vertices = new Float32Array([
+    0, 0, 0,
+    0.11, -0.01, -0.03,
+    0.05, 0.005, -0.09,
+  ]);
+  geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function makeBird() {
+  const group = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x4a6fa5, roughness: 0.75 });
+  const breastMat = new THREE.MeshStandardMaterial({ color: 0xe8a24a, roughness: 0.8 });
+  const beakMat = new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: 0.6 });
+  const wingMat = new THREE.MeshStandardMaterial({ color: 0x3a5a8a, roughness: 0.75, side: THREE.DoubleSide });
+
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), bodyMat);
+  body.scale.set(1, 0.88, 1.55);
+  group.add(body);
+
+  const breast = new THREE.Mesh(new THREE.SphereGeometry(0.032, 6, 5), breastMat);
+  breast.position.set(0, -0.012, 0.03);
+  breast.scale.set(0.9, 0.85, 0.9);
+  group.add(breast);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.028, 7, 6), bodyMat);
+  head.position.set(0, 0.022, 0.065);
+  group.add(head);
+
+  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.009, 0.03, 5), beakMat);
+  beak.rotation.x = Math.PI / 2;
+  beak.position.set(0, 0.02, 0.09);
+  group.add(beak);
+
+  const leftWing = new THREE.Mesh(makeWingGeometry(), wingMat);
+  leftWing.position.set(0.02, 0.012, 0);
+  const rightWing = new THREE.Mesh(makeWingGeometry(), wingMat);
+  rightWing.position.set(-0.02, 0.012, 0);
+  rightWing.scale.x = -1;
+  group.add(leftWing, rightWing);
+
+  const tail = new THREE.Mesh(makeWingGeometry(), wingMat);
+  tail.position.set(0, 0, -0.06);
+  tail.rotation.y = Math.PI / 2;
+  tail.scale.setScalar(0.85);
+  group.add(tail);
+
+  group.userData.leftWing = leftWing;
+  group.userData.rightWing = rightWing;
+  group.visible = false;
+  group.traverse((obj) => { if (obj.isMesh) obj.castShadow = true; });
+  return group;
+}
+
+const bird = makeBird();
+scene.add(bird);
+
 // ---- Character (VRM) ----
 const MOVE_SPEED = 3.2;
 const RUN_SPEED = 6.6;
@@ -378,6 +442,111 @@ let directorExpressionBag = null;
 let directorPoseTimer = 0;
 let directorExpressionTimer = 0;
 
+// ---- The guaranteed moment ----
+// Pose and expression cycling on two independent clocks means the exact pair
+// a brief asks for is a coincidence of both landing at once, and coincidences
+// can take a long time to happen -- reported back as "however many turns
+// until it shows up", which is a fair complaint. So the brief's pose and
+// expression are not left to chance: scheduleMoment() below arms a countdown,
+// somewhere between about 2.5 and 6.5 seconds out, and when it fires it
+// simply forces that exact pair live for a normal hold's worth of time,
+// interrupting whatever she was doing. Every brief gets one of these, so the
+// wait has a hard, short ceiling regardless of how the bags happen to fall.
+//
+// The bird (above) is what makes that forced cut read as motivated rather
+// than glitchy: it starts its approach so its landing lines up with the
+// moment firing, stays exactly as long as the moment holds, and leaves as it
+// ends. It is not tied to any particular pose or expression -- it is a
+// generic "something is about to happen" tell, wearing a bird's shape.
+const MOMENT_DELAY = [2.5, 6.5];
+const BIRD_APPROACH_TIME = 1.1;
+const BIRD_DEPART_TIME = 0.9;
+
+let pendingMoment = null; // { pose, expression, remaining, holdDuration, birdArmed }
+let birdState = 'offstage'; // 'offstage' | 'approach' | 'perched' | 'depart'
+let birdT = 0;
+let birdPerchTime = 2.5;
+let birdFlap = 0;
+const birdFrom = new THREE.Vector3();
+const birdTo = new THREE.Vector3();
+
+function scheduleMoment(pose, expression) {
+  if (!DIRECTOR_POSES.includes(pose)) { pendingMoment = null; return; }
+  const [lo, hi] = poseHoldRange(pose);
+  pendingMoment = {
+    pose, expression, birdArmed: false,
+    remaining: randRange(...MOMENT_DELAY),
+    holdDuration: randRange(lo, hi),
+  };
+}
+
+// Just outside her right shoulder in world space, tracking however she is
+// currently posed -- a fixed offset from the body origin would plant the
+// bird in mid-air the moment an arm moves.
+function shoulderAnchor() {
+  const node = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode('rightShoulder') : null;
+  if (!node) return null;
+  node.updateWorldMatrix(true, false);
+  const base = new THREE.Vector3().setFromMatrixPosition(node.matrixWorld);
+  const outward = new THREE.Vector3(1, 0, 0)
+    .applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(node.matrixWorld))
+    .normalize();
+  return base.addScaledVector(outward, 0.1).add(new THREE.Vector3(0, 0.05, 0.01));
+}
+
+function startBirdVisit(perchSeconds) {
+  const target = shoulderAnchor();
+  if (!target) return;
+  const angle = Math.random() * Math.PI * 2;
+  birdFrom.set(
+    target.x + Math.sin(angle) * 2.2,
+    target.y + 0.9 + Math.random() * 0.5,
+    target.z + Math.cos(angle) * 2.2
+  );
+  birdPerchTime = perchSeconds;
+  birdState = 'approach';
+  birdT = 0;
+  bird.visible = true;
+}
+
+function updateBird(dt) {
+  if (birdState === 'offstage') return;
+  birdFlap += dt * 16;
+  const flap = Math.sin(birdFlap) * (birdState === 'perched' ? 0.25 : 1);
+  bird.userData.leftWing.rotation.z = flap * 0.85;
+  bird.userData.rightWing.rotation.z = -flap * 0.85;
+
+  const target = shoulderAnchor();
+  if (!target) { birdState = 'offstage'; bird.visible = false; return; }
+
+  if (birdState === 'approach') {
+    birdT += dt / BIRD_APPROACH_TIME;
+    const t = Math.min(1, birdT);
+    const eased = 1 - (1 - t) ** 3;
+    bird.position.lerpVectors(birdFrom, target, eased);
+    bird.position.y += Math.sin(t * Math.PI) * 0.22; // a little arc on the way in
+    bird.lookAt(target.x, bird.position.y, target.z);
+    if (t >= 1) { birdState = 'perched'; birdT = 0; }
+  } else if (birdState === 'perched') {
+    bird.position.copy(target);
+    bird.position.y += Math.sin(performance.now() * 0.004) * 0.006; // idle bob
+    bird.lookAt(target.x, target.y - 0.3, target.z + 0.6);
+    birdT += dt;
+    if (birdT >= birdPerchTime) {
+      birdTo.set(target.x + (Math.random() - 0.5) * 2, target.y + 2.4, target.z + (Math.random() - 0.5) * 2);
+      birdFrom.copy(target);
+      birdState = 'depart';
+      birdT = 0;
+    }
+  } else if (birdState === 'depart') {
+    birdT += dt / BIRD_DEPART_TIME;
+    const t = Math.min(1, birdT);
+    bird.position.lerpVectors(birdFrom, birdTo, t * t);
+    bird.lookAt(birdTo.x, birdTo.y, birdTo.z);
+    if (t >= 1) { birdState = 'offstage'; bird.visible = false; }
+  }
+}
+
 function startDirector() {
   directorActive = true;
   directorPoseBag = makeShuffleBag(DIRECTOR_POSES);
@@ -387,27 +556,48 @@ function startDirector() {
   directorExpressionBag = makeShuffleBag([...Object.values(FACE_KEYS), null]);
   directorPoseTimer = 0;
   directorExpressionTimer = 0;
+  pendingMoment = null;
 }
 
 function stopDirector() {
   directorActive = false;
   setPoseKeys('idle');
   heldExpression = null;
+  pendingMoment = null;
+  birdState = 'offstage';
+  bird.visible = false;
 }
 
 function runDirector(dt) {
-  directorPoseTimer -= dt;
-  if (directorPoseTimer <= 0) {
-    const next = directorPoseBag.next();
-    setPoseKeys(next);
-    const [lo, hi] = poseHoldRange(next);
-    directorPoseTimer = randRange(lo, hi);
+  if (pendingMoment) {
+    pendingMoment.remaining -= dt;
+    // Time the approach to land exactly as the moment fires.
+    if (!pendingMoment.birdArmed && pendingMoment.remaining <= BIRD_APPROACH_TIME) {
+      startBirdVisit(pendingMoment.holdDuration);
+      pendingMoment.birdArmed = true;
+    }
+    if (pendingMoment.remaining <= 0) {
+      setPoseKeys(pendingMoment.pose);
+      heldExpression = pendingMoment.expression;
+      directorPoseTimer = pendingMoment.holdDuration;
+      directorExpressionTimer = pendingMoment.holdDuration;
+      pendingMoment = null;
+    }
+  } else {
+    directorPoseTimer -= dt;
+    if (directorPoseTimer <= 0) {
+      const next = directorPoseBag.next();
+      setPoseKeys(next);
+      const [lo, hi] = poseHoldRange(next);
+      directorPoseTimer = randRange(lo, hi);
+    }
+    directorExpressionTimer -= dt;
+    if (directorExpressionTimer <= 0) {
+      heldExpression = directorExpressionBag.next();
+      directorExpressionTimer = randRange(...DIRECTOR_EXPRESSION_HOLD);
+    }
   }
-  directorExpressionTimer -= dt;
-  if (directorExpressionTimer <= 0) {
-    heldExpression = directorExpressionBag.next();
-    directorExpressionTimer = randRange(...DIRECTOR_EXPRESSION_HOLD);
-  }
+  updateBird(dt);
 }
 
 const stateLabel = document.getElementById('anim-state');
@@ -680,6 +870,7 @@ CHARACTER_SOURCES.forEach((source, index) => {
         takeBurst,
         encodeFrame,
         setDirectorActive: (on) => { if (on) startDirector(); else stopDirector(); },
+        scheduleMoment,
       });
     }
   }, (err) => {
@@ -1598,18 +1789,24 @@ function encodeFrame(frame) {
 // A burst, the way a phone shoots a moving subject: hold it down, get a run of
 // frames, keep the one that caught the moment.
 //
-// Measured in seconds, not in frames — the third time this lesson has come up
-// in this file. A twelve-frame burst is a fifth of a second on a fast machine
+// Both the spacing between frames and the run's length are measured in
+// seconds, not in frames — the third time this lesson has come up in this
+// file. A count tied to frames alone is a fifth of a second on a fast machine
 // and seven seconds on a slow one, which is not the same photograph at all;
-// this way the burst covers the same slice of the dance either way, and a slow
-// device gets fewer frames of it rather than a different moment.
-const BURST_SECONDS = 0.6;
+// this way a slow device gets fewer frames of the same slice of time rather
+// than a different slice.
+//
+// The frame count is the player's choice (BURST_OPTIONS in game.js) and, at
+// this fixed spacing, decides how long the burst runs: a short burst is a
+// quick, easy-to-review handful of frames, a long one covers more time and
+// forgives worse timing, at the cost of more frames to review afterward.
+const BURST_SPACING = 0.05;
 let burst = null;
 
 function takeBurst(maxFrames, callback) {
   burst = {
     frames: [], callback, maxFrames, elapsed: 0, sinceFrame: Infinity,
-    spacing: BURST_SECONDS / maxFrames,
+    duration: maxFrames * BURST_SPACING,
   };
 }
 
@@ -1638,11 +1835,11 @@ function animate() {
   if (burst) {
     burst.elapsed += dt;
     burst.sinceFrame += dt;
-    if (burst.sinceFrame >= burst.spacing && burst.frames.length < burst.maxFrames) {
+    if (burst.sinceFrame >= BURST_SPACING && burst.frames.length < burst.maxFrames) {
       burst.sinceFrame = 0;
       burst.frames.push(captureFrame({ measureLuma: false, maxEdge: BURST_MAX_EDGE }));
     }
-    if (burst.elapsed >= BURST_SECONDS || burst.frames.length >= burst.maxFrames) {
+    if (burst.elapsed >= burst.duration || burst.frames.length >= burst.maxFrames) {
       const finished = burst;
       burst = null;
       finished.callback(finished.frames);
@@ -1788,6 +1985,11 @@ window.__char = {
   // Where the sun actually ended up, so a light-direction measurement can be
   // checked against the thing itself rather than against the angle asked for.
   getSunForTest: () => ({ x: sun.position.x, y: sun.position.y, z: sun.position.z }),
+  getBirdStateForTest: () => ({
+    state: birdState, visible: bird.visible,
+    position: { x: bird.position.x, y: bird.position.y, z: bird.position.z },
+  }),
+  getPendingMomentForTest: () => (pendingMoment ? { ...pendingMoment } : null),
   // Lets a test hold her heading still. Only the gaze tests want this: they
   // put the camera at a known angle off her facing, which she would otherwise
   // turn to cancel out.

@@ -31809,7 +31809,12 @@ void main() {
     { key: "dance", label: "\u30C0\u30F3\u30B9" }
   ];
   var DANCE_PEAK_REACH = 0.15;
-  var BURST_FRAMES = 12;
+  var BURST_OPTIONS = [
+    { frames: 6, label: "6\u679A" },
+    { frames: 12, label: "12\u679A" },
+    { frames: 24, label: "24\u679A" }
+  ];
+  var DEFAULT_BURST_FRAMES = 12;
   var EXPRESSIONS = [
     { key: "happy", label: "\u7B11\u9854" },
     { key: "relaxed", label: "\u306B\u3063\u3053\u308A" },
@@ -31819,8 +31824,6 @@ void main() {
     { key: "Extra", label: ">_<" }
   ];
   var FRAMINGS = [
-    { key: "close", label: "\u5BC4\u308A", min: 0.13, max: 0.25 },
-    // ~1.3m and closer
     { key: "medium", label: "\u6A19\u6E96", min: 0.055, max: 0.105 },
     // ~2m to 3m
     { key: "wide", label: "\u5F15\u304D", min: 0.02, max: 0.04 }
@@ -31988,6 +31991,8 @@ void main() {
    are reached by class rather than redrawn here. */
 body.pg-directed .pg-manual-hint { opacity: 0.32; }
 .pg-cast { display: flex; gap: 6px; margin-top: 10px; }
+.pg-burstpick { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.pg-burstpick-label { font-size: 11px; color: #8b93a7; white-space: nowrap; }
 .pg-pick { flex: 1; padding: 8px 0; font: inherit; font-size: 13px; font-weight: 600;
   color: #8b93a7; background: #0c0e14; border: 1px solid #2a3040; border-radius: 6px;
   cursor: pointer; }
@@ -32003,11 +32008,28 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
 .pg-shutter:active { transform: translateX(-50%) scale(0.94); }
 .pg-burst { display: flex; align-items: center; justify-content: center; }
 .pg-burst-label { font-size: 12px; font-weight: 700; color: #0c0e14; letter-spacing: 0.04em; }
-.pg-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 12px 0; }
-.pg-frame { padding: 0; border: 1px solid #2a3040; border-radius: 4px; background: #0c0e14;
-  cursor: pointer; overflow: hidden; line-height: 0; }
+/* The review screen: one large preview plus a horizontally scrolling strip of
+   every frame, rather than a small fixed grid -- picking the right one out of
+   a burst of frames that can look nearly identical at thumbnail size needs
+   room, and needs to be able to flip through them side by side. */
+.pg-card-wide { width: min(560px, 100%); }
+.pg-preview-wrap { position: relative; margin-bottom: 10px; }
+.pg-preview { width: 100%; max-height: 46vh; display: block; margin: 0 auto;
+  border-radius: 6px; border: 1px solid #2a3040; background: #0c0e14; }
+.pg-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 36px; height: 36px;
+  border-radius: 50%; border: 1px solid #2a3040; background: rgba(12, 14, 20, 0.75);
+  color: #e8ebf2; font-size: 20px; line-height: 1; cursor: pointer; }
+.pg-nav-prev { left: 8px; }
+.pg-nav-next { right: 8px; }
+.pg-strip { display: flex; gap: 6px; margin: 0 0 14px; padding-bottom: 2px;
+  overflow-x: auto; scroll-snap-type: x proximity; }
+.pg-frame { flex: 0 0 auto; width: 64px; padding: 0; border: 2px solid #2a3040; border-radius: 4px;
+  background: #0c0e14; cursor: pointer; overflow: hidden; line-height: 0; scroll-snap-align: center; }
 .pg-frame:hover { border-color: #ffb454; }
+.pg-frame[data-on="true"] { border-color: #ffb454; }
 .pg-frame canvas { width: 100%; display: block; }
+.pg-pick-actions { display: flex; gap: 8px; }
+.pg-pick-actions .pg-button { margin-top: 0; }
 .pg-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
 .pg-flash.pg-firing { animation: pg-flash 0.4s ease-out; }
 @keyframes pg-flash { from { opacity: 0.85; } to { opacity: 0; } }
@@ -32045,7 +32067,13 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     style.textContent = STYLE;
     document.head.appendChild(style);
     document.body.appendChild(root);
-    const session = { shots: [], request: null, burst: null, phase: "free" };
+    const session = {
+      shots: [],
+      request: null,
+      burst: null,
+      phase: "free",
+      burstFrames: DEFAULT_BURST_FRAMES
+    };
     const el = (tag, className, html) => {
       const node = document.createElement(tag);
       if (className) node.className = className;
@@ -32071,6 +32099,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
         )
       );
       panel.append(renderCastPicker());
+      panel.append(renderBurstPicker());
       const start = el("button", "pg-button", "\u64AE\u5F71\u3092\u59CB\u3081\u308B");
       start.addEventListener("click", () => {
         session.shots = [];
@@ -32080,6 +32109,20 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       });
       panel.append(start);
       root.append(panel);
+    }
+    function renderBurstPicker() {
+      const wrap = el("div", "pg-burstpick");
+      wrap.append(el("span", "pg-burstpick-label", "\u9023\u5199"));
+      for (const option of BURST_OPTIONS) {
+        const button = el("button", "pg-pick", option.label);
+        button.dataset.on = String(option.frames === session.burstFrames);
+        button.addEventListener("click", () => {
+          session.burstFrames = option.frames;
+          render();
+        });
+        wrap.append(button);
+      }
+      return wrap;
     }
     function renderCastPicker() {
       const row = el("div", "pg-cast");
@@ -32115,11 +32158,12 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       panel.append(brief);
       panel.append(el("p", "pg-count", `${session.shots.length + 1} / ${SHOTS_PER_SESSION} \u679A\u76EE`));
       panel.append(renderExposure());
+      panel.append(renderBurstPicker());
       root.append(panel);
       renderShootingChips();
       const shutter = el("button", "pg-shutter pg-burst");
       shutter.setAttribute("aria-label", "\u9023\u5199");
-      shutter.append(el("span", "pg-burst-label", "\u9023\u5199"));
+      shutter.append(el("span", "pg-burst-label", `${session.burstFrames}\u679A`));
       shutter.addEventListener("click", shootBurst);
       root.append(shutter, el("div", "pg-flash"));
     }
@@ -32231,6 +32275,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     function nextRequest() {
       session.request = makeRequest(session.shots.length + 1);
       session.phase = "shooting";
+      if (api.scheduleMoment) api.scheduleMoment(session.request.pose, session.request.expression);
       render();
     }
     function setDirector(on) {
@@ -32251,30 +32296,81 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     function shootBurst() {
       const flash = root.querySelector(".pg-flash");
       if (flash) flash.classList.add("pg-firing");
-      api.takeBurst(BURST_FRAMES, (frames) => {
+      api.takeBurst(session.burstFrames, (frames) => {
         session.burst = frames;
+        session.pickIndex = 0;
         session.phase = "picking";
         render();
       });
     }
     function renderPicking() {
       const sheet = el("div", "pg-sheet");
-      const card = el("div", "pg-card");
+      const card = el("div", "pg-card pg-card-wide");
       card.append(
         el("h2", null, "\u3069\u308C\u3092\u6B8B\u3057\u307E\u3059\u304B"),
-        el("p", null, `${session.burst.length}\u679A\u64AE\u308C\u307E\u3057\u305F\u3002\u304A\u984C\u306B\u4E00\u756A\u5408\u3063\u3066\u3044\u308B1\u679A\u3092\u9078\u3093\u3067\u304F\u3060\u3055\u3044\u3002`)
+        el("p", null, `${session.burst.length}\u679A\u64AE\u308C\u307E\u3057\u305F\u3002\u77E2\u5370\u304B\u4E0B\u306E\u4E00\u89A7\u3067\u898B\u6BD4\u3079\u3066\u3001\u4E00\u756A\u3044\u30441\u679A\u3092\u9078\u3093\u3067\u304F\u3060\u3055\u3044\u3002`)
       );
+      const previewWrap = el("div", "pg-preview-wrap");
+      const preview = document.createElement("canvas");
+      preview.className = "pg-preview";
+      const prevButton = el("button", "pg-nav pg-nav-prev", "\u2039");
+      const nextButton = el("button", "pg-nav pg-nav-next", "\u203A");
+      prevButton.setAttribute("aria-label", "\u524D\u306E\u5199\u771F");
+      nextButton.setAttribute("aria-label", "\u6B21\u306E\u5199\u771F");
+      previewWrap.append(preview, prevButton, nextButton);
+      card.append(previewWrap);
+      const counter = el("p", "pg-count", "");
+      counter.style.marginBottom = "14px";
+      card.append(counter);
       const strip = el("div", "pg-strip");
-      for (const frame of session.burst) {
+      const thumbs = session.burst.map((frame, index) => {
         const button = el("button", "pg-frame");
         button.append(frame.canvas);
         button.addEventListener("click", () => {
-          session.burst = null;
-          keep(api.encodeFrame(frame));
+          session.pickIndex = index;
+          syncPreview();
         });
         strip.append(button);
-      }
+        return button;
+      });
       card.append(strip);
+      function syncPreview() {
+        const frame = session.burst[session.pickIndex];
+        preview.width = frame.canvas.width;
+        preview.height = frame.canvas.height;
+        preview.getContext("2d").drawImage(frame.canvas, 0, 0);
+        counter.textContent = `${session.pickIndex + 1} / ${session.burst.length} \u679A\u76EE`;
+        thumbs.forEach((thumb, index) => {
+          thumb.dataset.on = String(index === session.pickIndex);
+        });
+        thumbs[session.pickIndex].scrollIntoView({ inline: "center", block: "nearest" });
+      }
+      syncPreview();
+      prevButton.addEventListener("click", () => {
+        session.pickIndex = (session.pickIndex - 1 + session.burst.length) % session.burst.length;
+        syncPreview();
+      });
+      nextButton.addEventListener("click", () => {
+        session.pickIndex = (session.pickIndex + 1) % session.burst.length;
+        syncPreview();
+      });
+      const actions = el("div", "pg-pick-actions");
+      const useThis = el("button", "pg-button pg-use", "\u3053\u306E\u5199\u771F\u306B\u3059\u308B");
+      useThis.addEventListener("click", () => {
+        const frame = session.burst[session.pickIndex];
+        session.burst = null;
+        session.pickIndex = null;
+        keep(api.encodeFrame(frame));
+      });
+      const retake = el("button", "pg-button pg-ghost", "\u64AE\u308A\u76F4\u3059");
+      retake.addEventListener("click", () => {
+        session.burst = null;
+        session.pickIndex = null;
+        session.phase = "shooting";
+        render();
+      });
+      actions.append(useThis, retake);
+      card.append(actions);
       sheet.append(card);
       root.append(sheet);
     }
@@ -32338,8 +32434,9 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       reachForTest: () => api.danceReach(),
       setDirectorForTest: (on) => setDirector(on),
       burstForTest: () => new Promise((resolve) => {
-        api.takeBurst(BURST_FRAMES, (frames) => {
+        api.takeBurst(session.burstFrames, (frames) => {
           session.burst = frames;
+          session.pickIndex = 0;
           session.phase = "picking";
           render();
           resolve(frames.map((frame, index) => ({ index, reach: frame.reach })));
@@ -32516,6 +32613,64 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     hill.position.set(Math.sin(angle) * radius, -6, Math.cos(angle) * radius);
     scene.add(hill);
   }
+  function makeWingGeometry() {
+    const geometry = new BufferGeometry();
+    const vertices = new Float32Array([
+      0,
+      0,
+      0,
+      0.11,
+      -0.01,
+      -0.03,
+      0.05,
+      5e-3,
+      -0.09
+    ]);
+    geometry.setAttribute("position", new BufferAttribute(vertices, 3));
+    geometry.computeVertexNormals();
+    return geometry;
+  }
+  function makeBird() {
+    const group = new Group();
+    const bodyMat = new MeshStandardMaterial({ color: 4878245, roughness: 0.75 });
+    const breastMat = new MeshStandardMaterial({ color: 15245898, roughness: 0.8 });
+    const beakMat = new MeshStandardMaterial({ color: 14263361, roughness: 0.6 });
+    const wingMat = new MeshStandardMaterial({ color: 3824266, roughness: 0.75, side: DoubleSide });
+    const body = new Mesh(new SphereGeometry(0.045, 8, 6), bodyMat);
+    body.scale.set(1, 0.88, 1.55);
+    group.add(body);
+    const breast = new Mesh(new SphereGeometry(0.032, 6, 5), breastMat);
+    breast.position.set(0, -0.012, 0.03);
+    breast.scale.set(0.9, 0.85, 0.9);
+    group.add(breast);
+    const head = new Mesh(new SphereGeometry(0.028, 7, 6), bodyMat);
+    head.position.set(0, 0.022, 0.065);
+    group.add(head);
+    const beak = new Mesh(new ConeGeometry(9e-3, 0.03, 5), beakMat);
+    beak.rotation.x = Math.PI / 2;
+    beak.position.set(0, 0.02, 0.09);
+    group.add(beak);
+    const leftWing = new Mesh(makeWingGeometry(), wingMat);
+    leftWing.position.set(0.02, 0.012, 0);
+    const rightWing = new Mesh(makeWingGeometry(), wingMat);
+    rightWing.position.set(-0.02, 0.012, 0);
+    rightWing.scale.x = -1;
+    group.add(leftWing, rightWing);
+    const tail = new Mesh(makeWingGeometry(), wingMat);
+    tail.position.set(0, 0, -0.06);
+    tail.rotation.y = Math.PI / 2;
+    tail.scale.setScalar(0.85);
+    group.add(tail);
+    group.userData.leftWing = leftWing;
+    group.userData.rightWing = rightWing;
+    group.visible = false;
+    group.traverse((obj) => {
+      if (obj.isMesh) obj.castShadow = true;
+    });
+    return group;
+  }
+  var bird = makeBird();
+  scene.add(bird);
   var MOVE_SPEED = 3.2;
   var RUN_SPEED = 6.6;
   var JUMP_GRAVITY = 18;
@@ -32659,31 +32814,142 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   var directorExpressionBag = null;
   var directorPoseTimer = 0;
   var directorExpressionTimer = 0;
+  var MOMENT_DELAY = [2.5, 6.5];
+  var BIRD_APPROACH_TIME = 1.1;
+  var BIRD_DEPART_TIME = 0.9;
+  var pendingMoment = null;
+  var birdState = "offstage";
+  var birdT = 0;
+  var birdPerchTime = 2.5;
+  var birdFlap = 0;
+  var birdFrom = new Vector3();
+  var birdTo = new Vector3();
+  function scheduleMoment(pose, expression) {
+    if (!DIRECTOR_POSES.includes(pose)) {
+      pendingMoment = null;
+      return;
+    }
+    const [lo, hi] = poseHoldRange(pose);
+    pendingMoment = {
+      pose,
+      expression,
+      birdArmed: false,
+      remaining: randRange(...MOMENT_DELAY),
+      holdDuration: randRange(lo, hi)
+    };
+  }
+  function shoulderAnchor() {
+    const node = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode("rightShoulder") : null;
+    if (!node) return null;
+    node.updateWorldMatrix(true, false);
+    const base = new Vector3().setFromMatrixPosition(node.matrixWorld);
+    const outward = new Vector3(1, 0, 0).applyQuaternion(new Quaternion().setFromRotationMatrix(node.matrixWorld)).normalize();
+    return base.addScaledVector(outward, 0.1).add(new Vector3(0, 0.05, 0.01));
+  }
+  function startBirdVisit(perchSeconds) {
+    const target = shoulderAnchor();
+    if (!target) return;
+    const angle = Math.random() * Math.PI * 2;
+    birdFrom.set(
+      target.x + Math.sin(angle) * 2.2,
+      target.y + 0.9 + Math.random() * 0.5,
+      target.z + Math.cos(angle) * 2.2
+    );
+    birdPerchTime = perchSeconds;
+    birdState = "approach";
+    birdT = 0;
+    bird.visible = true;
+  }
+  function updateBird(dt) {
+    if (birdState === "offstage") return;
+    birdFlap += dt * 16;
+    const flap = Math.sin(birdFlap) * (birdState === "perched" ? 0.25 : 1);
+    bird.userData.leftWing.rotation.z = flap * 0.85;
+    bird.userData.rightWing.rotation.z = -flap * 0.85;
+    const target = shoulderAnchor();
+    if (!target) {
+      birdState = "offstage";
+      bird.visible = false;
+      return;
+    }
+    if (birdState === "approach") {
+      birdT += dt / BIRD_APPROACH_TIME;
+      const t = Math.min(1, birdT);
+      const eased = 1 - (1 - t) ** 3;
+      bird.position.lerpVectors(birdFrom, target, eased);
+      bird.position.y += Math.sin(t * Math.PI) * 0.22;
+      bird.lookAt(target.x, bird.position.y, target.z);
+      if (t >= 1) {
+        birdState = "perched";
+        birdT = 0;
+      }
+    } else if (birdState === "perched") {
+      bird.position.copy(target);
+      bird.position.y += Math.sin(performance.now() * 4e-3) * 6e-3;
+      bird.lookAt(target.x, target.y - 0.3, target.z + 0.6);
+      birdT += dt;
+      if (birdT >= birdPerchTime) {
+        birdTo.set(target.x + (Math.random() - 0.5) * 2, target.y + 2.4, target.z + (Math.random() - 0.5) * 2);
+        birdFrom.copy(target);
+        birdState = "depart";
+        birdT = 0;
+      }
+    } else if (birdState === "depart") {
+      birdT += dt / BIRD_DEPART_TIME;
+      const t = Math.min(1, birdT);
+      bird.position.lerpVectors(birdFrom, birdTo, t * t);
+      bird.lookAt(birdTo.x, birdTo.y, birdTo.z);
+      if (t >= 1) {
+        birdState = "offstage";
+        bird.visible = false;
+      }
+    }
+  }
   function startDirector() {
     directorActive = true;
     directorPoseBag = makeShuffleBag(DIRECTOR_POSES);
     directorExpressionBag = makeShuffleBag([...Object.values(FACE_KEYS), null]);
     directorPoseTimer = 0;
     directorExpressionTimer = 0;
+    pendingMoment = null;
   }
   function stopDirector() {
     directorActive = false;
     setPoseKeys("idle");
     heldExpression = null;
+    pendingMoment = null;
+    birdState = "offstage";
+    bird.visible = false;
   }
   function runDirector(dt) {
-    directorPoseTimer -= dt;
-    if (directorPoseTimer <= 0) {
-      const next = directorPoseBag.next();
-      setPoseKeys(next);
-      const [lo, hi] = poseHoldRange(next);
-      directorPoseTimer = randRange(lo, hi);
+    if (pendingMoment) {
+      pendingMoment.remaining -= dt;
+      if (!pendingMoment.birdArmed && pendingMoment.remaining <= BIRD_APPROACH_TIME) {
+        startBirdVisit(pendingMoment.holdDuration);
+        pendingMoment.birdArmed = true;
+      }
+      if (pendingMoment.remaining <= 0) {
+        setPoseKeys(pendingMoment.pose);
+        heldExpression = pendingMoment.expression;
+        directorPoseTimer = pendingMoment.holdDuration;
+        directorExpressionTimer = pendingMoment.holdDuration;
+        pendingMoment = null;
+      }
+    } else {
+      directorPoseTimer -= dt;
+      if (directorPoseTimer <= 0) {
+        const next = directorPoseBag.next();
+        setPoseKeys(next);
+        const [lo, hi] = poseHoldRange(next);
+        directorPoseTimer = randRange(lo, hi);
+      }
+      directorExpressionTimer -= dt;
+      if (directorExpressionTimer <= 0) {
+        heldExpression = directorExpressionBag.next();
+        directorExpressionTimer = randRange(...DIRECTOR_EXPRESSION_HOLD);
+      }
     }
-    directorExpressionTimer -= dt;
-    if (directorExpressionTimer <= 0) {
-      heldExpression = directorExpressionBag.next();
-      directorExpressionTimer = randRange(...DIRECTOR_EXPRESSION_HOLD);
-    }
+    updateBird(dt);
   }
   var stateLabel = document.getElementById("state-label");
   var loadingEl = document.getElementById("loading");
@@ -32915,7 +33181,8 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
           setDirectorActive: (on) => {
             if (on) startDirector();
             else stopDirector();
-          }
+          },
+          scheduleMoment
         });
       }
     }, (err) => {
@@ -33446,7 +33713,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     if (!frame.dataUrl) frame.dataUrl = frame.canvas.toDataURL("image/jpeg", 0.85);
     return frame;
   }
-  var BURST_SECONDS = 0.6;
+  var BURST_SPACING = 0.05;
   var burst = null;
   function takeBurst(maxFrames, callback) {
     burst = {
@@ -33455,7 +33722,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       maxFrames,
       elapsed: 0,
       sinceFrame: Infinity,
-      spacing: BURST_SECONDS / maxFrames
+      duration: maxFrames * BURST_SPACING
     };
   }
   var paused = false;
@@ -33474,11 +33741,11 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     if (burst) {
       burst.elapsed += dt;
       burst.sinceFrame += dt;
-      if (burst.sinceFrame >= burst.spacing && burst.frames.length < burst.maxFrames) {
+      if (burst.sinceFrame >= BURST_SPACING && burst.frames.length < burst.maxFrames) {
         burst.sinceFrame = 0;
         burst.frames.push(captureFrame({ measureLuma: false, maxEdge: BURST_MAX_EDGE }));
       }
-      if (burst.elapsed >= BURST_SECONDS || burst.frames.length >= burst.maxFrames) {
+      if (burst.elapsed >= burst.duration || burst.frames.length >= burst.maxFrames) {
         const finished = burst;
         burst = null;
         finished.callback(finished.frames);
@@ -33620,6 +33887,12 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     // Where the sun actually ended up, so a light-direction measurement can be
     // checked against the thing itself rather than against the angle asked for.
     getSunForTest: () => ({ x: sun.position.x, y: sun.position.y, z: sun.position.z }),
+    getBirdStateForTest: () => ({
+      state: birdState,
+      visible: bird.visible,
+      position: { x: bird.position.x, y: bird.position.y, z: bird.position.z }
+    }),
+    getPendingMomentForTest: () => pendingMoment ? { ...pendingMoment } : null,
     // Lets a test hold her heading still. Only the gaze tests want this: they
     // put the camera at a known angle off her facing, which she would otherwise
     // turn to cancel out.

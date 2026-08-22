@@ -27,7 +27,18 @@ export const POSES = [
 // threshold is met on about 8% of frames — a sixth of a second in a
 // two-and-a-bit second loop, which is roughly the window a burst covers.
 export const DANCE_PEAK_REACH = 0.15;
-const BURST_FRAMES = 12;
+
+// How many frames a burst takes, player's choice. Spacing is held constant
+// across the options (about 20 frames/second) rather than the total window,
+// so "few" is a quick, short burst and "many" is a longer one that covers
+// more time -- not the same half-second sampled at different resolutions.
+export const BURST_OPTIONS = [
+  { frames: 6, label: '6枚' },
+  { frames: 12, label: '12枚' },
+  { frames: 24, label: '24枚' },
+];
+const BURST_SPACING = 0.05;
+const DEFAULT_BURST_FRAMES = 12;
 
 export const EXPRESSIONS = [
   { key: 'happy', label: '笑顔' },
@@ -40,12 +51,16 @@ export const EXPRESSIONS = [
 
 // How much of the frame's height her head should fill. Measured off the real
 // projection rather than picked out of the air -- tools/measure_framing.js
-// prints the number at a range of camera distances, and the camera can reach
-// 23% of the frame at its closest and 1.6% at its furthest. The bands sit
-// inside that with gaps between them, so landing one means you framed it
-// rather than happened to be nearby.
+// prints the number at a range of camera distances.
+//
+// A third band asking for a tight close-up used to sit here too. Getting the
+// head that large in frame meant the camera at ~1.3m or closer, which is
+// closer than the model reads well at -- the texture resolution and the
+// toon shading are tuned for a normal portrait distance, not a beauty shot,
+// and it looked wrong rather than intimate. Removed rather than patched: it
+// is not a fidelity problem worth solving here, just a distance not to ask
+// the player to go to.
 export const FRAMINGS = [
-  { key: 'close', label: '寄り', min: 0.130, max: 0.250 },   // ~1.3m and closer
   { key: 'medium', label: '標準', min: 0.055, max: 0.105 },  // ~2m to 3m
   { key: 'wide', label: '引き', min: 0.020, max: 0.040 },    // ~4m to 8.5m
 ];
@@ -248,6 +263,8 @@ const STYLE = `
    are reached by class rather than redrawn here. */
 body.pg-directed .pg-manual-hint { opacity: 0.32; }
 .pg-cast { display: flex; gap: 6px; margin-top: 10px; }
+.pg-burstpick { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.pg-burstpick-label { font-size: 11px; color: #8b93a7; white-space: nowrap; }
 .pg-pick { flex: 1; padding: 8px 0; font: inherit; font-size: 13px; font-weight: 600;
   color: #8b93a7; background: #0c0e14; border: 1px solid #2a3040; border-radius: 6px;
   cursor: pointer; }
@@ -263,11 +280,28 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
 .pg-shutter:active { transform: translateX(-50%) scale(0.94); }
 .pg-burst { display: flex; align-items: center; justify-content: center; }
 .pg-burst-label { font-size: 12px; font-weight: 700; color: #0c0e14; letter-spacing: 0.04em; }
-.pg-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 12px 0; }
-.pg-frame { padding: 0; border: 1px solid #2a3040; border-radius: 4px; background: #0c0e14;
-  cursor: pointer; overflow: hidden; line-height: 0; }
+/* The review screen: one large preview plus a horizontally scrolling strip of
+   every frame, rather than a small fixed grid -- picking the right one out of
+   a burst of frames that can look nearly identical at thumbnail size needs
+   room, and needs to be able to flip through them side by side. */
+.pg-card-wide { width: min(560px, 100%); }
+.pg-preview-wrap { position: relative; margin-bottom: 10px; }
+.pg-preview { width: 100%; max-height: 46vh; display: block; margin: 0 auto;
+  border-radius: 6px; border: 1px solid #2a3040; background: #0c0e14; }
+.pg-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 36px; height: 36px;
+  border-radius: 50%; border: 1px solid #2a3040; background: rgba(12, 14, 20, 0.75);
+  color: #e8ebf2; font-size: 20px; line-height: 1; cursor: pointer; }
+.pg-nav-prev { left: 8px; }
+.pg-nav-next { right: 8px; }
+.pg-strip { display: flex; gap: 6px; margin: 0 0 14px; padding-bottom: 2px;
+  overflow-x: auto; scroll-snap-type: x proximity; }
+.pg-frame { flex: 0 0 auto; width: 64px; padding: 0; border: 2px solid #2a3040; border-radius: 4px;
+  background: #0c0e14; cursor: pointer; overflow: hidden; line-height: 0; scroll-snap-align: center; }
 .pg-frame:hover { border-color: #ffb454; }
+.pg-frame[data-on="true"] { border-color: #ffb454; }
 .pg-frame canvas { width: 100%; display: block; }
+.pg-pick-actions { display: flex; gap: 8px; }
+.pg-pick-actions .pg-button { margin-top: 0; }
 .pg-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
 .pg-flash.pg-firing { animation: pg-flash 0.4s ease-out; }
 @keyframes pg-flash { from { opacity: 0.85; } to { opacity: 0; } }
@@ -310,7 +344,9 @@ export function initPhotoGame(api) {
   // Starts in 'free' rather than behind a title card: the page is a character
   // sandbox as well as a game, and a modal over the canvas on load takes the
   // camera drag away from anyone who just wants to look at her.
-  const session = { shots: [], request: null, burst: null, phase: 'free' };
+  const session = {
+    shots: [], request: null, burst: null, phase: 'free', burstFrames: DEFAULT_BURST_FRAMES,
+  };
 
   const el = (tag, className, html) => {
     const node = document.createElement(tag);
@@ -336,6 +372,7 @@ export function initPhotoGame(api) {
         `彼女は自分のペースでポーズや表情を変えていきます。お題に合う瞬間を逃さず、${SHOTS_PER_SESSION}枚撮ってください。`),
     );
     panel.append(renderCastPicker());
+    panel.append(renderBurstPicker());
     const start = el('button', 'pg-button', '撮影を始める');
     start.addEventListener('click', () => {
       session.shots = [];
@@ -345,6 +382,24 @@ export function initPhotoGame(api) {
     });
     panel.append(start);
     root.append(panel);
+  }
+
+  // How many frames the next shutter press takes. Offered both before a
+  // session starts and while shooting, since the right choice can depend on
+  // the pose -- a still peace sign barely needs it, a dance benefits from more.
+  function renderBurstPicker() {
+    const wrap = el('div', 'pg-burstpick');
+    wrap.append(el('span', 'pg-burstpick-label', '連写'));
+    for (const option of BURST_OPTIONS) {
+      const button = el('button', 'pg-pick', option.label);
+      button.dataset.on = String(option.frames === session.burstFrames);
+      button.addEventListener('click', () => {
+        session.burstFrames = option.frames;
+        render();
+      });
+      wrap.append(button);
+    }
+    return wrap;
   }
 
   // Only offered between sessions: swapping the model mid-brief would reset
@@ -382,6 +437,7 @@ export function initPhotoGame(api) {
     panel.append(brief);
     panel.append(el('p', 'pg-count', `${session.shots.length + 1} / ${SHOTS_PER_SESSION} 枚目`));
     panel.append(renderExposure());
+    panel.append(renderBurstPicker());
     root.append(panel);
     renderShootingChips();
 
@@ -390,7 +446,7 @@ export function initPhotoGame(api) {
     // is the forgiveness for that, not a special case for one pose.
     const shutter = el('button', 'pg-shutter pg-burst');
     shutter.setAttribute('aria-label', '連写');
-    shutter.append(el('span', 'pg-burst-label', '連写'));
+    shutter.append(el('span', 'pg-burst-label', `${session.burstFrames}枚`));
     shutter.addEventListener('click', shootBurst);
     root.append(shutter, el('div', 'pg-flash'));
   }
@@ -513,6 +569,10 @@ export function initPhotoGame(api) {
   function nextRequest() {
     session.request = makeRequest(session.shots.length + 1);
     session.phase = 'shooting';
+    // Guarantees the brief's exact pose+expression happens soon rather than
+    // whenever the two independent cycles happen to coincide -- see the
+    // director in main.js. Every brief gets its own countdown.
+    if (api.scheduleMoment) api.scheduleMoment(session.request.pose, session.request.expression);
     render();
   }
 
@@ -548,8 +608,9 @@ export function initPhotoGame(api) {
   function shootBurst() {
     const flash = root.querySelector('.pg-flash');
     if (flash) flash.classList.add('pg-firing');
-    api.takeBurst(BURST_FRAMES, (frames) => {
+    api.takeBurst(session.burstFrames, (frames) => {
       session.burst = frames;
+      session.pickIndex = 0;
       session.phase = 'picking';
       render();
     });
@@ -557,24 +618,83 @@ export function initPhotoGame(api) {
 
   function renderPicking() {
     const sheet = el('div', 'pg-sheet');
-    const card = el('div', 'pg-card');
+    const card = el('div', 'pg-card pg-card-wide');
     card.append(
       el('h2', null, 'どれを残しますか'),
-      el('p', null, `${session.burst.length}枚撮れました。お題に一番合っている1枚を選んでください。`),
+      el('p', null, `${session.burst.length}枚撮れました。矢印か下の一覧で見比べて、一番いい1枚を選んでください。`),
     );
+
+    const previewWrap = el('div', 'pg-preview-wrap');
+    const preview = document.createElement('canvas');
+    preview.className = 'pg-preview';
+    const prevButton = el('button', 'pg-nav pg-nav-prev', '‹');
+    const nextButton = el('button', 'pg-nav pg-nav-next', '›');
+    prevButton.setAttribute('aria-label', '前の写真');
+    nextButton.setAttribute('aria-label', '次の写真');
+    previewWrap.append(preview, prevButton, nextButton);
+    card.append(previewWrap);
+
+    const counter = el('p', 'pg-count', '');
+    counter.style.marginBottom = '14px';
+    card.append(counter);
+
     const strip = el('div', 'pg-strip');
-    for (const frame of session.burst) {
+    const thumbs = session.burst.map((frame, index) => {
       const button = el('button', 'pg-frame');
-      // The frames are canvases, not images: encoding twelve JPEGs to show
-      // twelve thumbnails would cost more than the burst did.
+      // The frames are canvases, not images: encoding every one of them to
+      // JPEG just to show a thumbnail would cost more than the burst did.
       button.append(frame.canvas);
-      button.addEventListener('click', () => {
-        session.burst = null;
-        keep(api.encodeFrame(frame));
-      });
+      button.addEventListener('click', () => { session.pickIndex = index; syncPreview(); });
       strip.append(button);
-    }
+      return button;
+    });
     card.append(strip);
+
+    // The preview is a second canvas redrawn from whichever frame is
+    // selected, rather than moving that frame's own canvas element into it --
+    // a canvas can only be in one place in the DOM, and the filmstrip needs
+    // to keep showing it too. Blitting is a cheap GPU copy, unlike encoding.
+    function syncPreview() {
+      const frame = session.burst[session.pickIndex];
+      preview.width = frame.canvas.width;
+      preview.height = frame.canvas.height;
+      preview.getContext('2d').drawImage(frame.canvas, 0, 0);
+      counter.textContent = `${session.pickIndex + 1} / ${session.burst.length} 枚目`;
+      thumbs.forEach((thumb, index) => { thumb.dataset.on = String(index === session.pickIndex); });
+      thumbs[session.pickIndex].scrollIntoView({ inline: 'center', block: 'nearest' });
+    }
+    syncPreview();
+
+    prevButton.addEventListener('click', () => {
+      session.pickIndex = (session.pickIndex - 1 + session.burst.length) % session.burst.length;
+      syncPreview();
+    });
+    nextButton.addEventListener('click', () => {
+      session.pickIndex = (session.pickIndex + 1) % session.burst.length;
+      syncPreview();
+    });
+
+    const actions = el('div', 'pg-pick-actions');
+    const useThis = el('button', 'pg-button pg-use', 'この写真にする');
+    useThis.addEventListener('click', () => {
+      const frame = session.burst[session.pickIndex];
+      session.burst = null;
+      session.pickIndex = null;
+      keep(api.encodeFrame(frame));
+    });
+    // None of the frames caught it: go back and shoot again rather than being
+    // forced to keep a bad one. Does not consume a shot -- the counter and
+    // the brief are unchanged, only the burst is thrown away.
+    const retake = el('button', 'pg-button pg-ghost', '撮り直す');
+    retake.addEventListener('click', () => {
+      session.burst = null;
+      session.pickIndex = null;
+      session.phase = 'shooting';
+      render();
+    });
+    actions.append(useThis, retake);
+    card.append(actions);
+
     sheet.append(card);
     root.append(sheet);
   }
@@ -648,8 +768,9 @@ export function initPhotoGame(api) {
     reachForTest: () => api.danceReach(),
     setDirectorForTest: (on) => setDirector(on),
     burstForTest: () => new Promise((resolve) => {
-      api.takeBurst(BURST_FRAMES, (frames) => {
+      api.takeBurst(session.burstFrames, (frames) => {
         session.burst = frames;
+        session.pickIndex = 0;
         session.phase = 'picking';
         render();
         resolve(frames.map((frame, index) => ({ index, reach: frame.reach })));

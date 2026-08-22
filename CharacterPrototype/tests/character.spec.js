@@ -557,14 +557,14 @@ test('the wrong pose cannot buy stars with good framing', async ({ page }) => {
 });
 
 test('the framing bands tell a tight shot from a loose one', async ({ page }) => {
-  const close = await shootOnBrief(page,
-    { pose: 'peace', expression: 'happy', framing: 'close' },
-    { pose: 'KeyV', expression: 'Digit1', metres: 1.2 });
+  const onBand = await shootOnBrief(page,
+    { pose: 'peace', expression: 'happy', framing: 'medium' },
+    { pose: 'KeyV', expression: 'Digit1', metres: 2.4 });
   const tooFar = await shootOnBrief(page,
-    { pose: 'peace', expression: 'happy', framing: 'close' },
-    { pose: 'KeyV', expression: 'Digit1', metres: 5.0 });
+    { pose: 'peace', expression: 'happy', framing: 'medium' },
+    { pose: 'KeyV', expression: 'Digit1', metres: 6.0 });
 
-  expect(close.score.parts.find((part) => part.key === 'framing').ok).toBe(true);
+  expect(onBand.score.parts.find((part) => part.key === 'framing').ok).toBe(true);
   expect(tooFar.score.parts.find((part) => part.key === 'framing').ok).toBe(false);
 });
 
@@ -748,9 +748,11 @@ test('a session runs three shots and ends in an album', async ({ page }) => {
     await page.locator('.pg-shutter').click();
     // Every shot is a burst now: wait for the picker rather than checking the
     // phase synchronously right after the click, which raced the burst still
-    // being in flight (it runs over ~0.6s of real time, not instantly).
+    // being in flight (it runs over real time, not instantly). Picking a
+    // frame only selects it for preview now; ".pg-use" is the actual keep.
     await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
     await page.locator('.pg-frame').first().click();
+    await page.locator('.pg-use').click();
     await expect(page.locator('.pg-stars')).toBeVisible();
     expect(await page.evaluate(() => window.__game.getShots())).toHaveLength(shot);
     await page.locator('.pg-card .pg-button').first().click();
@@ -758,6 +760,116 @@ test('a session runs three shots and ends in an album', async ({ page }) => {
 
   expect(await page.evaluate(() => window.__game.getPhase())).toBe('album');
   await expect(page.locator('.pg-album img')).toHaveCount(3);
+});
+
+test('the framing brief never asks for the close-up band', async ({ page }) => {
+  // Close-up looked wrong at the distance it required and was removed rather
+  // than fixed -- this checks it actually stopped being offered, over enough
+  // rolls that a lingering 'close' would show up.
+  const framings = new Set();
+  for (let i = 0; i < 40; i++) {
+    await page.evaluate(() => window.__game.startForTest());
+    framings.add((await page.evaluate(() => window.__game.getRequest())).framing);
+  }
+  expect(framings.has('close')).toBe(false);
+  expect(framings.size).toBeGreaterThan(1); // still varies between the remaining bands
+});
+
+test('the brief\'s exact pose and expression are guaranteed to happen soon, not left to coincidence', async ({ page }) => {
+  test.setTimeout(30000);
+  await page.getByRole('button', { name: '撮影を始める' }).click();
+  const request = await page.evaluate(() => window.__game.getRequest());
+
+  // The moment is scheduled within a bounded delay (main.js: MOMENT_DELAY,
+  // 2.5-6.5s) rather than waiting on two independent cycles to coincide,
+  // which is the bug this fixes: a fresh session used to be able to run for
+  // many pose/expression cycles without the requested pair ever lining up.
+  let matched = false;
+  for (let i = 0; i < 30 && !matched; i++) {
+    const state = await page.evaluate(() => window.__char.getState());
+    if (state.animName === request.pose && state.expression === request.expression
+      && state.expressionWeight >= 0.6) {
+      matched = true;
+    }
+    await page.waitForTimeout(300); // ~9s total, comfortably past the 6.5s ceiling
+  }
+  expect(matched, `looking for pose=${request.pose} expression=${request.expression}`).toBe(true);
+});
+
+test('a bird telegraphs the guaranteed moment, landing as it fires and leaving as it ends', async ({ page }) => {
+  test.setTimeout(30000);
+  await page.getByRole('button', { name: '撮影を始める' }).click();
+  const request = await page.evaluate(() => window.__game.getRequest());
+
+  let perchedAtMatch = null;
+  let sawApproach = false;
+  for (let i = 0; i < 30; i++) {
+    const bird = await page.evaluate(() => window.__char.getBirdStateForTest());
+    if (bird.state === 'approach') sawApproach = true;
+    if (bird.state === 'perched' && perchedAtMatch === null) {
+      const state = await page.evaluate(() => window.__char.getState());
+      perchedAtMatch = state.animName === request.pose && state.expression === request.expression;
+    }
+    await page.waitForTimeout(300);
+  }
+
+  expect(sawApproach, 'the bird flew in ahead of the moment').toBe(true);
+  expect(perchedAtMatch, 'she was on-brief while the bird was perched').toBe(true);
+
+  // It does not linger once the moment it was telegraphing has passed.
+  let sawOffstageAgain = false;
+  for (let i = 0; i < 40; i++) {
+    if ((await page.evaluate(() => window.__char.getBirdStateForTest())).state === 'offstage') {
+      sawOffstageAgain = true;
+      break;
+    }
+    await page.waitForTimeout(300);
+  }
+  expect(sawOffstageAgain, 'the bird left again after its visit').toBe(true);
+});
+
+test('the burst frame count is the player\'s choice and the shutter honours it', async ({ page }) => {
+  test.setTimeout(30000);
+  await page.getByRole('button', { name: '撮影を始める' }).click();
+
+  // The chosen count is a ceiling, not a promise: a frame needs an actual
+  // render in between captures, so a slow renderer can come in under it (see
+  // the BURST_SPACING comment in main.js). What has to hold regardless of
+  // speed is that the count never exceeds what was asked for, and that
+  // asking for more frames gets at least as many.
+  await page.getByRole('button', { name: '6枚' }).click();
+  await page.locator('.pg-shutter').click();
+  await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
+  const smallCount = await page.locator('.pg-frame').count();
+  expect(smallCount).toBeGreaterThan(0);
+  expect(smallCount).toBeLessThanOrEqual(6);
+
+  await page.getByRole('button', { name: '撮り直す' }).click();
+  await page.getByRole('button', { name: '24枚' }).click();
+  await page.locator('.pg-shutter').click();
+  await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
+  const largeCount = await page.locator('.pg-frame').count();
+  expect(largeCount).toBeLessThanOrEqual(24);
+  expect(largeCount).toBeGreaterThanOrEqual(smallCount);
+});
+
+test('retaking a burst discards it without spending a shot', async ({ page }) => {
+  test.setTimeout(30000);
+  await page.getByRole('button', { name: '撮影を始める' }).click();
+  await page.locator('.pg-shutter').click();
+  await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
+
+  await page.getByRole('button', { name: '撮り直す' }).click();
+  expect(await page.evaluate(() => window.__game.getPhase())).toBe('shooting');
+  expect(await page.evaluate(() => window.__game.getShots())).toHaveLength(0);
+
+  // A second attempt still completes normally.
+  await page.locator('.pg-shutter').click();
+  await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
+  await page.locator('.pg-frame').first().click();
+  await page.locator('.pg-use').click();
+  await expect(page.locator('.pg-stars')).toBeVisible();
+  expect(await page.evaluate(() => window.__game.getShots())).toHaveLength(1);
 });
 
 // How far off the camera she is standing, in degrees, measured rather than
