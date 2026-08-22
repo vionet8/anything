@@ -232,9 +232,16 @@ const FACE_KEYS = {
 };
 let heldExpression = null;
 
+// While the director is running the show (during a photo session), pose and
+// expression keys are hers, not yours -- the whole point is that you cannot
+// order up the moment, only wait for it. Movement, the camera and the shutter
+// stay live throughout; only the puppet strings are cut.
+let directorActive = false;
+
 function onKey(e, down) {
   const expression = FACE_KEYS[e.code];
   if (expression) {
+    if (directorActive) return;
     // Only clear on the release of the key that set it, so rolling from one
     // expression key to the next doesn't blank the face when the first lifts.
     if (down) heldExpression = expression;
@@ -264,19 +271,19 @@ function onKey(e, down) {
       keys.run = down;
       break;
     case 'KeyE':
-      keys.wave = down;
+      if (!directorActive) keys.wave = down;
       break;
     case 'KeyC':
-      keys.crouch = down;
+      if (!directorActive) keys.crouch = down;
       break;
     case 'KeyV':
-      keys.peace = down;
+      if (!directorActive) keys.peace = down;
       break;
     case 'KeyB':
-      keys.doublePeace = down;
+      if (!directorActive) keys.doublePeace = down;
       break;
     case 'KeyR':
-      keys.dance = down;
+      if (!directorActive) keys.dance = down;
       break;
     case 'Space':
       e.preventDefault(); // stop the page from scrolling on spacebar
@@ -293,6 +300,114 @@ if (touchPad) {
   touchPad.addEventListener('touchstart', (e) => { e.preventDefault(); setTouch(true); }, { passive: false });
   touchPad.addEventListener('touchend', (e) => { e.preventDefault(); setTouch(false); }, { passive: false });
   touchPad.addEventListener('touchcancel', () => setTouch(false));
+}
+
+// ---- Director ----
+// During a photo session she runs her own routine rather than waiting on
+// keys: a pose and an expression, each held a while, changing on their own
+// clocks. The player's job moves entirely to the camera -- watch, frame, and
+// catch it -- which is also the one thing a touchscreen with no keyboard
+// could never do through key-driven poses in the first place.
+//
+// A shuffle bag rather than a fresh random pick each time: plain randomness
+// can string together an unlucky run and leave a requested pose or
+// expression waiting far longer than feels fair. A bag guarantees every
+// option turns up within one pass through it, so however unlucky the order,
+// there is a hard bound on the wait -- the same trick a lot of falling-block
+// games use to keep the piece you need from disappearing for fifty draws.
+function makeShuffleBag(items) {
+  let deck = [];
+  let last = null;
+  const refill = () => {
+    deck = items.slice();
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+  };
+  return {
+    next() {
+      if (deck.length === 0) refill();
+      // Swap away an immediate repeat of what she was just doing, when there
+      // is something to swap with -- otherwise two draws in a row can land on
+      // the same pose and read as nothing having changed.
+      if (deck.length > 1 && deck[deck.length - 1] === last) {
+        [deck[deck.length - 1], deck[deck.length - 2]] = [deck[deck.length - 2], deck[deck.length - 1]];
+      }
+      last = deck.pop();
+      return last;
+    },
+  };
+}
+
+const randRange = (min, max) => min + Math.random() * (max - min);
+
+function setPoseKeys(name) {
+  keys.wave = name === 'wave';
+  keys.crouch = name === 'crouch';
+  keys.peace = name === 'peace';
+  keys.doublePeace = name === 'double-peace';
+  keys.dance = name === 'dance';
+}
+
+// How long each pose is held, in seconds, drawn per visit. Dance runs long
+// enough to loop the routine more than twice, since the whole point of that
+// one is repeated shots at a peak that lasts a fraction of a second -- one
+// pass through it would often mean one chance, or none.
+const DIRECTOR_POSES = ['peace', 'double-peace', 'wave', 'crouch', 'dance', 'idle'];
+const DIRECTOR_POSE_HOLD = {
+  peace: [2.6, 4.2],
+  'double-peace': [2.6, 4.2],
+  wave: [2.2, 3.6],
+  crouch: [2.0, 3.2],
+  idle: [1.4, 2.4],
+};
+const DIRECTOR_EXPRESSION_HOLD = [1.8, 3.2];
+
+// A function rather than a table entry: DANCE_BEAT and DANCE_BARS are defined
+// further down, alongside the routine itself, and this only ever runs after
+// the whole module has finished loading -- but it would be a temporal-dead-
+// zone crash to reference them from a const initialised up here.
+function poseHoldRange(name) {
+  if (name === 'dance') return [DANCE_BEAT * DANCE_BARS * 1.9, DANCE_BEAT * DANCE_BARS * 2.7];
+  return DIRECTOR_POSE_HOLD[name];
+}
+
+let directorPoseBag = null;
+let directorExpressionBag = null;
+let directorPoseTimer = 0;
+let directorExpressionTimer = 0;
+
+function startDirector() {
+  directorActive = true;
+  directorPoseBag = makeShuffleBag(DIRECTOR_POSES);
+  // A blank draw sits in the same bag as the six expressions, so her face
+  // also gets an occasional rest at whatever the pose's own default is,
+  // rather than performing a named expression every single beat.
+  directorExpressionBag = makeShuffleBag([...Object.values(FACE_KEYS), null]);
+  directorPoseTimer = 0;
+  directorExpressionTimer = 0;
+}
+
+function stopDirector() {
+  directorActive = false;
+  setPoseKeys('idle');
+  heldExpression = null;
+}
+
+function runDirector(dt) {
+  directorPoseTimer -= dt;
+  if (directorPoseTimer <= 0) {
+    const next = directorPoseBag.next();
+    setPoseKeys(next);
+    const [lo, hi] = poseHoldRange(next);
+    directorPoseTimer = randRange(lo, hi);
+  }
+  directorExpressionTimer -= dt;
+  if (directorExpressionTimer <= 0) {
+    heldExpression = directorExpressionBag.next();
+    directorExpressionTimer = randRange(...DIRECTOR_EXPRESSION_HOLD);
+  }
 }
 
 const stateLabel = document.getElementById('anim-state');
@@ -559,17 +674,12 @@ CHARACTER_SOURCES.forEach((source, index) => {
           return exposureCompensation;
         },
         compensationLimit: COMPENSATION_LIMIT,
-        setPose: (name) => {
-          keys.wave = name === 'wave';
-          keys.crouch = name === 'crouch';
-          keys.peace = name === 'peace';
-          keys.doublePeace = name === 'double-peace';
-          keys.dance = name === 'dance';
-        },
+        setPose: setPoseKeys,
         setExpression: (name) => { heldExpression = name; },
         danceReach,
         takeBurst,
         encodeFrame,
+        setDirectorActive: (on) => { if (on) startDirector(); else stopDirector(); },
       });
     }
   }, (err) => {
@@ -1204,6 +1314,8 @@ const clock = new THREE.Clock();
 
 function step(dt) {
   if (!vrm) return;
+
+  if (directorActive) runDirector(dt);
 
   let moveX = 0;
   let moveZ = 0;

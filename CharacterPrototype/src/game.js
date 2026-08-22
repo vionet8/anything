@@ -10,15 +10,16 @@
 // are two pages (the dev page and the published artifact) and a HUD written
 // twice is a HUD that drifts.
 
+// She works through these on her own during a session -- see the director in
+// main.js -- so the hints are no longer keys you press; they are kept as a
+// label for the brief chip and for anyone reading this file, not as UI copy.
 export const POSES = [
-  { key: 'peace', label: 'ピース', hint: 'V' },
-  { key: 'double-peace', label: 'ダブルピース', hint: 'B' },
-  { key: 'wave', label: '手を振る', hint: 'E' },
-  { key: 'crouch', label: 'しゃがむ', hint: 'C' },
-  { key: 'idle', label: '自然体', hint: '—' },
-  // The moving one. A dance brief is asking for a moment rather than a pose,
-  // which is a different skill and gets the burst.
-  { key: 'dance', label: 'ダンス', hint: 'R', moving: true },
+  { key: 'peace', label: 'ピース' },
+  { key: 'double-peace', label: 'ダブルピース' },
+  { key: 'wave', label: '手を振る' },
+  { key: 'crouch', label: 'しゃがむ' },
+  { key: 'idle', label: '自然体' },
+  { key: 'dance', label: 'ダンス' },
 ];
 
 // How far above her head her hands have to be to count as the peak of the
@@ -29,12 +30,12 @@ export const DANCE_PEAK_REACH = 0.15;
 const BURST_FRAMES = 12;
 
 export const EXPRESSIONS = [
-  { key: 'happy', label: '笑顔', hint: '1' },
-  { key: 'relaxed', label: 'にっこり', hint: '2' },
-  { key: 'Surprised', label: '驚き', hint: '3' },
-  { key: 'angry', label: '怒り', hint: '4' },
-  { key: 'sad', label: '悲しい', hint: '5' },
-  { key: 'Extra', label: '>_<', hint: '6' },
+  { key: 'happy', label: '笑顔' },
+  { key: 'relaxed', label: 'にっこり' },
+  { key: 'Surprised', label: '驚き' },
+  { key: 'angry', label: '怒り' },
+  { key: 'sad', label: '悲しい' },
+  { key: 'Extra', label: '>_<' },
 ];
 
 // How much of the frame's height her head should fill. Measured off the real
@@ -241,6 +242,11 @@ const STYLE = `
 .pg-notes { list-style: none; margin: 0 0 12px; padding: 0; text-align: left; }
 .pg-notes li { font-size: 12px; line-height: 1.6; color: #ffd166; padding: 3px 0; }
 .pg-notes li::before { content: "・"; }
+/* Set on <body> for the length of a session. The keyboard hints for pose and
+   expression live in the surrounding page (there are two of them: the dev
+   page's plain HUD and the artifact's styled one), not in this file, so they
+   are reached by class rather than redrawn here. */
+body.pg-directed .pg-manual-hint { opacity: 0.32; }
 .pg-cast { display: flex; gap: 6px; margin-top: 10px; }
 .pg-pick { flex: 1; padding: 8px 0; font: inherit; font-size: 13px; font-weight: 600;
   color: #8b93a7; background: #0c0e14; border: 1px solid #2a3040; border-radius: 6px;
@@ -326,13 +332,15 @@ export function initPhotoGame(api) {
     const panel = el('div', 'pg-panel');
     panel.append(
       el('p', 'pg-label', '撮影会'),
-      el('p', 'pg-count', `お題どおりのポーズと表情をさせて、${SHOTS_PER_SESSION}枚撮ります。`),
+      el('p', 'pg-count',
+        `彼女は自分のペースでポーズや表情を変えていきます。お題に合う瞬間を逃さず、${SHOTS_PER_SESSION}枚撮ってください。`),
     );
     panel.append(renderCastPicker());
     const start = el('button', 'pg-button', '撮影を始める');
     start.addEventListener('click', () => {
       session.shots = [];
       placeSun();
+      setDirector(true);
       nextRequest();
     });
     panel.append(start);
@@ -377,11 +385,13 @@ export function initPhotoGame(api) {
     root.append(panel);
     renderShootingChips();
 
-    const moving = (byKey(POSES, session.request.pose) || {}).moving;
-    const shutter = el('button', moving ? 'pg-shutter pg-burst' : 'pg-shutter');
-    shutter.setAttribute('aria-label', moving ? '連写' : 'シャッター');
-    if (moving) shutter.append(el('span', 'pg-burst-label', '連写'));
-    shutter.addEventListener('click', moving ? shootBurst : shoot);
+    // Always a burst now, not just for the dance: she is never holding still
+    // for you, so any shot can catch her a beat early or late. Burst and pick
+    // is the forgiveness for that, not a special case for one pose.
+    const shutter = el('button', 'pg-shutter pg-burst');
+    shutter.setAttribute('aria-label', '連写');
+    shutter.append(el('span', 'pg-burst-label', '連写'));
+    shutter.addEventListener('click', shootBurst);
     root.append(shutter, el('div', 'pg-flash'));
   }
 
@@ -456,6 +466,9 @@ export function initPhotoGame(api) {
       session.shots.length >= SHOTS_PER_SESSION ? '結果を見る' : '次のお題へ');
     next.addEventListener('click', () => {
       if (session.shots.length >= SHOTS_PER_SESSION) {
+        // Nothing left to catch, so give control back rather than leaving her
+        // performing to nobody behind the album screen.
+        setDirector(false);
         session.phase = 'album';
         render();
       } else {
@@ -486,6 +499,7 @@ export function initPhotoGame(api) {
     again.addEventListener('click', () => {
       session.shots = [];
       placeSun();
+      setDirector(true);
       nextRequest();
     });
     const quit = el('button', 'pg-button pg-ghost', 'やめる');
@@ -502,6 +516,14 @@ export function initPhotoGame(api) {
     render();
   }
 
+  // Wraps api.setDirectorActive so the dev page's and the artifact's keyboard
+  // hints dim in step with the director actually taking the pose/expression
+  // keys away -- see the `.pg-manual-hint` rule above.
+  function setDirector(on) {
+    api.setDirectorActive(on);
+    document.body.classList.toggle('pg-directed', on);
+  }
+
   // A fresh sun for each session, so the same brief is a different problem
   // next time: where the light is decides which way you have to walk.
   function placeSun() {
@@ -510,12 +532,6 @@ export function initPhotoGame(api) {
     // everything the same and there is nothing to walk around; a low one is
     // also when backlight is a problem in real life.
     api.setSun(Math.random() * Math.PI * 2, 0.18 + Math.random() * 0.24);
-  }
-
-  function shoot() {
-    const flash = root.querySelector('.pg-flash');
-    if (flash) flash.classList.add('pg-firing');
-    api.takePhoto(keep);
   }
 
   function keep(shot) {
@@ -544,7 +560,7 @@ export function initPhotoGame(api) {
     const card = el('div', 'pg-card');
     card.append(
       el('h2', null, 'どれを残しますか'),
-      el('p', null, `${session.burst.length}枚撮れました。決めの瞬間が写っている1枚を選んでください。`),
+      el('p', null, `${session.burst.length}枚撮れました。お題に一番合っている1枚を選んでください。`),
     );
     const strip = el('div', 'pg-strip');
     for (const frame of session.burst) {
@@ -592,7 +608,7 @@ export function initPhotoGame(api) {
 
   window.addEventListener('keydown', (event) => {
     if (event.code !== 'Enter' && event.code !== 'NumpadEnter') return;
-    if (session.phase === 'shooting') shoot();
+    if (session.phase === 'shooting') shootBurst();
   });
 
   render();
@@ -630,6 +646,7 @@ export function initPhotoGame(api) {
       });
     }),
     reachForTest: () => api.danceReach(),
+    setDirectorForTest: (on) => setDirector(on),
     burstForTest: () => new Promise((resolve) => {
       api.takeBurst(BURST_FRAMES, (frames) => {
         session.burst = frames;

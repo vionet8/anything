@@ -31801,24 +31801,22 @@ void main() {
 
   // src/game.js
   var POSES = [
-    { key: "peace", label: "\u30D4\u30FC\u30B9", hint: "V" },
-    { key: "double-peace", label: "\u30C0\u30D6\u30EB\u30D4\u30FC\u30B9", hint: "B" },
-    { key: "wave", label: "\u624B\u3092\u632F\u308B", hint: "E" },
-    { key: "crouch", label: "\u3057\u3083\u304C\u3080", hint: "C" },
-    { key: "idle", label: "\u81EA\u7136\u4F53", hint: "\u2014" },
-    // The moving one. A dance brief is asking for a moment rather than a pose,
-    // which is a different skill and gets the burst.
-    { key: "dance", label: "\u30C0\u30F3\u30B9", hint: "R", moving: true }
+    { key: "peace", label: "\u30D4\u30FC\u30B9" },
+    { key: "double-peace", label: "\u30C0\u30D6\u30EB\u30D4\u30FC\u30B9" },
+    { key: "wave", label: "\u624B\u3092\u632F\u308B" },
+    { key: "crouch", label: "\u3057\u3083\u304C\u3080" },
+    { key: "idle", label: "\u81EA\u7136\u4F53" },
+    { key: "dance", label: "\u30C0\u30F3\u30B9" }
   ];
   var DANCE_PEAK_REACH = 0.15;
   var BURST_FRAMES = 12;
   var EXPRESSIONS = [
-    { key: "happy", label: "\u7B11\u9854", hint: "1" },
-    { key: "relaxed", label: "\u306B\u3063\u3053\u308A", hint: "2" },
-    { key: "Surprised", label: "\u9A5A\u304D", hint: "3" },
-    { key: "angry", label: "\u6012\u308A", hint: "4" },
-    { key: "sad", label: "\u60B2\u3057\u3044", hint: "5" },
-    { key: "Extra", label: ">_<", hint: "6" }
+    { key: "happy", label: "\u7B11\u9854" },
+    { key: "relaxed", label: "\u306B\u3063\u3053\u308A" },
+    { key: "Surprised", label: "\u9A5A\u304D" },
+    { key: "angry", label: "\u6012\u308A" },
+    { key: "sad", label: "\u60B2\u3057\u3044" },
+    { key: "Extra", label: ">_<" }
   ];
   var FRAMINGS = [
     { key: "close", label: "\u5BC4\u308A", min: 0.13, max: 0.25 },
@@ -31984,6 +31982,11 @@ void main() {
 .pg-notes { list-style: none; margin: 0 0 12px; padding: 0; text-align: left; }
 .pg-notes li { font-size: 12px; line-height: 1.6; color: #ffd166; padding: 3px 0; }
 .pg-notes li::before { content: "\u30FB"; }
+/* Set on <body> for the length of a session. The keyboard hints for pose and
+   expression live in the surrounding page (there are two of them: the dev
+   page's plain HUD and the artifact's styled one), not in this file, so they
+   are reached by class rather than redrawn here. */
+body.pg-directed .pg-manual-hint { opacity: 0.32; }
 .pg-cast { display: flex; gap: 6px; margin-top: 10px; }
 .pg-pick { flex: 1; padding: 8px 0; font: inherit; font-size: 13px; font-weight: 600;
   color: #8b93a7; background: #0c0e14; border: 1px solid #2a3040; border-radius: 6px;
@@ -32061,13 +32064,18 @@ void main() {
       const panel = el("div", "pg-panel");
       panel.append(
         el("p", "pg-label", "\u64AE\u5F71\u4F1A"),
-        el("p", "pg-count", `\u304A\u984C\u3069\u304A\u308A\u306E\u30DD\u30FC\u30BA\u3068\u8868\u60C5\u3092\u3055\u305B\u3066\u3001${SHOTS_PER_SESSION}\u679A\u64AE\u308A\u307E\u3059\u3002`)
+        el(
+          "p",
+          "pg-count",
+          `\u5F7C\u5973\u306F\u81EA\u5206\u306E\u30DA\u30FC\u30B9\u3067\u30DD\u30FC\u30BA\u3084\u8868\u60C5\u3092\u5909\u3048\u3066\u3044\u304D\u307E\u3059\u3002\u304A\u984C\u306B\u5408\u3046\u77AC\u9593\u3092\u9003\u3055\u305A\u3001${SHOTS_PER_SESSION}\u679A\u64AE\u3063\u3066\u304F\u3060\u3055\u3044\u3002`
+        )
       );
       panel.append(renderCastPicker());
       const start = el("button", "pg-button", "\u64AE\u5F71\u3092\u59CB\u3081\u308B");
       start.addEventListener("click", () => {
         session.shots = [];
         placeSun();
+        setDirector(true);
         nextRequest();
       });
       panel.append(start);
@@ -32109,11 +32117,10 @@ void main() {
       panel.append(renderExposure());
       root.append(panel);
       renderShootingChips();
-      const moving = (byKey(POSES, session.request.pose) || {}).moving;
-      const shutter = el("button", moving ? "pg-shutter pg-burst" : "pg-shutter");
-      shutter.setAttribute("aria-label", moving ? "\u9023\u5199" : "\u30B7\u30E3\u30C3\u30BF\u30FC");
-      if (moving) shutter.append(el("span", "pg-burst-label", "\u9023\u5199"));
-      shutter.addEventListener("click", moving ? shootBurst : shoot);
+      const shutter = el("button", "pg-shutter pg-burst");
+      shutter.setAttribute("aria-label", "\u9023\u5199");
+      shutter.append(el("span", "pg-burst-label", "\u9023\u5199"));
+      shutter.addEventListener("click", shootBurst);
       root.append(shutter, el("div", "pg-flash"));
     }
     function renderExposure() {
@@ -32178,6 +32185,7 @@ void main() {
       );
       next.addEventListener("click", () => {
         if (session.shots.length >= SHOTS_PER_SESSION) {
+          setDirector(false);
           session.phase = "album";
           render();
         } else {
@@ -32207,6 +32215,7 @@ void main() {
       again.addEventListener("click", () => {
         session.shots = [];
         placeSun();
+        setDirector(true);
         nextRequest();
       });
       const quit = el("button", "pg-button pg-ghost", "\u3084\u3081\u308B");
@@ -32224,14 +32233,13 @@ void main() {
       session.phase = "shooting";
       render();
     }
+    function setDirector(on) {
+      api.setDirectorActive(on);
+      document.body.classList.toggle("pg-directed", on);
+    }
     function placeSun() {
       if (!api.setSun) return;
       api.setSun(Math.random() * Math.PI * 2, 0.18 + Math.random() * 0.24);
-    }
-    function shoot() {
-      const flash = root.querySelector(".pg-flash");
-      if (flash) flash.classList.add("pg-firing");
-      api.takePhoto(keep);
     }
     function keep(shot) {
       shot.score = scoreShot(session.request, shot);
@@ -32254,7 +32262,7 @@ void main() {
       const card = el("div", "pg-card");
       card.append(
         el("h2", null, "\u3069\u308C\u3092\u6B8B\u3057\u307E\u3059\u304B"),
-        el("p", null, `${session.burst.length}\u679A\u64AE\u308C\u307E\u3057\u305F\u3002\u6C7A\u3081\u306E\u77AC\u9593\u304C\u5199\u3063\u3066\u3044\u308B1\u679A\u3092\u9078\u3093\u3067\u304F\u3060\u3055\u3044\u3002`)
+        el("p", null, `${session.burst.length}\u679A\u64AE\u308C\u307E\u3057\u305F\u3002\u304A\u984C\u306B\u4E00\u756A\u5408\u3063\u3066\u3044\u308B1\u679A\u3092\u9078\u3093\u3067\u304F\u3060\u3055\u3044\u3002`)
       );
       const strip = el("div", "pg-strip");
       for (const frame of session.burst) {
@@ -32294,7 +32302,7 @@ void main() {
     }
     window.addEventListener("keydown", (event) => {
       if (event.code !== "Enter" && event.code !== "NumpadEnter") return;
-      if (session.phase === "shooting") shoot();
+      if (session.phase === "shooting") shootBurst();
     });
     render();
     tick();
@@ -32328,6 +32336,7 @@ void main() {
         });
       }),
       reachForTest: () => api.danceReach(),
+      setDirectorForTest: (on) => setDirector(on),
       burstForTest: () => new Promise((resolve) => {
         api.takeBurst(BURST_FRAMES, (frames) => {
           session.burst = frames;
@@ -32536,9 +32545,11 @@ void main() {
     Digit6: "Extra"
   };
   var heldExpression = null;
+  var directorActive = false;
   function onKey(e, down) {
     const expression = FACE_KEYS[e.code];
     if (expression) {
+      if (directorActive) return;
       if (down) heldExpression = expression;
       else if (heldExpression === expression) heldExpression = null;
       return;
@@ -32565,19 +32576,19 @@ void main() {
         keys.run = down;
         break;
       case "KeyE":
-        keys.wave = down;
+        if (!directorActive) keys.wave = down;
         break;
       case "KeyC":
-        keys.crouch = down;
+        if (!directorActive) keys.crouch = down;
         break;
       case "KeyV":
-        keys.peace = down;
+        if (!directorActive) keys.peace = down;
         break;
       case "KeyB":
-        keys.doublePeace = down;
+        if (!directorActive) keys.doublePeace = down;
         break;
       case "KeyR":
-        keys.dance = down;
+        if (!directorActive) keys.dance = down;
         break;
       case "Space":
         e.preventDefault();
@@ -32601,6 +32612,78 @@ void main() {
       setTouch(false);
     }, { passive: false });
     touchPad.addEventListener("touchcancel", () => setTouch(false));
+  }
+  function makeShuffleBag(items) {
+    let deck = [];
+    let last = null;
+    const refill = () => {
+      deck = items.slice();
+      for (let i = deck.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [deck[i], deck[j]] = [deck[j], deck[i]];
+      }
+    };
+    return {
+      next() {
+        if (deck.length === 0) refill();
+        if (deck.length > 1 && deck[deck.length - 1] === last) {
+          [deck[deck.length - 1], deck[deck.length - 2]] = [deck[deck.length - 2], deck[deck.length - 1]];
+        }
+        last = deck.pop();
+        return last;
+      }
+    };
+  }
+  var randRange = (min, max) => min + Math.random() * (max - min);
+  function setPoseKeys(name) {
+    keys.wave = name === "wave";
+    keys.crouch = name === "crouch";
+    keys.peace = name === "peace";
+    keys.doublePeace = name === "double-peace";
+    keys.dance = name === "dance";
+  }
+  var DIRECTOR_POSES = ["peace", "double-peace", "wave", "crouch", "dance", "idle"];
+  var DIRECTOR_POSE_HOLD = {
+    peace: [2.6, 4.2],
+    "double-peace": [2.6, 4.2],
+    wave: [2.2, 3.6],
+    crouch: [2, 3.2],
+    idle: [1.4, 2.4]
+  };
+  var DIRECTOR_EXPRESSION_HOLD = [1.8, 3.2];
+  function poseHoldRange(name) {
+    if (name === "dance") return [DANCE_BEAT * DANCE_BARS * 1.9, DANCE_BEAT * DANCE_BARS * 2.7];
+    return DIRECTOR_POSE_HOLD[name];
+  }
+  var directorPoseBag = null;
+  var directorExpressionBag = null;
+  var directorPoseTimer = 0;
+  var directorExpressionTimer = 0;
+  function startDirector() {
+    directorActive = true;
+    directorPoseBag = makeShuffleBag(DIRECTOR_POSES);
+    directorExpressionBag = makeShuffleBag([...Object.values(FACE_KEYS), null]);
+    directorPoseTimer = 0;
+    directorExpressionTimer = 0;
+  }
+  function stopDirector() {
+    directorActive = false;
+    setPoseKeys("idle");
+    heldExpression = null;
+  }
+  function runDirector(dt) {
+    directorPoseTimer -= dt;
+    if (directorPoseTimer <= 0) {
+      const next = directorPoseBag.next();
+      setPoseKeys(next);
+      const [lo, hi] = poseHoldRange(next);
+      directorPoseTimer = randRange(lo, hi);
+    }
+    directorExpressionTimer -= dt;
+    if (directorExpressionTimer <= 0) {
+      heldExpression = directorExpressionBag.next();
+      directorExpressionTimer = randRange(...DIRECTOR_EXPRESSION_HOLD);
+    }
   }
   var stateLabel = document.getElementById("state-label");
   var loadingEl = document.getElementById("loading");
@@ -32822,19 +32905,17 @@ void main() {
             return exposureCompensation;
           },
           compensationLimit: COMPENSATION_LIMIT,
-          setPose: (name) => {
-            keys.wave = name === "wave";
-            keys.crouch = name === "crouch";
-            keys.peace = name === "peace";
-            keys.doublePeace = name === "double-peace";
-            keys.dance = name === "dance";
-          },
+          setPose: setPoseKeys,
           setExpression: (name) => {
             heldExpression = name;
           },
           danceReach,
           takeBurst,
-          encodeFrame
+          encodeFrame,
+          setDirectorActive: (on) => {
+            if (on) startDirector();
+            else stopDirector();
+          }
         });
       }
     }, (err) => {
@@ -33186,6 +33267,7 @@ void main() {
   var clock = new Clock();
   function step(dt) {
     if (!vrm) return;
+    if (directorActive) runDirector(dt);
     let moveX = 0;
     let moveZ = 0;
     if (keys.forward) moveZ += 1;

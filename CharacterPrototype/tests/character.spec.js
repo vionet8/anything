@@ -700,6 +700,43 @@ test('exposure compensation survives the auto exposure rather than being cancell
   expect(lifted.auto / plain.auto).toBeGreaterThan(1.7);
 });
 
+test('starting a session hands pose and expression to her; manual keys stop working', async ({ page }) => {
+  test.setTimeout(30000);
+  await page.getByRole('button', { name: '撮影を始める' }).click();
+  expect(await page.evaluate(() => window.__game.getPhase())).toBe('shooting');
+
+  // Hold the manual "wave" and "happy" keys down for the whole sample window.
+  // If the keys still worked, that would pin her to wave/happy for the entire
+  // window; if they are ignored, the director keeps changing things under the
+  // held keys regardless. Variety over the window is the proof either way,
+  // and it sidesteps the coincidence risk of checking a single instant against
+  // a single expected value.
+  await page.keyboard.down('KeyE');
+  await page.keyboard.down('Digit1');
+  const poses = new Set();
+  for (let i = 0; i < 20; i++) {
+    poses.add(await page.evaluate(() => window.__char.getState().animName));
+    await page.waitForTimeout(350);   // ~7s total; the shortest hold is 1.4s
+  }
+  await page.keyboard.up('KeyE');
+  await page.keyboard.up('Digit1');
+
+  expect(poses.size, `poses observed while KeyE was held: ${[...poses].join(', ')}`).toBeGreaterThan(1);
+});
+
+test('the director can be switched off, which gives manual control back', async ({ page }) => {
+  await page.evaluate(() => window.__game.setDirectorForTest(true));
+  await page.waitForTimeout(500);
+  await page.evaluate(() => window.__game.setDirectorForTest(false));
+
+  await page.keyboard.down('KeyV');
+  await page.waitForTimeout(400);
+  const state = await page.evaluate(() => window.__char.getState().animName);
+  await page.keyboard.up('KeyV');
+
+  expect(state).toBe('peace');
+});
+
 test('a session runs three shots and ends in an album', async ({ page }) => {
   // Three photographs, each captured on the frame after its click, plus the
   // model load — comfortably past the suite's default 20s.
@@ -709,12 +746,11 @@ test('a session runs three shots and ends in an album', async ({ page }) => {
 
   for (let shot = 1; shot <= 3; shot++) {
     await page.locator('.pg-shutter').click();
-    // A dance brief bursts instead of taking one frame, and asks which to keep.
-    if (await page.evaluate(() => window.__game.getPhase()) === 'picking'
-      || await page.locator('.pg-frame').count()) {
-      await expect(page.locator('.pg-frame').first()).toBeVisible();
-      await page.locator('.pg-frame').first().click();
-    }
+    // Every shot is a burst now: wait for the picker rather than checking the
+    // phase synchronously right after the click, which raced the burst still
+    // being in flight (it runs over ~0.6s of real time, not instantly).
+    await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
+    await page.locator('.pg-frame').first().click();
     await expect(page.locator('.pg-stars')).toBeVisible();
     expect(await page.evaluate(() => window.__game.getShots())).toHaveLength(shot);
     await page.locator('.pg-card .pg-button').first().click();
