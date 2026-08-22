@@ -19300,6 +19300,13 @@ void main() {
       });
     }
   }
+  var CanvasTexture = class extends Texture {
+    constructor(canvas2, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy) {
+      super(canvas2, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy);
+      this.isCanvasTexture = true;
+      this.needsUpdate = true;
+    }
+  };
   var CircleGeometry = class _CircleGeometry extends BufferGeometry {
     constructor(radius = 1, segments = 32, thetaStart = 0, thetaLength = Math.PI * 2) {
       super();
@@ -31816,8 +31823,22 @@ void main() {
     { key: "wide", label: "\u5F15\u304D", min: 0.02, max: 0.04 }
     // ~4m to 8.5m
   ];
+  var LIGHTS = [
+    { key: "front", label: "\u9806\u5149", min: 0, max: 55 },
+    { key: "side", label: "\u30B5\u30A4\u30C9\u5149", min: 55, max: 125 },
+    { key: "back", label: "\u9006\u5149", min: 125, max: 180 }
+  ];
+  var FACE_LUMA = { min: 0.43, max: 0.72 };
   var SHOTS_PER_SESSION = 3;
-  var POINTS = { pose: 25, expression: 25, inFrame: 15, framing: 20, centred: 15 };
+  var POINTS = {
+    pose: 25,
+    expression: 25,
+    inFrame: 10,
+    framing: 15,
+    centred: 10,
+    brightness: 15,
+    light: 15
+  };
   var STAR_THRESHOLDS = [85, 60, 30];
   var EXPRESSION_SETTLED = 0.6;
   var byKey = (list, key) => list.find((entry) => entry.key === key);
@@ -31825,53 +31846,101 @@ void main() {
     const framing = shot.framing;
     const band = byKey(FRAMINGS, request.framing);
     const parts = [];
+    const add = (part) => parts.push({ ...part, points: part.ok ? part.max : part.points || 0 });
     const poseOk = shot.state.animName === request.pose;
-    parts.push({ key: "pose", label: "\u30DD\u30FC\u30BA", ok: poseOk, points: poseOk ? POINTS.pose : 0 });
+    add({
+      key: "pose",
+      label: "\u30DD\u30FC\u30BA",
+      max: POINTS.pose,
+      ok: poseOk,
+      hint: poseOk ? null : `\u304A\u984C\u306F\u300C${byKey(POSES, request.pose).label}\u300D\u3067\u3057\u305F`
+    });
     const expressionOk = shot.state.expression === request.expression && shot.state.expressionWeight >= EXPRESSION_SETTLED;
-    parts.push({
+    add({
       key: "expression",
       label: "\u8868\u60C5",
+      max: POINTS.expression,
       ok: expressionOk,
-      points: expressionOk ? POINTS.expression : 0
+      hint: expressionOk ? null : `\u8868\u60C5\u304C\u300C${byKey(EXPRESSIONS, request.expression).label}\u300D\u306B\u306A\u3063\u3066\u3044\u307E\u305B\u3093`
     });
     const inFrame = !!framing && !framing.behindCamera && Math.abs(framing.x) < 0.45 && Math.abs(framing.y) < 0.45;
-    parts.push({ key: "inFrame", label: "\u9854\u304C\u5199\u3063\u3066\u3044\u308B", ok: inFrame, points: inFrame ? POINTS.inFrame : 0 });
+    add({
+      key: "inFrame",
+      label: "\u9854\u304C\u5199\u3063\u3066\u3044\u308B",
+      max: POINTS.inFrame,
+      ok: inFrame,
+      hint: inFrame ? null : "\u9854\u304C\u30D5\u30EC\u30FC\u30E0\u304B\u3089\u5916\u308C\u3066\u3044\u307E\u3059"
+    });
     const framingOk = inFrame && framing.faceSize >= band.min && framing.faceSize <= band.max;
-    parts.push({
+    add({
       key: "framing",
       label: band.label,
+      max: POINTS.framing,
       ok: framingOk,
-      points: framingOk ? POINTS.framing : 0
+      hint: framingOk ? null : !inFrame ? "\u9854\u3092\u5165\u308C\u3066\u304B\u3089\u5BC4\u308A\u5F15\u304D\u3092\u5408\u308F\u305B\u307E\u3057\u3087\u3046" : framing.faceSize < band.min ? `${band.label}\u306E\u304A\u984C\u3067\u3059\u3002\u3082\u3063\u3068\u5BC4\u3063\u3066\u304F\u3060\u3055\u3044` : `${band.label}\u306E\u304A\u984C\u3067\u3059\u3002\u5F15\u304D\u3059\u304E\u3066\u3044\u307E\u3059`
     });
     const offCentre = inFrame ? Math.hypot(framing.x, framing.y) : 1;
     const centred = Math.max(0, 1 - offCentre / 0.35);
-    parts.push({
+    add({
       key: "centred",
       label: "\u69CB\u56F3",
+      max: POINTS.centred,
       ok: centred > 0.5,
-      points: Math.round(POINTS.centred * centred)
+      points: Math.round(POINTS.centred * centred),
+      hint: centred > 0.5 ? null : "\u9854\u304C\u753B\u9762\u306E\u7AEF\u306B\u5BC4\u308A\u3059\u304E\u3066\u3044\u307E\u3059"
     });
-    const total = parts.reduce((sum, part) => sum + part.points, 0);
+    const luma = shot.faceLuma;
+    const bright = luma !== null && luma !== void 0;
+    const brightOk = bright && luma >= FACE_LUMA.min && luma <= FACE_LUMA.max;
+    add({
+      key: "brightness",
+      label: "\u9854\u306E\u660E\u308B\u3055",
+      max: POINTS.brightness,
+      ok: brightOk,
+      hint: brightOk ? null : !bright ? "\u9854\u304C\u5199\u3063\u3066\u3044\u306A\u3044\u306E\u3067\u660E\u308B\u3055\u3092\u6E2C\u308C\u307E\u305B\u3093" : luma < FACE_LUMA.min ? "\u9854\u304C\u6697\u304F\u6C88\u3093\u3067\u3044\u307E\u3059\u3002\u9006\u5149\u3067\u306F\u660E\u308B\u3055\u3092\uFF0B\u306B\u88DC\u6B63\u3057\u307E\u3059" : "\u9854\u304C\u660E\u308B\u304F\u98DB\u3093\u3067\u3044\u307E\u3059\u3002\u660E\u308B\u3055\u3092\u2212\u306B\u623B\u3057\u307E\u3057\u3087\u3046"
+    });
+    if (request.light) {
+      const wanted = byKey(LIGHTS, request.light);
+      const angle = shot.lightAngle;
+      const lightOk = angle !== void 0 && angle >= wanted.min && angle <= wanted.max;
+      add({
+        key: "light",
+        label: wanted.label,
+        max: POINTS.light,
+        ok: lightOk,
+        hint: lightOk ? null : `\u3044\u307E\u306F${describeLight(angle)}\u3067\u3059\u3002${wanted.label}\u306B\u306A\u308B\u4F4D\u7F6E\u307E\u3067\u56DE\u308A\u8FBC\u307F\u307E\u3057\u3087\u3046`
+      });
+    }
+    const earned = parts.reduce((sum, part) => sum + part.points, 0);
+    const possible = parts.reduce((sum, part) => sum + part.max, 0);
+    const total = Math.round(earned / possible * 100);
     const rank = STAR_THRESHOLDS.findIndex((threshold) => total >= threshold);
     let stars = rank === -1 ? 0 : 3 - rank;
     if (!(poseOk && expressionOk)) stars = Math.min(stars, 1);
     return { total, stars, parts };
   }
+  function describeLight(angle) {
+    if (angle === void 0 || angle === null) return "\u4E0D\u660E";
+    return (LIGHTS.find((entry) => angle >= entry.min && angle <= entry.max) || LIGHTS[1]).label;
+  }
   function pick(list) {
     return list[Math.floor(Math.random() * list.length)];
   }
-  function makeRequest() {
-    return {
+  function makeRequest(shotNumber = 1) {
+    const request = {
       pose: pick(POSES).key,
       expression: pick(EXPRESSIONS).key,
       framing: pick(FRAMINGS).key
     };
+    if (shotNumber >= 2) request.light = pick(LIGHTS).key;
+    return request;
   }
   function describeRequest(request) {
     return {
       pose: byKey(POSES, request.pose),
       expression: byKey(EXPRESSIONS, request.expression),
-      framing: byKey(FRAMINGS, request.framing)
+      framing: byKey(FRAMINGS, request.framing),
+      light: request.light ? byKey(LIGHTS, request.light) : null
     };
   }
   var STYLE = `
@@ -31890,6 +31959,15 @@ void main() {
 .pg-chip[data-ok="true"] { border-color: #7ee787; color: #7ee787; }
 .pg-chip small { font-weight: 400; color: #8b93a7; margin-left: 4px; }
 .pg-count { font-size: 11px; color: #8b93a7; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.pg-ev { display: flex; align-items: center; gap: 8px; margin-top: 10px;
+  padding-top: 10px; border-top: 1px solid #232838; }
+.pg-ev-label { font-size: 11px; color: #8b93a7; white-space: nowrap; }
+.pg-ev-slider { flex: 1; min-width: 0; accent-color: #ffb454; }
+.pg-ev-value { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+  min-width: 3.2em; text-align: right; }
+.pg-notes { list-style: none; margin: 0 0 12px; padding: 0; text-align: left; }
+.pg-notes li { font-size: 12px; line-height: 1.6; color: #ffd166; padding: 3px 0; }
+.pg-notes li::before { content: "\u30FB"; }
 .pg-cast { display: flex; gap: 6px; margin-top: 10px; }
 .pg-pick { flex: 1; padding: 8px 0; font: inherit; font-size: 13px; font-weight: 600;
   color: #8b93a7; background: #0c0e14; border: 1px solid #2a3040; border-radius: 6px;
@@ -31965,6 +32043,7 @@ void main() {
       const start = el("button", "pg-button", "\u64AE\u5F71\u3092\u59CB\u3081\u308B");
       start.addEventListener("click", () => {
         session.shots = [];
+        placeSun();
         nextRequest();
       });
       panel.append(start);
@@ -31991,31 +32070,49 @@ void main() {
       const described = describeRequest(session.request);
       panel.append(el("p", "pg-label", "\u304A\u984C"));
       const brief = el("div", "pg-brief");
-      const live = api.getState();
-      const chips = [
-        { entry: described.pose, ok: live.animName === session.request.pose },
-        {
-          entry: described.expression,
-          ok: live.expression === session.request.expression && live.expressionWeight >= EXPRESSION_SETTLED
-        },
-        { entry: described.framing, ok: framingLive() }
-      ];
-      for (const chip of chips) {
+      for (const entry of [described.pose, described.expression, described.framing, described.light]) {
+        if (!entry) continue;
         const node = el(
           "span",
           "pg-chip",
-          `${chip.entry.label}${chip.entry.hint ? `<small>${chip.entry.hint}</small>` : ""}`
+          `${entry.label}${entry.hint ? `<small>${entry.hint}</small>` : ""}`
         );
-        node.dataset.ok = String(chip.ok);
+        node.dataset.ok = "false";
         brief.append(node);
       }
       panel.append(brief);
       panel.append(el("p", "pg-count", `${session.shots.length + 1} / ${SHOTS_PER_SESSION} \u679A\u76EE`));
+      panel.append(renderExposure());
       root.append(panel);
+      renderShootingChips();
       const shutter = el("button", "pg-shutter");
       shutter.setAttribute("aria-label", "\u30B7\u30E3\u30C3\u30BF\u30FC");
       shutter.addEventListener("click", shoot);
       root.append(shutter, el("div", "pg-flash"));
+    }
+    function renderExposure() {
+      const wrap = el("div", "pg-ev");
+      const label = el("span", "pg-ev-label", "\u660E\u308B\u3055");
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.className = "pg-ev-slider";
+      slider.min = String(-(api.compensationLimit || 2));
+      slider.max = String(api.compensationLimit || 2);
+      slider.step = "0.25";
+      slider.value = String(api.getExposure().compensation);
+      slider.setAttribute("aria-label", "\u660E\u308B\u3055\u88DC\u6B63");
+      const readout = el("span", "pg-ev-value", formatStops(Number(slider.value)));
+      slider.addEventListener("input", () => {
+        const stops = api.setCompensation(Number(slider.value));
+        readout.textContent = formatStops(stops);
+      });
+      slider.addEventListener("keydown", (event) => event.stopPropagation());
+      wrap.append(label, slider, readout);
+      return wrap;
+    }
+    function formatStops(stops) {
+      if (Math.abs(stops) < 0.01) return "\xB10";
+      return `${stops > 0 ? "+" : "\u2212"}${Math.abs(stops).toFixed(2).replace(/\.?0+$/, "")}`;
     }
     function framingLive() {
       const framing = api.measureFraming();
@@ -32042,6 +32139,12 @@ void main() {
         list.append(item);
       }
       card.append(list);
+      const misses = shot.score.parts.filter((part) => !part.ok && part.hint);
+      if (misses.length) {
+        const notes = el("ul", "pg-notes");
+        for (const part of misses.slice(0, 3)) notes.append(el("li", null, part.hint));
+        card.append(notes);
+      }
       const next = el(
         "button",
         "pg-button",
@@ -32077,6 +32180,7 @@ void main() {
       const again = el("button", "pg-button", "\u3082\u3046\u4E00\u5EA6");
       again.addEventListener("click", () => {
         session.shots = [];
+        placeSun();
         nextRequest();
       });
       const quit = el("button", "pg-button pg-ghost", "\u3084\u3081\u308B");
@@ -32090,9 +32194,13 @@ void main() {
       again.focus();
     }
     function nextRequest() {
-      session.request = makeRequest();
+      session.request = makeRequest(session.shots.length + 1);
       session.phase = "shooting";
       render();
+    }
+    function placeSun() {
+      if (!api.setSun) return;
+      api.setSun(Math.random() * Math.PI * 2, 0.18 + Math.random() * 0.24);
     }
     function shoot() {
       const flash = root.querySelector(".pg-flash");
@@ -32116,11 +32224,16 @@ void main() {
     }
     function renderShootingChips() {
       const chips = root.querySelectorAll(".pg-chip");
-      if (chips.length !== 3) return;
+      if (chips.length < 3) return;
       const live = api.getState();
       chips[0].dataset.ok = String(live.animName === session.request.pose);
       chips[1].dataset.ok = String(live.expression === session.request.expression && live.expressionWeight >= EXPRESSION_SETTLED);
       chips[2].dataset.ok = String(framingLive());
+      if (chips[3] && session.request.light) {
+        const wanted = byKey(LIGHTS, session.request.light);
+        const angle = api.lightAngle();
+        chips[3].dataset.ok = String(angle >= wanted.min && angle <= wanted.max);
+      }
     }
     window.addEventListener("keydown", (event) => {
       if (event.code !== "Enter" && event.code !== "NumpadEnter") return;
@@ -32148,9 +32261,19 @@ void main() {
           session.shots.push(shot);
           session.phase = "result";
           render();
-          resolve({ score: shot.score, bytes: shot.dataUrl.length });
+          resolve({
+            score: shot.score,
+            bytes: shot.dataUrl.length,
+            faceLuma: shot.faceLuma,
+            lightAngle: shot.lightAngle,
+            exposure: shot.exposure
+          });
         });
       }),
+      setSunForTest: (azimuth, elevation) => api.setSun(azimuth, elevation),
+      lightAngleForTest: () => api.lightAngle(),
+      getExposureForTest: () => api.getExposure(),
+      setCompensationForTest: (stops) => api.setCompensation(stops),
       listCastForTest: () => api.listCast ? api.listCast() : [],
       setCharacterForTest: (key) => {
         api.setCharacter(key);
@@ -32181,6 +32304,7 @@ void main() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
   renderer.outputColorSpace = SRGBColorSpace;
+  renderer.toneMapping = LinearToneMapping;
   var skyGeo = new SphereGeometry(200, 24, 16);
   var skyColors = [];
   var skyPos = skyGeo.attributes.position;
@@ -32195,10 +32319,61 @@ void main() {
   skyGeo.setAttribute("color", new Float32BufferAttribute(skyColors, 3));
   var sky = new Mesh(skyGeo, new MeshBasicMaterial({ vertexColors: true, side: BackSide, fog: false }));
   scene.add(sky);
-  var hemi = new HemisphereLight(14676223, 7049050, 1.15);
+  var hemi = new HemisphereLight(14676223, 7049050, 0.5);
   scene.add(hemi);
-  var sun = new DirectionalLight(16774102, 2);
+  var sun = new DirectionalLight(16774102, 2.6);
   sun.position.set(10, 18, 6);
+  var SUN_DISTANCE = 26;
+  var sunAzimuth = Math.atan2(sun.position.x, sun.position.z);
+  var sunElevation = 0.62;
+  function makeGlowTexture() {
+    const size = 128;
+    const canvas2 = document.createElement("canvas");
+    canvas2.width = size;
+    canvas2.height = size;
+    const context = canvas2.getContext("2d");
+    const gradient = context.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    gradient.addColorStop(0, "rgba(255,250,235,0.95)");
+    gradient.addColorStop(0.25, "rgba(255,244,214,0.55)");
+    gradient.addColorStop(0.6, "rgba(255,240,205,0.18)");
+    gradient.addColorStop(1, "rgba(255,238,200,0)");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, size, size);
+    return new CanvasTexture(canvas2);
+  }
+  var sunDisc = new Mesh(
+    new CircleGeometry(9, 32),
+    new MeshBasicMaterial({ color: 16776690, fog: false })
+  );
+  var sunGlow = new Mesh(
+    new PlaneGeometry(150, 150),
+    new MeshBasicMaterial({
+      map: makeGlowTexture(),
+      transparent: true,
+      depthWrite: false,
+      fog: false
+    })
+  );
+  scene.add(sunDisc, sunGlow);
+  function setSun(azimuth, elevation = sunElevation) {
+    sunAzimuth = azimuth;
+    sunElevation = elevation;
+    const ground2 = Math.cos(elevation) * SUN_DISTANCE;
+    sun.position.set(
+      Math.sin(azimuth) * ground2,
+      Math.sin(elevation) * SUN_DISTANCE,
+      Math.cos(azimuth) * ground2
+    );
+    const far = 170;
+    for (const disc of [sunDisc, sunGlow]) {
+      disc.position.set(
+        Math.sin(azimuth) * Math.cos(elevation) * far,
+        Math.sin(elevation) * far,
+        Math.cos(azimuth) * Math.cos(elevation) * far
+      );
+    }
+  }
+  setSun(sunAzimuth, sunElevation);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.left = -20;
@@ -32435,6 +32610,16 @@ void main() {
       );
     });
   }
+  var SHADE_DARKEN = 0.62;
+  var SHADE_SHIFT = -0.32;
+  var SHADE_TOONY = 0.3;
+  function deepenToonShading(material) {
+    if (!material || !material.isMToonMaterial) return;
+    if (material.shadeColorFactor) material.shadeColorFactor.multiplyScalar(SHADE_DARKEN);
+    material.shadingShiftFactor = SHADE_SHIFT;
+    material.shadingToonyFactor = SHADE_TOONY;
+    material.needsUpdate = true;
+  }
   function setUpCharacter(gltf, source) {
     const loaded = { key: source.key, label: source.label, bones: {} };
     loaded.vrm = gltf.userData.vrm;
@@ -32447,6 +32632,9 @@ void main() {
         if (obj.isMesh) {
           obj.castShadow = true;
           obj.receiveShadow = true;
+          for (const material of Array.isArray(obj.material) ? obj.material : [obj.material]) {
+            deepenToonShading(material);
+          }
         }
       });
       vrm2.scene.visible = false;
@@ -32546,6 +32734,19 @@ void main() {
           listCast: () => cast.map((entry) => ({ key: entry.key, label: entry.label })),
           getCharacter: () => activeCharacter ? activeCharacter.key : null,
           setCharacter: setActiveCharacter,
+          setSun,
+          lightAngle: lightAngleDegrees,
+          getExposure: () => ({
+            auto: autoExposure,
+            compensation: exposureCompensation,
+            metered: lastMeteredLuma
+          }),
+          setCompensation: (stops) => {
+            exposureCompensation = MathUtils.clamp(stops, -COMPENSATION_LIMIT, COMPENSATION_LIMIT);
+            applyExposure();
+            return exposureCompensation;
+          },
+          compensationLimit: COMPENSATION_LIMIT,
           setPose: (name) => {
             keys.wave = name === "wave";
             keys.crouch = name === "crouch";
@@ -32941,6 +33142,75 @@ void main() {
       behindCamera: depth <= 0
     };
   }
+  var METER_SIZE = 48;
+  var METER_PERIOD = 0.08;
+  var METER_TAU = 0.25;
+  var METER_TARGET = 0.42;
+  var EXPOSURE_MIN = 0.25;
+  var EXPOSURE_MAX = 6;
+  var COMPENSATION_LIMIT = 2;
+  var meterCanvas = document.createElement("canvas");
+  meterCanvas.width = METER_SIZE;
+  meterCanvas.height = METER_SIZE;
+  var meterContext = meterCanvas.getContext("2d", { willReadFrequently: true });
+  var autoExposure = 1;
+  var exposureCompensation = 0;
+  var sinceMetered = 0;
+  var autoExposureEnabled = true;
+  var lastMeteredLuma = METER_TARGET;
+  function meterTarget() {
+    return METER_TARGET * Math.pow(2, exposureCompensation);
+  }
+  function applyExposure() {
+    renderer.toneMappingExposure = MathUtils.clamp(autoExposure, EXPOSURE_MIN, EXPOSURE_MAX);
+  }
+  function meanLuma() {
+    meterContext.drawImage(renderer.domElement, 0, 0, METER_SIZE, METER_SIZE);
+    const { data } = meterContext.getImageData(0, 0, METER_SIZE, METER_SIZE);
+    let total = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      total += (data[i] * 0.2126 + data[i + 1] * 0.7152 + data[i + 2] * 0.0722) / 255;
+    }
+    return total / (data.length / 4);
+  }
+  function runAutoExposure(elapsed) {
+    lastMeteredLuma = meanLuma();
+    const wanted = autoExposure * (meterTarget() / Math.max(lastMeteredLuma, 0.02));
+    const ease = 1 - Math.exp(-elapsed / METER_TAU);
+    autoExposure += (MathUtils.clamp(wanted, EXPOSURE_MIN, EXPOSURE_MAX) - autoExposure) * ease;
+    applyExposure();
+  }
+  function sampleFaceLuma(framing) {
+    if (!framing || framing.behindCamera) return null;
+    const canvas2 = renderer.domElement;
+    const centreX = (0.5 + framing.x) * canvas2.width;
+    const centreY = (0.5 - framing.y) * canvas2.height;
+    const box = Math.max(6, framing.faceSize * canvas2.height * 0.7);
+    const left = MathUtils.clamp(centreX - box / 2, 0, canvas2.width - 1);
+    const top = MathUtils.clamp(centreY - box / 2, 0, canvas2.height - 1);
+    const width = Math.min(box, canvas2.width - left);
+    const height = Math.min(box, canvas2.height - top);
+    if (width < 2 || height < 2) return null;
+    meterContext.clearRect(0, 0, METER_SIZE, METER_SIZE);
+    meterContext.drawImage(canvas2, left, top, width, height, 0, 0, METER_SIZE, METER_SIZE);
+    const { data } = meterContext.getImageData(0, 0, METER_SIZE, METER_SIZE);
+    let total = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      total += (data[i] * 0.2126 + data[i + 1] * 0.7152 + data[i + 2] * 0.0722) / 255;
+    }
+    return total / (data.length / 4);
+  }
+  function lightAngleDegrees() {
+    const toSubject = new Vector3(
+      state.position.x - camera.position.x,
+      0,
+      state.position.z - camera.position.z
+    ).normalize();
+    const lightTravel = new Vector3(-sun.position.x, 0, -sun.position.z).normalize();
+    return MathUtils.radToDeg(
+      Math.acos(MathUtils.clamp(toSubject.dot(lightTravel), -1, 1))
+    );
+  }
   var pendingShot = null;
   function takePhoto(callback) {
     pendingShot = callback;
@@ -32950,15 +33220,28 @@ void main() {
     requestAnimationFrame(animate);
     const dt = Math.min(clock.getDelta(), 0.1);
     if (!paused) step(dt);
+    sunDisc.lookAt(camera.position);
+    sunGlow.lookAt(camera.position);
     renderer.render(scene, camera);
     if (pendingShot) {
       const deliver = pendingShot;
       pendingShot = null;
+      const framing = measureFraming();
       deliver({
         dataUrl: renderer.domElement.toDataURL("image/jpeg", 0.85),
         state: window.__char.getState(),
-        framing: measureFraming()
+        framing,
+        faceLuma: sampleFaceLuma(framing),
+        lightAngle: lightAngleDegrees(),
+        exposure: { auto: autoExposure, compensation: exposureCompensation }
       });
+    }
+    if (!paused && autoExposureEnabled) {
+      sinceMetered += dt;
+      if (sinceMetered >= METER_PERIOD) {
+        runAutoExposure(sinceMetered);
+        sinceMetered = 0;
+      }
     }
   }
   animate();
@@ -33078,6 +33361,17 @@ void main() {
     setPausedForTest: (on) => {
       paused = on;
     },
+    // Freezes the auto exposure so a measurement can see the lighting on its own.
+    // With it running, every frame is normalised to the same average and the
+    // light direction looks like it makes no difference at all.
+    setAutoExposureForTest: (on, value) => {
+      autoExposureEnabled = on;
+      if (value !== void 0) autoExposure = value;
+      applyExposure();
+    },
+    // Where the sun actually ended up, so a light-direction measurement can be
+    // checked against the thing itself rather than against the angle asked for.
+    getSunForTest: () => ({ x: sun.position.x, y: sun.position.y, z: sun.position.z }),
     // Lets a test hold her heading still. Only the gaze tests want this: they
     // put the camera at a known angle off her facing, which she would otherwise
     // turn to cancel out.

@@ -14,6 +14,10 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+// Linear rather than filmic: it is a plain multiply and a clamp, so at
+// exposure 1.0 the picture is pixel-for-pixel what it was before exposure
+// existed, and the highlights clip the way a phone's do when you push them.
+renderer.toneMapping = THREE.LinearToneMapping;
 document.body.appendChild(renderer.domElement);
 
 // ---- Sky (gradient sphere, no external HDRI needed) ----
@@ -33,11 +37,83 @@ const sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: t
 scene.add(sky);
 
 // ---- Lighting ----
-const hemi = new THREE.HemisphereLight(0xdff0ff, 0x6b8f5a, 1.15);
+// The ambient fill used to be strong enough (1.15) that the sun barely
+// mattered: her face read the same brightness whichever way the light came
+// from, which is a pleasant look and a useless one for a game about handling
+// light. Dropped to a fill that fills, with the sun doing the lighting.
+const hemi = new THREE.HemisphereLight(0xdff0ff, 0x6b8f5a, 0.5);
 scene.add(hemi);
 
-const sun = new THREE.DirectionalLight(0xfff3d6, 2.0);
+const sun = new THREE.DirectionalLight(0xfff3d6, 2.6);
 sun.position.set(10, 18, 6);
+
+// Where the sun is, as an angle rather than a position, so the game can put it
+// behind her and make you deal with it. Elevation is kept fairly low: a sun
+// overhead lights everyone the same and there is nothing to photograph around.
+const SUN_DISTANCE = 26;
+let sunAzimuth = Math.atan2(sun.position.x, sun.position.z);
+let sunElevation = 0.62;
+
+// The sun as something you can see and shoot into, not just a light. Without
+// it, turning to face the sun changes nothing in frame, the meter reads the
+// same average, and backlight costs nothing — which is the opposite of the
+// problem this game is about.
+// Sized against the meter rather than by eye. A small bright disc looks like a
+// sun and does nothing: at 170m even a 6-unit circle is two degrees across, a
+// rounding error in a 50-degree frame, so pointing the camera at it moved the
+// exposure not at all. What actually makes a backlit shot hard is the haze
+// around the sun washing out a third of the picture, so that is what this is.
+// A flat disc for the glow read as a giant pale coin stuck on the sky, facets
+// and all. Haze has no edge, so it is painted as a radial falloff instead.
+function makeGlowTexture() {
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext('2d');
+  const gradient = context.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  gradient.addColorStop(0, 'rgba(255,250,235,0.95)');
+  gradient.addColorStop(0.25, 'rgba(255,244,214,0.55)');
+  gradient.addColorStop(0.6, 'rgba(255,240,205,0.18)');
+  gradient.addColorStop(1, 'rgba(255,238,200,0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, size, size);
+  return new THREE.CanvasTexture(canvas);
+}
+
+const sunDisc = new THREE.Mesh(
+  new THREE.CircleGeometry(9, 32),
+  new THREE.MeshBasicMaterial({ color: 0xfffdf2, fog: false })
+);
+const sunGlow = new THREE.Mesh(
+  new THREE.PlaneGeometry(150, 150),
+  new THREE.MeshBasicMaterial({
+    map: makeGlowTexture(), transparent: true, depthWrite: false, fog: false,
+  })
+);
+scene.add(sunDisc, sunGlow);
+
+function setSun(azimuth, elevation = sunElevation) {
+  sunAzimuth = azimuth;
+  sunElevation = elevation;
+  const ground = Math.cos(elevation) * SUN_DISTANCE;
+  sun.position.set(
+    Math.sin(azimuth) * ground,
+    Math.sin(elevation) * SUN_DISTANCE,
+    Math.cos(azimuth) * ground
+  );
+  // Out on the sky sphere, so it sits behind everything and reads as sky
+  // rather than as an object in the scene.
+  const far = 170;
+  for (const disc of [sunDisc, sunGlow]) {
+    disc.position.set(
+      Math.sin(azimuth) * Math.cos(elevation) * far,
+      Math.sin(elevation) * far,
+      Math.cos(azimuth) * Math.cos(elevation) * far
+    );
+  }
+}
+setSun(sunAzimuth, sunElevation);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.camera.left = -20;
@@ -344,6 +420,24 @@ function loadCharacter(source) {
   });
 }
 
+// How dark her shadow side is allowed to go, and how sharply it arrives.
+// VRoid ships MToon set for even, flattering light from any direction: with the
+// stock values her face measures the same brightness whether the sun is behind
+// the camera or behind her (0.762 against 0.772, measured with the exposure
+// frozen). That is what toon shading is for, and it is also a game about light
+// with no light in it, so the shade term is pulled back into play.
+const SHADE_DARKEN = 0.62;      // multiplier on the shade colour
+const SHADE_SHIFT = -0.32;      // where the lit/shade boundary sits, -1..1
+const SHADE_TOONY = 0.3;        // how hard the boundary is, 0..1
+
+function deepenToonShading(material) {
+  if (!material || !material.isMToonMaterial) return;
+  if (material.shadeColorFactor) material.shadeColorFactor.multiplyScalar(SHADE_DARKEN);
+  material.shadingShiftFactor = SHADE_SHIFT;
+  material.shadingToonyFactor = SHADE_TOONY;
+  material.needsUpdate = true;
+}
+
 function setUpCharacter(gltf, source) {
   const loaded = { key: source.key, label: source.label, bones: {} };
   loaded.vrm = gltf.userData.vrm;
@@ -356,6 +450,9 @@ function setUpCharacter(gltf, source) {
       if (obj.isMesh) {
         obj.castShadow = true;
         obj.receiveShadow = true;
+        for (const material of (Array.isArray(obj.material) ? obj.material : [obj.material])) {
+          deepenToonShading(material);
+        }
       }
     });
     vrm.scene.visible = false;
@@ -448,6 +545,17 @@ CHARACTER_SOURCES.forEach((source, index) => {
         listCast: () => cast.map((entry) => ({ key: entry.key, label: entry.label })),
         getCharacter: () => (activeCharacter ? activeCharacter.key : null),
         setCharacter: setActiveCharacter,
+        setSun,
+        lightAngle: lightAngleDegrees,
+        getExposure: () => ({
+          auto: autoExposure, compensation: exposureCompensation, metered: lastMeteredLuma,
+        }),
+        setCompensation: (stops) => {
+          exposureCompensation = THREE.MathUtils.clamp(stops, -COMPENSATION_LIMIT, COMPENSATION_LIMIT);
+          applyExposure();
+          return exposureCompensation;
+        },
+        compensationLimit: COMPENSATION_LIMIT,
         setPose: (name) => {
           keys.wave = name === 'wave';
           keys.crouch = name === 'crouch';
@@ -1135,6 +1243,117 @@ function measureFraming() {
   };
 }
 
+// ---- Exposure ----
+// A phone meters the whole frame and stops down when there is a lot of sky in
+// it, which is exactly why a backlit face comes out dark. That behaviour is not
+// faked here: the auto exposure really does read the rendered frame and chase a
+// target average, so pointing the camera into the sun darkens her face for the
+// same reason it does on a real phone, and the fix is the same one — hold the
+// exposure up yourself.
+const METER_SIZE = 48;            // px; a matrix meter does not need detail
+// Both of these are in seconds rather than frames. A frame-counted meter
+// settles at whatever rate the device happens to render at, which on a slow
+// phone means the exposure is still crawling towards correct long after you
+// have taken the picture.
+const METER_PERIOD = 0.08;        // seconds between readings
+const METER_TAU = 0.25;           // seconds; the exposure's time constant
+const METER_TARGET = 0.42;        // mean luma the auto exposure aims for
+const EXPOSURE_MIN = 0.25;
+const EXPOSURE_MAX = 6.0;
+const COMPENSATION_LIMIT = 2.0;   // EV, matching the range a phone slider gives
+
+const meterCanvas = document.createElement('canvas');
+meterCanvas.width = METER_SIZE;
+meterCanvas.height = METER_SIZE;
+const meterContext = meterCanvas.getContext('2d', { willReadFrequently: true });
+
+let autoExposure = 1;
+let exposureCompensation = 0;     // in stops, set by the player
+let sinceMetered = 0;
+let autoExposureEnabled = true;
+let lastMeteredLuma = METER_TARGET;
+
+// Compensation biases what the meter is aiming for, rather than multiplying
+// what the meter produced. Written the other way round first, and it did not
+// work: the auto exposure simply metered the brighter frame and pulled it back
+// down, so +2 stops bought about half a stop. On a real camera the dial moves
+// the target, and the meter then holds the picture there.
+function meterTarget() {
+  return METER_TARGET * Math.pow(2, exposureCompensation);
+}
+
+function applyExposure() {
+  renderer.toneMappingExposure = THREE.MathUtils.clamp(autoExposure, EXPOSURE_MIN, EXPOSURE_MAX);
+}
+
+// Mean luma of whatever is on screen. Must run in the same tick as the render,
+// like the photo capture, or it reads a cleared buffer.
+function meanLuma() {
+  meterContext.drawImage(renderer.domElement, 0, 0, METER_SIZE, METER_SIZE);
+  const { data } = meterContext.getImageData(0, 0, METER_SIZE, METER_SIZE);
+  let total = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    total += (data[i] * 0.2126 + data[i + 1] * 0.7152 + data[i + 2] * 0.0722) / 255;
+  }
+  return total / (data.length / 4);
+}
+
+function runAutoExposure(elapsed) {
+  lastMeteredLuma = meanLuma();
+  // Chase the target in exposure space rather than jumping to the ratio, so a
+  // camera swing across the sun ramps the way a phone's does instead of
+  // strobing. The ease is per second of real time, not per reading, so the
+  // ramp takes the same quarter-second whatever the frame rate.
+  const wanted = autoExposure * (meterTarget() / Math.max(lastMeteredLuma, 0.02));
+  const ease = 1 - Math.exp(-elapsed / METER_TAU);
+  autoExposure += (THREE.MathUtils.clamp(wanted, EXPOSURE_MIN, EXPOSURE_MAX) - autoExposure) * ease;
+  applyExposure();
+}
+
+// Average brightness of the frame where her face is, which is what the photo
+// is actually judged on. Sampled from the rendered frame rather than from the
+// lighting model, so it accounts for the exposure the player chose.
+function sampleFaceLuma(framing) {
+  if (!framing || framing.behindCamera) return null;
+  const canvas = renderer.domElement;
+  // framing.x/y are fractions of the frame from the centre; y is up in NDC and
+  // down in canvas pixels.
+  const centreX = (0.5 + framing.x) * canvas.width;
+  const centreY = (0.5 - framing.y) * canvas.height;
+  const box = Math.max(6, framing.faceSize * canvas.height * 0.7);
+  const left = THREE.MathUtils.clamp(centreX - box / 2, 0, canvas.width - 1);
+  const top = THREE.MathUtils.clamp(centreY - box / 2, 0, canvas.height - 1);
+  const width = Math.min(box, canvas.width - left);
+  const height = Math.min(box, canvas.height - top);
+  if (width < 2 || height < 2) return null;
+
+  meterContext.clearRect(0, 0, METER_SIZE, METER_SIZE);
+  meterContext.drawImage(canvas, left, top, width, height, 0, 0, METER_SIZE, METER_SIZE);
+  const { data } = meterContext.getImageData(0, 0, METER_SIZE, METER_SIZE);
+  let total = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    total += (data[i] * 0.2126 + data[i + 1] * 0.7152 + data[i + 2] * 0.0722) / 255;
+  }
+  return total / (data.length / 4);
+}
+
+// Which way the light is coming from, as the photographer experiences it: the
+// angle between the way the camera is pointing and the way the light travels.
+// 0 means the sun is behind you and full on her face; 180 means you are
+// shooting into it. Checked against the renderer rather than reasoned about —
+// tools/measure_light.js shows her face at 0.55 at one end and 0.38 at the
+// other, which is the right way round.
+function lightAngleDegrees() {
+  const toSubject = new THREE.Vector3(
+    state.position.x - camera.position.x, 0, state.position.z - camera.position.z
+  ).normalize();
+  // From the sun towards the scene, which is the direction the light travels.
+  const lightTravel = new THREE.Vector3(-sun.position.x, 0, -sun.position.z).normalize();
+  return THREE.MathUtils.radToDeg(
+    Math.acos(THREE.MathUtils.clamp(toSubject.dot(lightTravel), -1, 1))
+  );
+}
+
 // A photo has to be taken in the same tick as the render that produced it: the
 // drawing buffer is cleared between frames, so reading it any later hands back
 // a blank canvas. The game asks here and gets the picture on the next frame.
@@ -1153,15 +1372,33 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1);
   if (!paused) step(dt);
+  // The sun discs are flat circles; they only read as a sun while they face
+  // the camera.
+  sunDisc.lookAt(camera.position);
+  sunGlow.lookAt(camera.position);
   renderer.render(scene, camera);
+
+  // Both of these read the drawing buffer, so both belong here, after the
+  // render that filled it and before the next frame clears it.
   if (pendingShot) {
     const deliver = pendingShot;
     pendingShot = null;
+    const framing = measureFraming();
     deliver({
       dataUrl: renderer.domElement.toDataURL('image/jpeg', 0.85),
       state: window.__char.getState(),
-      framing: measureFraming(),
+      framing,
+      faceLuma: sampleFaceLuma(framing),
+      lightAngle: lightAngleDegrees(),
+      exposure: { auto: autoExposure, compensation: exposureCompensation },
     });
+  }
+  if (!paused && autoExposureEnabled) {
+    sinceMetered += dt;
+    if (sinceMetered >= METER_PERIOD) {
+      runAutoExposure(sinceMetered);
+      sinceMetered = 0;
+    }
   }
 }
 animate();
@@ -1285,6 +1522,17 @@ window.__char = {
     step(0.001);
   },
   setPausedForTest: (on) => { paused = on; },
+  // Freezes the auto exposure so a measurement can see the lighting on its own.
+  // With it running, every frame is normalised to the same average and the
+  // light direction looks like it makes no difference at all.
+  setAutoExposureForTest: (on, value) => {
+    autoExposureEnabled = on;
+    if (value !== undefined) autoExposure = value;
+    applyExposure();
+  },
+  // Where the sun actually ended up, so a light-direction measurement can be
+  // checked against the thing itself rather than against the angle asked for.
+  getSunForTest: () => ({ x: sun.position.x, y: sun.position.y, z: sun.position.z }),
   // Lets a test hold her heading still. Only the gaze tests want this: they
   // put the camera at a known angle off her facing, which she would otherwise
   // turn to cancel out.

@@ -39,12 +39,37 @@ export const FRAMINGS = [
   { key: 'wide', label: '引き', min: 0.020, max: 0.040 },    // ~4m to 8.5m
 ];
 
+// Where the light is coming from, in the angle lightAngleDegrees() reports:
+// 0 is the sun behind you, 180 is shooting into it.
+export const LIGHTS = [
+  { key: 'front', label: '順光', min: 0, max: 55 },
+  { key: 'side', label: 'サイド光', min: 55, max: 125 },
+  { key: 'back', label: '逆光', min: 125, max: 180 },
+];
+
+// How bright her face should come out in the finished picture, as mean luma.
+// Measured, not chosen. tools/measure_light.js reads her face at each light
+// angle and compensation:
+//
+//            no compensation   +1 stop   +2 stops
+//   順光            0.46         0.75       0.92
+//   サイド光         0.44         0.68       0.91
+//   半逆光          0.42         0.65       0.90
+//   逆光            0.41         0.63       0.90
+//
+// The band is drawn so that the easy light needs nothing, shooting into the sun
+// needs a stop of lift, and pushing every shot to +2 blows the face out. That
+// gradient is the lesson.
+export const FACE_LUMA = { min: 0.43, max: 0.72 };
+
 const SHOTS_PER_SESSION = 3;
 
-// What each part of the brief is worth. Pose and face are the request; framing
-// is the part that is actually yours to get right, so it carries as much
-// weight as the two of them together.
-const POINTS = { pose: 25, expression: 25, inFrame: 15, framing: 20, centred: 15 };
+// What each part of the brief is worth. Scored as a fraction of what was
+// available rather than as a running total, so a brief that asks for one more
+// thing does not quietly move the star thresholds.
+const POINTS = {
+  pose: 25, expression: 25, inFrame: 10, framing: 15, centred: 10, brightness: 15, light: 15,
+};
 const STAR_THRESHOLDS = [85, 60, 30];   // 3 stars, 2 stars, 1 star
 
 // An expression that has only just started easing in is not the expression she
@@ -57,23 +82,35 @@ export function scoreShot(request, shot) {
   const framing = shot.framing;
   const band = byKey(FRAMINGS, request.framing);
   const parts = [];
+  const add = (part) => parts.push({ ...part, points: part.ok ? part.max : (part.points || 0) });
 
   const poseOk = shot.state.animName === request.pose;
-  parts.push({ key: 'pose', label: 'ポーズ', ok: poseOk, points: poseOk ? POINTS.pose : 0 });
+  add({
+    key: 'pose', label: 'ポーズ', max: POINTS.pose, ok: poseOk,
+    hint: poseOk ? null : `お題は「${byKey(POSES, request.pose).label}」でした`,
+  });
 
   const expressionOk = shot.state.expression === request.expression
     && shot.state.expressionWeight >= EXPRESSION_SETTLED;
-  parts.push({
-    key: 'expression', label: '表情', ok: expressionOk, points: expressionOk ? POINTS.expression : 0,
+  add({
+    key: 'expression', label: '表情', max: POINTS.expression, ok: expressionOk,
+    hint: expressionOk ? null : `表情が「${byKey(EXPRESSIONS, request.expression).label}」になっていません`,
   });
 
   const inFrame = !!framing && !framing.behindCamera
     && Math.abs(framing.x) < 0.45 && Math.abs(framing.y) < 0.45;
-  parts.push({ key: 'inFrame', label: '顔が写っている', ok: inFrame, points: inFrame ? POINTS.inFrame : 0 });
+  add({
+    key: 'inFrame', label: '顔が写っている', max: POINTS.inFrame, ok: inFrame,
+    hint: inFrame ? null : '顔がフレームから外れています',
+  });
 
   const framingOk = inFrame && framing.faceSize >= band.min && framing.faceSize <= band.max;
-  parts.push({
-    key: 'framing', label: band.label, ok: framingOk, points: framingOk ? POINTS.framing : 0,
+  add({
+    key: 'framing', label: band.label, max: POINTS.framing, ok: framingOk,
+    hint: framingOk ? null
+      : (!inFrame ? '顔を入れてから寄り引きを合わせましょう'
+        : framing.faceSize < band.min ? `${band.label}のお題です。もっと寄ってください`
+          : `${band.label}のお題です。引きすぎています`),
   });
 
   // Centring is the one part that is not pass/fail: dead centre scores full,
@@ -81,31 +118,67 @@ export function scoreShot(request, shot) {
   // little off-centre and still be a good photo.
   const offCentre = inFrame ? Math.hypot(framing.x, framing.y) : 1;
   const centred = Math.max(0, 1 - offCentre / 0.35);
-  parts.push({
-    key: 'centred', label: '構図', ok: centred > 0.5,
-    points: Math.round(POINTS.centred * centred),
+  add({
+    key: 'centred', label: '構図', max: POINTS.centred, ok: centred > 0.5, points: Math.round(POINTS.centred * centred),
+    hint: centred > 0.5 ? null : '顔が画面の端に寄りすぎています',
   });
 
-  const total = parts.reduce((sum, part) => sum + part.points, 0);
+  // The photograph's own pixels, where her face is. This is the part that
+  // rewards handling the light rather than pointing the camera.
+  const luma = shot.faceLuma;
+  const bright = luma !== null && luma !== undefined;
+  const brightOk = bright && luma >= FACE_LUMA.min && luma <= FACE_LUMA.max;
+  add({
+    key: 'brightness', label: '顔の明るさ', max: POINTS.brightness, ok: brightOk,
+    hint: brightOk ? null
+      : !bright ? '顔が写っていないので明るさを測れません'
+        : luma < FACE_LUMA.min
+          ? '顔が暗く沈んでいます。逆光では明るさを＋に補正します'
+          : '顔が明るく飛んでいます。明るさを−に戻しましょう',
+  });
+
+  if (request.light) {
+    const wanted = byKey(LIGHTS, request.light);
+    const angle = shot.lightAngle;
+    const lightOk = angle !== undefined && angle >= wanted.min && angle <= wanted.max;
+    add({
+      key: 'light', label: wanted.label, max: POINTS.light, ok: lightOk,
+      hint: lightOk ? null
+        : `いまは${describeLight(angle)}です。${wanted.label}になる位置まで回り込みましょう`,
+    });
+  }
+
+  const earned = parts.reduce((sum, part) => sum + part.points, 0);
+  const possible = parts.reduce((sum, part) => sum + part.max, 0);
+  const total = Math.round((earned / possible) * 100);
   const rank = STAR_THRESHOLDS.findIndex((threshold) => total >= threshold);
   let stars = rank === -1 ? 0 : 3 - rank;
-  // A beautifully framed photo of the wrong pose is not a good photo. Framing
-  // alone can reach 50 points, which would otherwise buy two stars for a shot
-  // that ignored the brief entirely.
+  // A beautifully framed photo of the wrong pose is not a good photo. The
+  // technical half alone is worth about half the points, which would otherwise
+  // buy two stars for a shot that ignored the brief entirely.
   if (!(poseOk && expressionOk)) stars = Math.min(stars, 1);
   return { total, stars, parts };
+}
+
+export function describeLight(angle) {
+  if (angle === undefined || angle === null) return '不明';
+  return (LIGHTS.find((entry) => angle >= entry.min && angle <= entry.max) || LIGHTS[1]).label;
 }
 
 function pick(list) {
   return list[Math.floor(Math.random() * list.length)];
 }
 
-export function makeRequest() {
-  return {
+export function makeRequest(shotNumber = 1) {
+  const request = {
     pose: pick(POSES).key,
     expression: pick(EXPRESSIONS).key,
     framing: pick(FRAMINGS).key,
   };
+  // The light is only asked for from the second shot on. The first one is
+  // enough to be learning the controls with.
+  if (shotNumber >= 2) request.light = pick(LIGHTS).key;
+  return request;
 }
 
 export function describeRequest(request) {
@@ -113,6 +186,7 @@ export function describeRequest(request) {
     pose: byKey(POSES, request.pose),
     expression: byKey(EXPRESSIONS, request.expression),
     framing: byKey(FRAMINGS, request.framing),
+    light: request.light ? byKey(LIGHTS, request.light) : null,
   };
 }
 
@@ -132,6 +206,15 @@ const STYLE = `
 .pg-chip[data-ok="true"] { border-color: #7ee787; color: #7ee787; }
 .pg-chip small { font-weight: 400; color: #8b93a7; margin-left: 4px; }
 .pg-count { font-size: 11px; color: #8b93a7; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.pg-ev { display: flex; align-items: center; gap: 8px; margin-top: 10px;
+  padding-top: 10px; border-top: 1px solid #232838; }
+.pg-ev-label { font-size: 11px; color: #8b93a7; white-space: nowrap; }
+.pg-ev-slider { flex: 1; min-width: 0; accent-color: #ffb454; }
+.pg-ev-value { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+  min-width: 3.2em; text-align: right; }
+.pg-notes { list-style: none; margin: 0 0 12px; padding: 0; text-align: left; }
+.pg-notes li { font-size: 12px; line-height: 1.6; color: #ffd166; padding: 3px 0; }
+.pg-notes li::before { content: "・"; }
 .pg-cast { display: flex; gap: 6px; margin-top: 10px; }
 .pg-pick { flex: 1; padding: 8px 0; font: inherit; font-size: 13px; font-weight: 600;
   color: #8b93a7; background: #0c0e14; border: 1px solid #2a3040; border-radius: 6px;
@@ -215,6 +298,7 @@ export function initPhotoGame(api) {
     const start = el('button', 'pg-button', '撮影を始める');
     start.addEventListener('click', () => {
       session.shots = [];
+      placeSun();
       nextRequest();
     });
     panel.append(start);
@@ -246,30 +330,53 @@ export function initPhotoGame(api) {
     panel.append(el('p', 'pg-label', 'お題'));
 
     const brief = el('div', 'pg-brief');
-    const live = api.getState();
-    const chips = [
-      { entry: described.pose, ok: live.animName === session.request.pose },
-      {
-        entry: described.expression,
-        ok: live.expression === session.request.expression
-          && live.expressionWeight >= EXPRESSION_SETTLED,
-      },
-      { entry: described.framing, ok: framingLive() },
-    ];
-    for (const chip of chips) {
+    for (const entry of [described.pose, described.expression, described.framing, described.light]) {
+      if (!entry) continue;
       const node = el('span', 'pg-chip',
-        `${chip.entry.label}${chip.entry.hint ? `<small>${chip.entry.hint}</small>` : ''}`);
-      node.dataset.ok = String(chip.ok);
+        `${entry.label}${entry.hint ? `<small>${entry.hint}</small>` : ''}`);
+      node.dataset.ok = 'false';
       brief.append(node);
     }
     panel.append(brief);
     panel.append(el('p', 'pg-count', `${session.shots.length + 1} / ${SHOTS_PER_SESSION} 枚目`));
+    panel.append(renderExposure());
     root.append(panel);
+    renderShootingChips();
 
     const shutter = el('button', 'pg-shutter');
     shutter.setAttribute('aria-label', 'シャッター');
     shutter.addEventListener('click', shoot);
     root.append(shutter, el('div', 'pg-flash'));
+  }
+
+  // The exposure slider. A phone puts this under your thumb for a reason: the
+  // whole point is that you adjust it while looking at the subject, not in a
+  // settings screen afterwards.
+  function renderExposure() {
+    const wrap = el('div', 'pg-ev');
+    const label = el('span', 'pg-ev-label', '明るさ');
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.className = 'pg-ev-slider';
+    slider.min = String(-(api.compensationLimit || 2));
+    slider.max = String(api.compensationLimit || 2);
+    slider.step = '0.25';
+    slider.value = String(api.getExposure().compensation);
+    slider.setAttribute('aria-label', '明るさ補正');
+    const readout = el('span', 'pg-ev-value', formatStops(Number(slider.value)));
+    slider.addEventListener('input', () => {
+      const stops = api.setCompensation(Number(slider.value));
+      readout.textContent = formatStops(stops);
+    });
+    // Or the keyboard would keep the slider and swallow the shutter's Enter.
+    slider.addEventListener('keydown', (event) => event.stopPropagation());
+    wrap.append(label, slider, readout);
+    return wrap;
+  }
+
+  function formatStops(stops) {
+    if (Math.abs(stops) < 0.01) return '±0';
+    return `${stops > 0 ? '+' : '−'}${Math.abs(stops).toFixed(2).replace(/\.?0+$/, '')}`;
   }
 
   function framingLive() {
@@ -299,6 +406,16 @@ export function initPhotoGame(api) {
       list.append(item);
     }
     card.append(list);
+
+    // The teaching half: what went wrong and what to do about it, in the same
+    // words a person would use. Only the misses — a list of things you already
+    // did right is not advice.
+    const misses = shot.score.parts.filter((part) => !part.ok && part.hint);
+    if (misses.length) {
+      const notes = el('ul', 'pg-notes');
+      for (const part of misses.slice(0, 3)) notes.append(el('li', null, part.hint));
+      card.append(notes);
+    }
     const next = el('button', 'pg-button',
       session.shots.length >= SHOTS_PER_SESSION ? '結果を見る' : '次のお題へ');
     next.addEventListener('click', () => {
@@ -332,6 +449,7 @@ export function initPhotoGame(api) {
     const again = el('button', 'pg-button', 'もう一度');
     again.addEventListener('click', () => {
       session.shots = [];
+      placeSun();
       nextRequest();
     });
     const quit = el('button', 'pg-button pg-ghost', 'やめる');
@@ -343,9 +461,19 @@ export function initPhotoGame(api) {
   }
 
   function nextRequest() {
-    session.request = makeRequest();
+    session.request = makeRequest(session.shots.length + 1);
     session.phase = 'shooting';
     render();
+  }
+
+  // A fresh sun for each session, so the same brief is a different problem
+  // next time: where the light is decides which way you have to walk.
+  function placeSun() {
+    if (!api.setSun) return;
+    // Kept low. A sun overhead is out of frame from every angle, so it lights
+    // everything the same and there is nothing to walk around; a low one is
+    // also when backlight is a problem in real life.
+    api.setSun(Math.random() * Math.PI * 2, 0.18 + Math.random() * 0.24);
   }
 
   function shoot() {
@@ -374,12 +502,17 @@ export function initPhotoGame(api) {
 
   function renderShootingChips() {
     const chips = root.querySelectorAll('.pg-chip');
-    if (chips.length !== 3) return;
+    if (chips.length < 3) return;
     const live = api.getState();
     chips[0].dataset.ok = String(live.animName === session.request.pose);
     chips[1].dataset.ok = String(live.expression === session.request.expression
       && live.expressionWeight >= EXPRESSION_SETTLED);
     chips[2].dataset.ok = String(framingLive());
+    if (chips[3] && session.request.light) {
+      const wanted = byKey(LIGHTS, session.request.light);
+      const angle = api.lightAngle();
+      chips[3].dataset.ok = String(angle >= wanted.min && angle <= wanted.max);
+    }
   }
 
   window.addEventListener('keydown', (event) => {
@@ -412,9 +545,19 @@ export function initPhotoGame(api) {
         session.shots.push(shot);
         session.phase = 'result';
         render();
-        resolve({ score: shot.score, bytes: shot.dataUrl.length });
+        resolve({
+          score: shot.score,
+          bytes: shot.dataUrl.length,
+          faceLuma: shot.faceLuma,
+          lightAngle: shot.lightAngle,
+          exposure: shot.exposure,
+        });
       });
     }),
+    setSunForTest: (azimuth, elevation) => api.setSun(azimuth, elevation),
+    lightAngleForTest: () => api.lightAngle(),
+    getExposureForTest: () => api.getExposure(),
+    setCompensationForTest: (stops) => api.setCompensation(stops),
     listCastForTest: () => (api.listCast ? api.listCast() : []),
     setCharacterForTest: (key) => { api.setCharacter(key); render(); },
     getCharacterForTest: () => (api.getCharacter ? api.getCharacter() : null),

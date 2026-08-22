@@ -508,10 +508,16 @@ async function frameHerAt(page, metres) {
 
 async function shootOnBrief(page, brief, { pose, expression, metres }) {
   await page.evaluate((request) => window.__game.startForTest(request), brief);
+  // Front light and no compensation, so these tests are about the framing and
+  // the brief rather than about whatever angle the sun was left at.
+  await page.evaluate(() => {
+    window.__game.setSunForTest(Math.PI, 0.3);
+    window.__game.setCompensationForTest(0);
+  });
   await frameHerAt(page, metres);
   if (pose) await page.keyboard.down(pose);
   if (expression) await page.keyboard.down(expression);
-  await page.waitForTimeout(900); // poses and expressions both ease in
+  await page.waitForTimeout(1400); // poses, expressions and the exposure all ease in
   const shot = await page.evaluate(() => window.__game.shootForTest());
   if (pose) await page.keyboard.up(pose);
   if (expression) await page.keyboard.up(expression);
@@ -565,6 +571,59 @@ test('the framing bands tell a tight shot from a loose one', async ({ page }) =>
 // Driven through the real buttons rather than the test hooks, because the
 // thing under test here is the session flow itself: three shots, a result
 // after each, and an album at the end.
+// Park the camera in front of her with the sun at a known angle behind the
+// subject or behind the camera, and let the auto exposure settle.
+async function lightHerAt(page, degrees, stops) {
+  await page.evaluate(([angle, ev]) => {
+    const head = window.__char.getBoneWorld('head');
+    window.__char.setCameraForTest(
+      { x: head.x, y: head.y, z: head.z - 2.2 }, { x: head.x, y: head.y, z: head.z }
+    );
+    window.__game.setSunForTest(Math.PI - angle * Math.PI / 180, 0.3);
+    window.__game.setCompensationForTest(ev);
+  }, [degrees, stops]);
+  await page.waitForTimeout(1400);   // the exposure's time constant is 0.25s
+}
+
+test('shooting into the sun darkens her face, and compensation is the fix', async ({ page }) => {
+  test.setTimeout(60000);
+  await page.evaluate(() => window.__game.startForTest(
+    { pose: 'idle', expression: 'happy', framing: 'medium' }
+  ));
+
+  await lightHerAt(page, 0, 0);          // sun behind the camera
+  const frontLit = await page.evaluate(() => window.__game.shootForTest());
+  await lightHerAt(page, 180, 0);        // shooting into it
+  const backLit = await page.evaluate(() => window.__game.shootForTest());
+  await lightHerAt(page, 180, 1);        // ...and lifted a stop
+  const lifted = await page.evaluate(() => window.__game.shootForTest());
+
+  // The angle is reported the way a photographer means it.
+  expect(frontLit.lightAngle).toBeLessThan(20);
+  expect(backLit.lightAngle).toBeGreaterThan(160);
+
+  // The lesson, as numbers: backlit is darker than front lit, a stop of
+  // compensation more than makes it back, and only the good ones score.
+  expect(backLit.faceLuma).toBeLessThan(frontLit.faceLuma);
+  expect(lifted.faceLuma).toBeGreaterThan(backLit.faceLuma + 0.15);
+  const brightness = (shot) => shot.score.parts.find((part) => part.key === 'brightness').ok;
+  expect(brightness(frontLit), 'front lit, no compensation').toBe(true);
+  expect(brightness(backLit), 'backlit, no compensation').toBe(false);
+  expect(brightness(lifted), 'backlit, lifted a stop').toBe(true);
+});
+
+test('exposure compensation survives the auto exposure rather than being cancelled by it', async ({ page }) => {
+  // Written the other way round first, where compensation multiplied the auto
+  // exposure's output: the meter simply pulled the brighter frame back down and
+  // two stops bought about half of one.
+  await lightHerAt(page, 90, 0);
+  const plain = await page.evaluate(() => window.__game.getExposureForTest());
+  await lightHerAt(page, 90, 1);
+  const lifted = await page.evaluate(() => window.__game.getExposureForTest());
+
+  expect(lifted.auto / plain.auto).toBeGreaterThan(1.7);
+});
+
 test('a session runs three shots and ends in an album', async ({ page }) => {
   // Three photographs, each captured on the frame after its click, plus the
   // model load — comfortably past the suite's default 20s.
