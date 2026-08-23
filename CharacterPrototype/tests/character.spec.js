@@ -830,8 +830,12 @@ async function traceScenario(page, key, seconds) {
         beat: scenario && scenario.beatIndex,
         pose: state.animName,
         expression: state.expressionWeight >= 0.6 ? state.expression : null,
+        wind: window.__char.getWeatherForTest().wind,
+        rain: window.__char.getWeatherForTest().rain,
         bird: window.__char.getBirdStateForTest().state,
         owner: window.__char.getBirdStateForTest().owner,
+        birdX: window.__char.getBirdStateForTest().position.x,
+        birdZ: window.__char.getBirdStateForTest().position.z,
       };
     });
     // Stop *before* recording, not after: one story runs straight into the
@@ -848,44 +852,51 @@ async function traceScenario(page, key, seconds) {
   return trace;
 }
 
-test('the bird is on stage living its own life, not just when a story wants it', async ({ page }) => {
-  // It is part of the place, not a prop the photo game wheels on: it is there
-  // in free play, with no session running and no scenario driving it, doing
-  // bird things a few metres away.
+test('the bird is an episode, not a fixture', async ({ page }) => {
+  // It used to potter about two metres away the whole time, session or no
+  // session. A bird that is always there is not an event -- it is furniture,
+  // and its arrival stops being the telegraph the stories rely on. So: off
+  // stage in free play, and on stage only for the stories that are about it.
   test.setTimeout(60000);
-  const seen = [];
-  const until = Date.now() + 20000;
+
+  const idle = [];
+  const until = Date.now() + 6000;
   while (Date.now() < until) {
-    seen.push(await page.evaluate(() => {
-      const bird = window.__char.getBirdStateForTest();
-      const hips = window.__char.getBoneWorld('hips');
-      return {
-        state: bird.state,
-        owner: bird.owner,
-        visible: bird.visible,
-        x: bird.position.x,
-        z: bird.position.z,
-        distance: Math.hypot(bird.position.x - hips.x, bird.position.z - hips.z),
-      };
-    }));
-    await page.waitForTimeout(150);
+    idle.push(await page.evaluate(() => window.__char.getBirdStateForTest().visible));
+    await page.waitForTimeout(200);
   }
+  expect(idle.some(Boolean), 'no bird with nothing going on').toBe(false);
 
-  expect(seen.every((f) => f.owner === 'ambient'), 'no story touched it').toBe(true);
-  expect(seen.some((f) => f.visible), 'it was on stage').toBe(true);
-  expect(seen.some((f) => f.state === 'flying'), 'it moved').toBe(true);
-  expect(seen.some((f) => f.state === 'settled'), 'it landed').toBe(true);
+  // And during its own story it is out and alive: it flies, it lands, and it
+  // hops about between beats rather than freezing where it touched down.
+  const trace = await traceScenario(page, 'bird-on-the-ground', 26);
+  expect(trace.some((f) => f.bird === 'flying'), 'it flew').toBe(true);
+  expect(trace.some((f) => f.bird === 'settled'), 'it landed').toBe(true);
+  expect(trace.some((f) => f.owner === 'story'), 'its own story had hold of it').toBe(true);
+});
 
-  // It got about, rather than landing once and freezing.
-  const places = new Set(seen
-    .filter((f) => f.state === 'settled')
-    .map((f) => `${f.x.toFixed(1)},${f.z.toFixed(1)}`));
-  expect(places.size, 'it settled in more than one place').toBeGreaterThan(1);
+test('the bird takes its time crossing the ground', async ({ page }) => {
+  // The first pass had it covering three metres in under a second, which does
+  // not read as flying. Timed off the rig: from the cue that sends it to her
+  // hand to the frame it is perched, it should take a couple of seconds --
+  // long enough that you can see it coming, which is the whole point.
+  test.setTimeout(60000);
+  await page.evaluate(() => window.__char.startScenarioForTest('bird-to-hand'));
 
-  // And it kept its distance. Coming close to her is the story's move; if the
-  // ambient bird did it too, an approach would stop being a telegraph.
-  const landed = seen.filter((f) => f.state === 'settled');
-  expect(Math.min(...landed.map((f) => f.distance))).toBeGreaterThan(1);
+  let launched = null;
+  let landed = null;
+  const until = Date.now() + 30000;
+  while (Date.now() < until && landed === null) {
+    const bird = await page.evaluate(() => window.__char.getBirdStateForTest());
+    if (bird.anchor === 'hand') {
+      if (bird.state === 'flying' && launched === null) launched = Date.now();
+      if (bird.state === 'settled' && launched !== null) landed = Date.now();
+    }
+    await page.waitForTimeout(100);
+  }
+  expect(launched, 'it set off for her hand').not.toBeNull();
+  expect(landed, 'it got there').not.toBeNull();
+  expect((landed - launched) / 1000).toBeGreaterThan(1.4);
 });
 
 test('the bird causes her reaction rather than accompanying it', async ({ page }) => {
@@ -910,7 +921,12 @@ test('the bird causes her reaction rather than accompanying it', async ({ page }
   const sad = trace.findIndex((f) => f.expression === 'sad');
   expect(sad, 'she was sad at some point').toBeGreaterThan(-1);
   expect(sad, 'the sadness came after the bird had been and gone').toBeGreaterThan(left);
-  expect(trace[sad].bird, 'the bird was already gone by then').toBe('offstage');
+  // Leaving, not necessarily gone. The departure takes a second and a half
+  // now that the bird moves at a believable speed, and she starts watching it
+  // go while it is still going -- which is the beat, so the assertion is that
+  // it is no longer sitting on her, not that it has vanished.
+  expect(trace[sad].bird, 'it was not still perched on her').not.toBe('settled');
+  expect(trace.some((f) => f.bird === 'offstage'), 'it did leave').toBe(true);
 });
 
 test('every scenario peak is a pair a brief could sensibly ask for', async ({ page }) => {
@@ -997,6 +1013,154 @@ test('retaking a burst discards it without spending a shot', async ({ page }) =>
   await page.locator('.pg-use').click();
   await expect(page.locator('.pg-stars')).toBeVisible();
   expect(await page.evaluate(() => window.__game.getShots())).toHaveLength(1);
+});
+
+test.describe('places and weather', () => {
+  test('every place builds, and swapping leaves one of them behind', async ({ page }) => {
+    const scenes = await page.evaluate(() => window.__char.listScenesForTest());
+    expect(scenes.length).toBeGreaterThanOrEqual(3);
+    for (const scene of scenes) {
+      const applied = await page.evaluate((key) => window.__char.setSceneForTest(key), scene.key);
+      expect(applied).toBe(scene.key);
+      // A scene swap that leaks the old geometry shows up here long before it
+      // shows up as a frame rate.
+      const counts = await page.evaluate(() => window.__char.sceneryCountForTest());
+      expect(counts.groups, `${scene.key} left more than one scenery group`).toBe(1);
+      expect(counts.meshes, `${scene.key} built nothing`).toBeGreaterThan(20);
+    }
+  });
+
+  test('every place works at every hour', async ({ page }) => {
+    test.setTimeout(60000);
+    const scenes = await page.evaluate(() => window.__char.listScenesForTest());
+    const times = await page.evaluate(() => window.__char.listTimesForTest());
+    expect(times.map((t) => t.key)).toEqual(['morning', 'noon', 'golden', 'night']);
+
+    for (const scene of scenes) {
+      for (const time of times) {
+        const env = await page.evaluate(([s, t]) => {
+          window.__char.setSceneForTest(s, t);
+          return window.__char.getEnvForTest();
+        }, [scene.key, time.key]);
+        expect(env, `${scene.key} at ${time.key}`).not.toBeNull();
+        expect(env.night).toBe(time.key === 'night');
+        // The sun is somewhere a photographer could work with, not on the deck
+        // and not overhead.
+        expect(env.sunElevation[0]).toBeGreaterThan(0);
+        expect(env.sunElevation[1]).toBeLessThan(1.2);
+        expect(env.sunElevation[1]).toBeGreaterThanOrEqual(env.sunElevation[0]);
+      }
+    }
+  });
+
+  test('night is dark enough to be a problem, and lit enough to solve', async ({ page }) => {
+    // The point of night is that the camera runs out of room: the meter is
+    // pinned at its ceiling, so the compensation slider cannot rescue a face
+    // standing in the dark and the answer is to move her under a light.
+    // Both halves are measured off the rendered pixels, not asserted by feel.
+    test.setTimeout(90000);
+    await page.evaluate(() => window.__char.setSceneForTest('street', 'night'));
+    await page.evaluate(() => window.__game.setSunForTest(2.4, 0.5));
+    await page.evaluate(() => window.__game.startForTest());
+
+    const nightEnv = await page.evaluate(() => window.__char.getEnvForTest());
+    expect(nightEnv.nightLights, 'the street has lights after dark').toBeGreaterThan(0);
+    expect(nightEnv.litWindows, 'and lit windows').toBeGreaterThan(10);
+
+    const faceAt = async (x, z) => {
+      await page.evaluate(([px, pz]) => window.__char.placeForTest(px, pz), [x, z]);
+      await page.waitForTimeout(1200);
+      return (await page.evaluate(() => window.__game.shootForTest())).faceLuma;
+    };
+
+    const inTheOpen = await faceAt(0, 0);
+    const byTheLight = await faceAt(-4.6, -1.6);
+    expect(inTheOpen, 'in the middle of the road she is under-exposed').toBeLessThan(0.43);
+    expect(byTheLight, 'beside the vending machine she is not').toBeGreaterThan(0.43);
+    expect(byTheLight).toBeLessThan(0.95);
+
+    // And the slider genuinely cannot fix the dark spot -- that is the lesson,
+    // so it needs to be true rather than merely intended.
+    await page.evaluate(() => window.__game.setCompensationForTest(2));
+    const lifted = await faceAt(0, 0);
+    await page.evaluate(() => window.__game.setCompensationForTest(0));
+    expect(lifted, '+2 stops does not rescue it').toBeLessThan(0.43);
+  });
+
+  test('daylight is not clamped the way night is', async ({ page }) => {
+    // The ceiling that makes night hard must not be quietly making daytime
+    // backlight impossible too.
+    await page.evaluate(() => window.__char.setSceneForTest('park', 'noon'));
+    await page.evaluate(() => window.__game.setSunForTest(2.4, 0.6));
+    await page.evaluate(() => window.__game.startForTest());
+    await page.waitForTimeout(1500);
+    const shot = await page.evaluate(() => window.__game.shootForTest());
+    expect(shot.faceLuma).toBeGreaterThan(0.3);
+  });
+
+  test('weather builds and dies away rather than switching on', async ({ page }) => {
+    test.setTimeout(60000);
+    // A cue sets a target; the ramp is what the beat before a gust is the
+    // beat before. If it snapped there would be nothing to anticipate.
+    await page.evaluate(() => window.__char.setWeatherForTest(1, 0));
+    const early = await page.evaluate(() => window.__char.getWeatherForTest());
+    expect(early.windTarget).toBe(1);
+    expect(early.wind).toBeLessThan(0.9);
+
+    // Generous waits rather than loose thresholds. Headless Chromium runs the
+    // animation loop well under real time, so simulated seconds arrive at
+    // roughly half wall-clock speed; the numbers being asserted are the real
+    // ones, it just takes longer to get there.
+    await page.waitForTimeout(9000);
+    const settled = await page.evaluate(() => window.__char.getWeatherForTest());
+    expect(settled.wind).toBeGreaterThan(0.85);
+
+    await page.evaluate(() => window.__char.setWeatherForTest(0, 0));
+    await page.waitForTimeout(9000);
+    expect((await page.evaluate(() => window.__char.getWeatherForTest())).wind).toBeLessThan(0.15);
+  });
+
+  test('the umbrella is only out when she is holding it', async ({ page }) => {
+    expect((await page.evaluate(() => window.__char.getWeatherForTest())).umbrellaVisible).toBe(false);
+    await page.evaluate(() => window.__char.holdActionForTest('umbrella', 1500));
+    await page.waitForTimeout(500);
+    const up = await page.evaluate(() => window.__char.getWeatherForTest());
+    expect(up.umbrellaVisible).toBe(true);
+    expect(up.umbrella).toBeGreaterThan(0.7);
+
+    await page.evaluate(() => window.__char.releaseActionsForTest());
+    await page.waitForTimeout(3500);
+    expect((await page.evaluate(() => window.__char.getWeatherForTest())).umbrellaVisible).toBe(false);
+  });
+
+  test('the rain story brings the weather with it and takes it away again', async ({ page }) => {
+    test.setTimeout(60000);
+    const trace = await traceScenario(page, 'caught-in-the-rain', 26);
+    expect(trace.some((f) => f.rain > 0.5), 'it rained').toBe(true);
+    expect(trace.some((f) => f.pose === 'umbrella'), 'she put an umbrella up').toBe(true);
+    // The umbrella beat comes after it is actually raining, not before.
+    const firstRain = trace.findIndex((f) => f.rain > 0.3);
+    const firstUmbrella = trace.findIndex((f) => f.pose === 'umbrella');
+    expect(firstRain).toBeGreaterThan(-1);
+    expect(firstUmbrella).toBeGreaterThan(firstRain);
+
+    // And no weather is left running once a different story starts.
+    await page.evaluate(() => window.__char.startScenarioForTest('posing-for-you'));
+    await page.waitForTimeout(12000);
+    const after = await page.evaluate(() => window.__char.getWeatherForTest());
+    expect(after.rainTarget).toBe(0);
+    expect(after.rain).toBeLessThan(0.2);
+  });
+
+  test('the wind story is a gust she reacts to', async ({ page }) => {
+    test.setTimeout(60000);
+    const trace = await traceScenario(page, 'a-gust', 24);
+    const firstWind = trace.findIndex((f) => f.wind > 0.5);
+    const firstHold = trace.findIndex((f) => f.pose === 'hold-skirt');
+    expect(firstWind, 'it blew').toBeGreaterThan(-1);
+    expect(firstHold, 'she held on to things').toBeGreaterThan(-1);
+    expect(firstHold).toBeGreaterThan(0);
+  });
 });
 
 // How far off the camera she is standing, in degrees, measured rather than

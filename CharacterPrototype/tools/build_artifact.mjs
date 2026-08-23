@@ -89,6 +89,16 @@ const loader = new GLTFLoader();`,
     "from '../src/game.js'",
   ],
   [
+    'the generated entry sits beside the bundle, not beside its source (scenes)',
+    "from './scenes.js'",
+    "from '../src/scenes.js'",
+  ],
+  [
+    'the generated entry sits beside the bundle, not beside its source (weather)',
+    "from './weather.js'",
+    "from '../src/weather.js'",
+  ],
+  [
     'clear the loading overlay on success',
     "    window.__char.ready = true;\n",
     "    window.__char.ready = true;\n    if (loadingEl) loadingEl.style.display = 'none';\n",

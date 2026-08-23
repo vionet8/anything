@@ -3,6 +3,10 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import { initPhotoGame } from './game.js';
+import {
+  SCENES, TIMES, sceneByKey, timeByKey, resolveEnv, disposeScenery,
+} from './scenes.js';
+import { createWeather } from './weather.js';
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xbfd9e8, 28, 75);
@@ -21,20 +25,35 @@ renderer.toneMapping = THREE.LinearToneMapping;
 document.body.appendChild(renderer.domElement);
 
 // ---- Sky (gradient sphere, no external HDRI needed) ----
-const skyGeo = new THREE.SphereGeometry(200, 24, 16);
-const skyColors = [];
-const skyPos = skyGeo.attributes.position;
-const topColor = new THREE.Color(0x4a90d9);
-const horizonColor = new THREE.Color(0xcfe8f2);
-for (let i = 0; i < skyPos.count; i++) {
-  const y = skyPos.getY(i) / 200;
-  const t = THREE.MathUtils.clamp(y * 0.9 + 0.15, 0, 1);
-  const c = horizonColor.clone().lerp(topColor, t);
-  skyColors.push(c.r, c.g, c.b);
-}
-skyGeo.setAttribute('color', new THREE.Float32BufferAttribute(skyColors, 3));
-const sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false }));
+// Repainted per scene rather than built once: the horizon over water is a
+// warm haze and the horizon over a street is a grey one, and getting that
+// wrong is most of what makes a swapped background look pasted on.
+const SKY_RADIUS = 200;
+const skyGeo = new THREE.SphereGeometry(SKY_RADIUS, 24, 16);
+skyGeo.setAttribute('color', new THREE.Float32BufferAttribute(
+  new Float32Array(skyGeo.attributes.position.count * 3), 3));
+const sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({
+  vertexColors: true, side: THREE.BackSide, fog: false,
+}));
 scene.add(sky);
+
+const skyTopColor = new THREE.Color();
+const skyHorizonColor = new THREE.Color();
+const skyScratch = new THREE.Color();
+
+function paintSky(top, horizon) {
+  skyTopColor.set(top);
+  skyHorizonColor.set(horizon);
+  const position = skyGeo.attributes.position;
+  const colors = skyGeo.attributes.color;
+  for (let i = 0; i < position.count; i++) {
+    const y = position.getY(i) / SKY_RADIUS;
+    const t = THREE.MathUtils.clamp(y * 0.9 + 0.15, 0, 1);
+    skyScratch.copy(skyHorizonColor).lerp(skyTopColor, t);
+    colors.setXYZ(i, skyScratch.r, skyScratch.g, skyScratch.b);
+  }
+  colors.needsUpdate = true;
+}
 
 // ---- Lighting ----
 // The ambient fill used to be strong enough (1.15) that the sun barely
@@ -44,6 +63,7 @@ scene.add(sky);
 const hemi = new THREE.HemisphereLight(0xdff0ff, 0x6b8f5a, 0.5);
 scene.add(hemi);
 
+// Colour and strength are set by the active scene; these are the park's.
 const sun = new THREE.DirectionalLight(0xfff3d6, 2.6);
 sun.position.set(10, 18, 6);
 
@@ -122,68 +142,198 @@ sun.shadow.camera.top = 20;
 sun.shadow.camera.bottom = -20;
 scene.add(sun);
 
-// ---- Ground ----
-const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(60, 48),
-  new THREE.MeshStandardMaterial({ color: 0x6fa15a, roughness: 1 })
-);
-ground.rotation.x = -Math.PI / 2;
-ground.receiveShadow = true;
-scene.add(ground);
+// ---- The place ----
+// Swapped wholesale rather than tweaked: geometry, sky, fog, fill light and
+// sun colour all belong to the scene, and mixing one scene's light with
+// another's ground is what makes a background look like a backdrop.
+const sceneryRoot = new THREE.Group();
+scene.add(sceneryRoot);
 
-const pathMat = new THREE.MeshStandardMaterial({ color: 0xcbb994, roughness: 1 });
-const path = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 40), pathMat);
-path.rotation.x = -Math.PI / 2;
-path.position.set(0, 0.01, 12);
-path.receiveShadow = true;
-scene.add(path);
+let activeScene = null;      // the entry from SCENES
+let activeTime = null;       // the entry from TIMES
+let activeEnv = null;        // the two of them resolved together
+let swayables = [];          // crowns the wind leans
+let surfRings = [];          // beach only
+let waterScrollers = [];     // meshes whose normal map drifts, for water
+let nightGlow = [];          // { material, color, intensity } — lit after dark
+let nightLights = [];        // real lights, off during the day
+// How much rain the sky has already been painted for. Declared up here rather
+// than down with the rest of the weather because applyScene resets it, and
+// applyScene runs while this module is still being evaluated.
+let paintedRain = -1;
 
-// ---- Simple procedural scenery: trees + rolling hills, deterministic so ----
-// the scene layout doesn't shuffle between reloads.
-function makeTree(x, z, scale) {
-  const group = new THREE.Group();
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.15, 0.22, 1.6, 6),
-    new THREE.MeshStandardMaterial({ color: 0x6b4a30, roughness: 1 })
-  );
-  trunk.position.y = 0.8;
-  trunk.castShadow = true;
-  group.add(trunk);
+// How far the auto exposure is allowed to lift the picture. This is what
+// makes night a photography problem rather than a filter: without a ceiling
+// the meter lifts any scene, however dark, to the same mid grey, so a street
+// at midnight came out looking like an overcast afternoon with the lights on
+// and there was nothing for the player to do about it. A real camera runs out
+// of sensor, and the answer is to put the subject next to a light -- so that
+// is the answer here too.
+const EXPOSURE_MAX_DAY = 6.0;
+// 1.8, chosen by measurement rather than by eye. tools/_night-style sweeps put
+// her face at 0.28 standing in the open and 0.55 standing beside the vending
+// machine, against a brief that wants 0.43-0.72: out of the band in the dark,
+// in it under a light. Higher ceilings lift the whole street back to a dusk
+// that reads as an overcast afternoon; lower ones make even the lit spot miss.
+const EXPOSURE_MAX_NIGHT = 1.8;
+let exposureCeiling = EXPOSURE_MAX_DAY;
 
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0x3f7a3a, roughness: 0.9 });
-  for (let i = 0; i < 3; i++) {
-    const leaf = new THREE.Mesh(new THREE.ConeGeometry(1.1 - i * 0.22, 1.4, 8), leafMat);
-    leaf.position.y = 1.6 + i * 0.9;
-    leaf.castShadow = true;
-    group.add(leaf);
+function buildScenery(sceneEntry) {
+  for (const child of [...sceneryRoot.children]) {
+    sceneryRoot.remove(child);
+    disposeScenery(child);
   }
-  group.position.set(x, 0, z);
-  group.scale.setScalar(scale);
-  return group;
+  const built = sceneEntry.build();
+  sceneryRoot.add(built.group);
+  swayables = built.sway || [];
+  surfRings = built.group.userData.surf || [];
+  nightGlow = built.nightGlow || [];
+  nightLights = built.nightLights || [];
+  waterScrollers = [];
+  built.group.traverse((object) => {
+    if (object.isMesh && object.userData.scroll) waterScrollers.push(object);
+  });
 }
 
-let seed = 42;
-function rand() {
-  seed = (seed * 1664525 + 1013904223) >>> 0;
-  return seed / 4294967296;
+// Day and night are not the same picture with the brightness down. The sun
+// becomes a moon, the lamps and the windows come on, and the disc in the sky
+// stops being a thing you can be blinded by.
+function applyDayNight(night) {
+  for (const light of nightLights) light.intensity = night ? light.userData.nightIntensity : 0;
+  for (const glow of nightGlow) {
+    glow.material.emissive.set(night ? glow.color : 0x000000);
+    glow.material.emissiveIntensity = night ? glow.intensity : 0;
+  }
+  sunDisc.material.color.set(night ? 0xdfe6f2 : 0xfffdf2);
+  sunDisc.scale.setScalar(night ? 0.42 : 1);
+  // The moon has no haze around it worth metering against, which is precisely
+  // why night exposure is a different problem: nothing in frame is bright.
+  sunGlow.visible = !night;
 }
 
-for (let i = 0; i < 26; i++) {
-  const angle = rand() * Math.PI * 2;
-  const radius = 14 + rand() * 32;
-  const x = Math.sin(angle) * radius;
-  const z = Math.cos(angle) * radius;
-  if (Math.abs(x) < 2.2 && z > -2 && z < 42) continue; // keep the path clear
-  scene.add(makeTree(x, z, 0.85 + rand() * 0.5));
+function applyScene(sceneKey, timeKey) {
+  const nextScene = sceneKey ? sceneByKey(sceneKey) : (activeScene || SCENES[0]);
+  const nextTime = timeKey ? timeByKey(timeKey) : (activeTime || TIMES[1]);
+  const sceneChanged = !activeScene || activeScene.key !== nextScene.key;
+  const timeChanged = !activeTime || activeTime.key !== nextTime.key;
+  if (!sceneChanged && !timeChanged) return { scene: activeScene, time: activeTime };
+
+  if (sceneChanged) buildScenery(nextScene);
+
+  activeScene = nextScene;
+  activeTime = nextTime;
+  activeEnv = resolveEnv(nextScene, nextTime);
+
+  paintSky(activeEnv.skyTop, activeEnv.skyHorizon);
+  scene.fog = new THREE.Fog(activeEnv.fog.color, activeEnv.fog.near, activeEnv.fog.far);
+  hemi.color.set(activeEnv.hemiSky);
+  hemi.groundColor.set(activeEnv.hemiGround);
+  hemi.intensity = activeEnv.hemiIntensity;
+  sun.color.set(activeEnv.sunColor);
+  sun.intensity = activeEnv.sunIntensity;
+  applyDayNight(activeEnv.night);
+  // Applied by the next meter tick rather than here: applyExposure reaches
+  // for state further down this file that does not exist yet on the first
+  // call, which happens during module evaluation.
+  exposureCeiling = activeEnv.night ? EXPOSURE_MAX_NIGHT : EXPOSURE_MAX_DAY;
+  paintedRain = -1;    // the weather has to repaint over the new sky
+
+  // The sun's bearing is kept; its height is pulled into whatever this place
+  // at this hour allows, because the same elevation is a different photograph
+  // in each of them.
+  setSun(sunAzimuth, THREE.MathUtils.clamp(sunElevation, ...activeEnv.sunElevation));
+  return { scene: activeScene, time: activeTime };
 }
 
-const hillMat = new THREE.MeshStandardMaterial({ color: 0x5c8f52, roughness: 1 });
-for (let i = 0; i < 10; i++) {
-  const angle = (i / 10) * Math.PI * 2;
-  const radius = 48 + rand() * 10;
-  const hill = new THREE.Mesh(new THREE.SphereGeometry(8 + rand() * 6, 12, 8), hillMat);
-  hill.position.set(Math.sin(angle) * radius, -6, Math.cos(angle) * radius);
-  scene.add(hill);
+function sceneElevationBand() {
+  return activeEnv ? activeEnv.sunElevation : [0.18, 0.42];
+}
+
+// Water is the one surface where standing still gives the game away. Drifting
+// the normal map is a two-line swell that costs nothing.
+function animateWater(dt) {
+  for (const mesh of waterScrollers) {
+    const map = mesh.material.normalMap;
+    if (!map) continue;
+    map.offset.x = (map.offset.x + dt * mesh.userData.scroll) % 1;
+    map.offset.y = (map.offset.y + dt * mesh.userData.scroll * 0.6) % 1;
+  }
+}
+
+applyScene('park', 'noon');
+
+// ---- Weather ----
+// The particles and the numbers live in weather.js; what the world does about
+// them lives here, because it is the scene's lighting that has to change.
+const weather = createWeather(scene);
+
+// How far toward "overcast" a full downpour drags the place. Rain that does
+// not take the light out of the sky is a screen effect: the give-away is that
+// her face stays lit like a sunny day while water falls past it.
+const OVERCAST = {
+  skyTop: new THREE.Color(0x6d7a86),
+  skyHorizon: new THREE.Color(0x9aa4ac),
+  fogColor: new THREE.Color(0x8e99a2),
+  hemi: 0.42,
+  sun: 0.35,       // fraction of the scene's sun that survives
+};
+
+const envSkyTop = new THREE.Color();
+const envSkyHorizon = new THREE.Color();
+const envFog = new THREE.Color();
+
+function applyWeatherToWorld() {
+  if (!activeEnv) return;
+  const env = activeEnv;
+  const wet = weather.state.rain;
+
+  hemi.intensity = THREE.MathUtils.lerp(env.hemiIntensity, OVERCAST.hemi, wet);
+  sun.intensity = env.sunIntensity * THREE.MathUtils.lerp(1, OVERCAST.sun, wet);
+  sunDisc.material.opacity = 1 - wet;
+  sunGlow.material.opacity = 1 - wet;
+  sunDisc.material.transparent = wet > 0;
+  if (env.night) sunGlow.visible = false;
+
+  // Repainting the sky is four hundred vertex colours; doing it every frame
+  // for a value that moves over several seconds is waste, so it only happens
+  // when the number has actually moved.
+  if (Math.abs(wet - paintedRain) > 0.015) {
+    paintedRain = wet;
+    envSkyTop.set(env.skyTop).lerp(OVERCAST.skyTop, wet);
+    envSkyHorizon.set(env.skyHorizon).lerp(OVERCAST.skyHorizon, wet);
+    paintSky(envSkyTop, envSkyHorizon);
+    envFog.set(env.fog.color).lerp(OVERCAST.fogColor, wet);
+    scene.fog.color.copy(envFog);
+    // Visibility closes in when it rains.
+    scene.fog.near = THREE.MathUtils.lerp(env.fog.near, env.fog.near * 0.5, wet);
+    scene.fog.far = THREE.MathUtils.lerp(env.fog.far, env.fog.far * 0.45, wet);
+  }
+}
+
+// Trees lean. Without this the wind is petals flying past a photograph of a
+// still garden, which reads as the petals being wrong rather than as wind.
+const SWAY_LEAN = 0.11;
+function applyWindToScenery() {
+  const gust = weather.state.gust;
+  if (gust < 0.005 && swayables.length === 0) return;
+  const leanX = Math.sin(weather.state.windDirection) * gust * SWAY_LEAN;
+  const leanZ = Math.cos(weather.state.windDirection) * gust * SWAY_LEAN;
+  for (let i = 0; i < swayables.length; i++) {
+    const crown = swayables[i];
+    // A per-tree phase, so a row of them does not move as one object.
+    const phase = Math.sin(weather.state.time * 2.3 + i * 1.7) * 0.35 + 1;
+    crown.rotation.z = -leanX * phase;
+    crown.rotation.x = leanZ * phase;
+  }
+}
+
+// The surf, on the beach. Two rings running up the sand and back.
+function animateSurf() {
+  for (const foam of surfRings) {
+    const t = Math.sin(weather.state.time * 0.55 + foam.userData.surfPhase);
+    foam.scale.setScalar(1 + t * 0.045);
+    foam.material.opacity = 0.35 + (t * 0.5 + 0.5) * 0.45;
+  }
 }
 
 // ---- Bird ----
@@ -284,6 +434,129 @@ function makeBird() {
 const bird = makeBird();
 scene.add(bird);
 
+// ---- Umbrella ----
+// Held in her right hand when it rains. It lives in world space and is placed
+// on the hand each frame rather than being parented to the bone: parented, it
+// inherits the hand's roll and ends up pointing sideways, and fighting that
+// back out is more maths than just putting it where it belongs.
+function makeUmbrella() {
+  const group = new THREE.Group();
+  const canopyMat = new THREE.MeshStandardMaterial({
+    color: 0xd8607a, roughness: 0.7, side: THREE.DoubleSide, flatShading: true,
+  });
+  const ribMat = new THREE.MeshStandardMaterial({ color: 0x9c4054, roughness: 0.6 });
+  const shaftMat = new THREE.MeshStandardMaterial({ color: 0x8a8f98, roughness: 0.5 });
+  const handleMat = new THREE.MeshStandardMaterial({ color: 0x6b4a30, roughness: 0.8 });
+
+  const PANELS = 8;
+  const RADIUS = 0.46;
+  const RISE = 0.26;      // apex above the rim
+  const RIM_Y = 0.52;     // where the rim sits above the hand
+
+  // An eight-segment cone, not a hemisphere. The first version was a smooth
+  // sphere segment scaled tall, which is a mushroom -- an umbrella is flat
+  // panels meeting at ridges, and a cone with a low segment count gives you
+  // exactly that for free. Open-ended so you can see the underside, which is
+  // most of what you see of an umbrella held over someone.
+  const canopy = new THREE.Mesh(
+    new THREE.ConeGeometry(RADIUS, RISE, PANELS, 1, true),
+    canopyMat
+  );
+  canopy.position.y = RIM_Y + RISE / 2;
+  canopy.castShadow = true;
+  group.add(canopy);
+
+  // Ribs, one per panel ridge. Each lives in its own group that is yawed into
+  // place, and the rib inside it only ever pitches. The first version tried to
+  // do both in one Euler -- rotation.set(0, yaw, tilt) -- and three.js
+  // composes those in a fixed XYZ order, so the tilt was applied about a world
+  // axis rather than the rib's own. Eight ribs each tilting a different way is
+  // what made it look like a smashed umbrella. Nesting makes the order a
+  // structural fact instead of something to get right.
+  const ribLength = Math.hypot(RADIUS, RISE);
+  const ribPitch = Math.atan2(RISE, RADIUS);
+  for (let i = 0; i < PANELS; i++) {
+    const pivot = new THREE.Group();
+    pivot.rotation.y = (i / PANELS) * Math.PI * 2;
+    const rib = new THREE.Mesh(
+      new THREE.BoxGeometry(ribLength * 0.9, 0.009, 0.009),
+      ribMat
+    );
+    // Laid along the panel ridge: out from the shaft and *down* to the rim.
+    // Negative, because the ridge descends as it goes outward -- positive
+    // pitched every rib upward instead, so they came out through the fabric
+    // and stuck past the edge as spikes.
+    rib.position.set(RADIUS * 0.47, RIM_Y + RISE * 0.5 - 0.01, 0);
+    rib.rotation.z = -ribPitch;
+    pivot.add(rib);
+
+    // The pointed tip each panel ends in. Without them the rim is a clean
+    // octagon, which is the one part of an umbrella that never looks clean.
+    const tipBall = new THREE.Mesh(new THREE.SphereGeometry(0.016, 5, 4), ribMat);
+    tipBall.position.set(RADIUS, RIM_Y, 0);
+    pivot.add(tipBall);
+    group.add(pivot);
+  }
+
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, 1.02, 6), shaftMat);
+  shaft.position.y = 0.3;
+  group.add(shaft);
+
+  const finial = new THREE.Mesh(new THREE.ConeGeometry(0.017, 0.075, 6), shaftMat);
+  finial.position.y = RIM_Y + RISE + 0.06;
+  group.add(finial);
+
+  // A J-hook, in the plane the shaft is in so it reads as a handle rather than
+  // as a ring threaded onto the pole.
+  const handle = new THREE.Mesh(
+    new THREE.TorusGeometry(0.048, 0.012, 6, 12, Math.PI),
+    handleMat
+  );
+  handle.position.set(0.048, -0.21, 0);
+  handle.rotation.set(Math.PI / 2, 0, Math.PI / 2);
+  group.add(handle);
+
+  group.visible = false;
+  return group;
+}
+
+const umbrella = makeUmbrella();
+scene.add(umbrella);
+
+// 0 = furled and invisible, 1 = open overhead. Eased rather than switched, so
+// opening it is a beat you can photograph rather than a pop.
+let umbrellaOpen = 0;
+const umbrellaAnchor = new THREE.Vector3();
+
+function updateUmbrella(dt) {
+  const wanted = keys.umbrella ? 1 : 0;
+  umbrellaOpen += (wanted - umbrellaOpen) * Math.min(1, dt * 5.5);
+  if (umbrellaOpen < 0.01) { umbrella.visible = false; return; }
+  umbrella.visible = true;
+
+  const node = vrm && vrm.humanoid ? vrm.humanoid.getRawBoneNode('rightHand') : null;
+  if (!node) { umbrella.visible = false; return; }
+  node.updateWorldMatrix(true, false);
+  umbrellaAnchor.setFromMatrixPosition(node.matrixWorld);
+  // Pulled a little toward her centre line. Sat exactly on the hand, the
+  // canopy covers the hand and rains on her head, which is the wrong half of
+  // the problem to solve.
+  umbrella.position.set(
+    THREE.MathUtils.lerp(umbrellaAnchor.x, vrm.scene.position.x, 0.4),
+    umbrellaAnchor.y,
+    THREE.MathUtils.lerp(umbrellaAnchor.z, vrm.scene.position.z, 0.4)
+  );
+  // Upright, tilted back a little the way a person actually carries one, and
+  // tipped into the wind when there is any.
+  umbrella.rotation.set(
+    -0.12 + Math.cos(weather.state.windDirection - facing) * weather.state.gust * 0.3,
+    facing,
+    Math.sin(weather.state.windDirection - facing) * weather.state.gust * 0.3
+  );
+  // The canopy furls down into the shaft as it closes.
+  umbrella.scale.set(umbrellaOpen, 0.35 + umbrellaOpen * 0.65, umbrellaOpen);
+}
+
 // ---- Character (VRM) ----
 const MOVE_SPEED = 3.2;
 const RUN_SPEED = 6.6;
@@ -306,6 +579,8 @@ const keys = {
   wave: false, crouch: false, peace: false, doublePeace: false, dance: false,
   // Story poses, driven by the director rather than by the keyboard.
   reachOut: false, crouchLook: false, lookUp: false,
+  // Weather poses, driven by the wind and rain episodes.
+  holdSkirt: false, umbrella: false,
 };
 
 // Jump is a one-shot trigger (a single keydown), not a held state like the
@@ -399,6 +674,12 @@ function onKey(e, down) {
     case 'KeyT':
       if (!directorActive) keys.lookUp = down;
       break;
+    case 'KeyY':
+      if (!directorActive) keys.holdSkirt = down;
+      break;
+    case 'KeyU':
+      if (!directorActive) keys.umbrella = down;
+      break;
     case 'Space':
       e.preventDefault(); // stop the page from scrolling on spacebar
       if (down) startJump();
@@ -451,6 +732,8 @@ function setPoseKeys(name) {
   keys.reachOut = name === 'reach-out';
   keys.crouchLook = name === 'crouch-look';
   keys.lookUp = name === 'look-up';
+  keys.holdSkirt = name === 'hold-skirt';
+  keys.umbrella = name === 'umbrella';
 }
 
 // A function rather than a constant: DANCE_BEAT and DANCE_BARS are defined
@@ -477,9 +760,10 @@ function danceBeatHold() {
 const SCENARIOS = [
   {
     key: 'bird-to-hand',
+    episode: 'bird',
     beats: [
-      { pose: 'look-up', expression: 'Surprised', hold: [1.2, 1.8], cue: { bird: 'sky', travel: 1.0 } },
-      { pose: 'reach-out', expression: 'relaxed', hold: [1.5, 2.0], cue: { bird: 'hand', travel: 1.6 } },
+      { pose: 'look-up', expression: 'Surprised', hold: [1.9, 2.5], cue: { bird: 'sky', travel: 1.8 } },
+      { pose: 'reach-out', expression: 'relaxed', hold: [2.7, 3.3], cue: { bird: 'hand', travel: 2.8 } },
       { pose: 'reach-out', expression: 'happy', hold: [2.8, 3.6], peak: true, story: '手にとまった鳥に、うれしそうな顔' },
       { pose: 'reach-out', expression: 'Surprised', hold: [0.9, 1.2], cue: { bird: 'away' } },
       { pose: 'look-up', expression: 'sad', hold: [1.8, 2.4] },
@@ -488,8 +772,9 @@ const SCENARIOS = [
   },
   {
     key: 'bird-to-shoulder',
+    episode: 'bird',
     beats: [
-      { pose: 'idle', expression: 'relaxed', hold: [1.3, 1.8], cue: { bird: 'shoulder', travel: 1.7 } },
+      { pose: 'idle', expression: 'relaxed', hold: [2.8, 3.4], cue: { bird: 'shoulder', travel: 2.9 } },
       { pose: 'idle', expression: 'Surprised', hold: [2.4, 3.0], peak: true, story: '肩に鳥がとまって、びっくりした顔' },
       { pose: 'peace', expression: 'happy', hold: [2.4, 3.2] },
       { pose: 'idle', expression: 'relaxed', hold: [0.9, 1.2], cue: { bird: 'away' } },
@@ -499,8 +784,9 @@ const SCENARIOS = [
   },
   {
     key: 'bird-on-the-ground',
+    episode: 'bird',
     beats: [
-      { pose: 'idle', expression: 'Surprised', hold: [1.2, 1.7], cue: { bird: 'ground', travel: 1.4 } },
+      { pose: 'idle', expression: 'Surprised', hold: [2.3, 2.9], cue: { bird: 'ground', travel: 2.4 } },
       { pose: 'crouch-look', expression: 'relaxed', hold: [1.5, 2.0] },
       { pose: 'crouch-look', expression: 'happy', hold: [2.8, 3.6], peak: true, story: 'しゃがんで鳥をのぞきこむ、うれしそうな顔' },
       { pose: 'crouch-look', expression: 'Surprised', hold: [0.8, 1.1], cue: { bird: 'away' } },
@@ -539,8 +825,9 @@ const SCENARIOS = [
   },
   {
     key: 'a-quiet-one',
+    episode: 'wind',
     beats: [
-      { pose: 'idle', expression: null, hold: [1.1, 1.5], cue: { bird: 'nearby', travel: 1.6 } },
+      { pose: 'idle', expression: null, hold: [1.1, 1.5], cue: { wind: 0.28 } },
       { pose: 'look-up', expression: 'relaxed', hold: [1.5, 2.0] },
       { pose: 'peace', expression: 'relaxed', hold: [2.6, 3.4], peak: true, story: '落ち着いた、小さめのピース' },
       { pose: 'idle', expression: null, hold: [1.3, 1.8] },
@@ -549,10 +836,8 @@ const SCENARIOS = [
   {
     key: 'the-routine',
     beats: [
-      { pose: 'idle', expression: 'relaxed', hold: [1.2, 1.7], cue: { bird: 'nearby', travel: 1.3 } },
-      // The dance is what startles it off the grass -- it does not just
-      // happen to leave at the same time.
-      { pose: 'dance', expression: 'relaxed', hold: [1.6, 2.2], cue: { bird: 'away', travel: 0.55 } },
+      { pose: 'idle', expression: 'relaxed', hold: [1.2, 1.7] },
+      { pose: 'dance', expression: 'relaxed', hold: [1.6, 2.2] },
       { pose: 'dance', expression: 'happy', hold: danceBeatHold, peak: true, story: 'ダンスのいちばん高いところ' },
       { pose: 'idle', expression: 'Surprised', hold: [1.0, 1.4] },
       { pose: 'wave', expression: 'relaxed', hold: [1.6, 2.2] },
@@ -563,20 +848,44 @@ const SCENARIOS = [
     key: 'kept-waiting',
     beats: [
       { pose: 'idle', expression: 'relaxed', hold: [1.2, 1.6] },
-      // Something to keep her company while she waits, which is also what
-      // makes the sulk read as boredom rather than as temper.
-      { pose: 'look-up', expression: 'relaxed', hold: [1.4, 1.9], cue: { bird: 'nearby', travel: 1.4 } },
+      { pose: 'look-up', expression: 'relaxed', hold: [1.4, 1.9] },
       { pose: 'idle', expression: 'angry', hold: [2.6, 3.4], peak: true, story: '待たされて、ちょっとむくれた顔' },
       { pose: 'wave', expression: 'happy', hold: [1.8, 2.4] },
       { pose: 'idle', expression: null, hold: [1.2, 1.6] },
     ],
   },
   {
-    key: 'a-thought',
+    key: 'a-gust',
+    episode: 'wind',
     beats: [
-      { pose: 'idle', expression: 'relaxed', hold: [1.2, 1.6], cue: { bird: 'sky', travel: 1.5 } },
+      { pose: 'idle', expression: 'relaxed', hold: [1.3, 1.8], cue: { wind: 0.45 } },
+      // The gust arrives, and everything she is wearing arrives with it.
+      { pose: 'hold-skirt', expression: 'Surprised', hold: [1.4, 1.9], cue: { wind: 1 } },
+      { pose: 'hold-skirt', expression: 'happy', hold: [2.8, 3.6], peak: true, story: '風に吹かれて、思わず笑ってしまう' },
+      { pose: 'idle', expression: 'relaxed', hold: [1.4, 2.0], cue: { wind: 0.25 } },
+      { pose: 'peace', expression: 'happy', hold: [1.8, 2.4], cue: { wind: 0 } },
+    ],
+  },
+  {
+    key: 'caught-in-the-rain',
+    episode: 'rain',
+    beats: [
+      { pose: 'idle', expression: 'relaxed', hold: [1.2, 1.6], cue: { rain: 0.15, wind: 0.3 } },
+      // First drops: she checks the sky before she believes it.
+      { pose: 'look-up', expression: 'Surprised', hold: [1.3, 1.8], cue: { rain: 0.6 } },
+      { pose: 'umbrella', expression: 'relaxed', hold: [1.6, 2.2], cue: { rain: 1 } },
+      { pose: 'umbrella', expression: 'happy', hold: [2.8, 3.6], peak: true, story: '傘の下で、雨を楽しんでいる顔' },
+      { pose: 'umbrella', expression: 'relaxed', hold: [1.6, 2.2], cue: { rain: 0.35 } },
+      { pose: 'look-up', expression: 'relaxed', hold: [1.6, 2.2], cue: { rain: 0, wind: 0 } },
+    ],
+  },
+  {
+    key: 'a-thought',
+    episode: 'bird',
+    beats: [
+      { pose: 'idle', expression: 'relaxed', hold: [1.2, 1.6], cue: { bird: 'sky', travel: 2.4 } },
       // It is not a mood out of nowhere: she is watching it go.
-      { pose: 'look-up', expression: 'sad', hold: [2.6, 3.4], peak: true, story: '飛んでいく鳥を見上げる、さみしそうな顔', cue: { bird: 'away', travel: 2.0 } },
+      { pose: 'look-up', expression: 'sad', hold: [2.6, 3.4], peak: true, story: '飛んでいく鳥を見上げる、さみしそうな顔', cue: { bird: 'away', travel: 3.2 } },
       { pose: 'idle', expression: 'relaxed', hold: [1.4, 1.9] },
       { pose: 'peace', expression: 'happy', hold: [1.8, 2.4] },
     ],
@@ -652,8 +961,13 @@ let beatTimer = 0;
 // Where it goes is read live every frame from an anchor rather than copied
 // once, because a perch on her hand moves when her arm does, and the arm
 // moving is the entire point of the reach-out beat.
-const BIRD_DEPART_TIME = 0.9;
-const BIRD_CIRCLE_TIME = 1.4;
+// Roughly doubled from the first pass, which had it crossing three metres in
+// under a second: fast enough that it did not read as flying so much as
+// teleporting along a curve. A small bird covers that distance in about two
+// and a half seconds when it is going somewhere deliberately, and the whole
+// point of the approach is that you can see it coming.
+const BIRD_DEPART_TIME = 1.7;
+const BIRD_CIRCLE_TIME = 2.4;
 
 let birdState = 'offstage';   // 'offstage' | 'flying' | 'settled'
 let birdAnchor = null;        // name of the anchor it is heading for / sitting on
@@ -764,6 +1078,16 @@ function birdLeave(travel = BIRD_DEPART_TIME) {
   birdState = 'flying';
 }
 
+// A beat's cue: whatever the world does at the top of that beat. Weather
+// terms are targets, not switches -- weather.update ramps toward them, which
+// is what gives the beat before a gust something to be the beat before.
+function applyCue(cue) {
+  if (!cue) return;
+  if (cue.wind !== undefined) weather.setWind(cue.wind);
+  if (cue.rain !== undefined) weather.setRain(cue.rain);
+  if (cue.bird !== undefined) birdCue(cue);
+}
+
 function birdCue(cue) {
   if (!cue) return;
   birdOwner = 'story';
@@ -776,7 +1100,7 @@ function birdCue(cue) {
   }
   if (cue.bird === 'nearby') {
     birdSpot.copy(birdGroundSpot(1.4, 2.4));
-    birdGoTo('spot', cue.travel || 1.5);
+    birdGoTo('spot', cue.travel || 2.5);
     return;
   }
   birdGoTo(cue.bird, cue.travel || BIRD_CIRCLE_TIME);
@@ -793,6 +1117,9 @@ function birdRelease() {
   birdOwner = 'ambient';
   if (birdState === 'offstage') birdSettleTime = randRange(1.5, 4);
 }
+
+// True while a bird scenario is running. Set by beginEpisode below.
+let birdEpisode = false;
 
 function birdReset() {
   birdState = 'offstage';
@@ -820,7 +1147,7 @@ function updateBirdAmbient(dt) {
 
   if (birdState === 'offstage') {
     birdSpot.copy(birdGroundSpot(1.8, 3.2));
-    birdGoTo('spot', randRange(1.3, 1.9), 0.5);
+    birdGoTo('spot', randRange(2.2, 3.0), 0.5);
     birdSettleTime = randRange(0.6, 1.6);
     return;
   }
@@ -835,7 +1162,7 @@ function updateBirdAmbient(dt) {
     const angle = Math.random() * Math.PI * 2;
     const distance = randRange(0.1, 0.3);
     birdSpot.set(from.x + Math.sin(angle) * distance, BIRD_GROUND_Y, from.z + Math.cos(angle) * distance);
-    birdGoTo('spot', randRange(0.18, 0.28), 0.06);
+    birdGoTo('spot', randRange(0.28, 0.42), 0.06);
     // Mid-streak the next hop follows almost at once; the pause comes after.
     birdSettleTime = birdHopsLeft > 0 ? randRange(0.1, 0.28) : randRange(0.9, 2.2);
     return;
@@ -845,12 +1172,16 @@ function updateBirdAmbient(dt) {
   // keeps its distance -- coming close to her is the story's move, and if the
   // ambient bird did it too, the approach would stop being a telegraph.
   birdSpot.copy(birdGroundSpot(1.5, 3.4));
-  birdGoTo('spot', randRange(0.9, 1.5), 0.55);
+  birdGoTo('spot', randRange(1.7, 2.5), 0.55);
   birdSettleTime = randRange(0.5, 1.5);
 }
 
 function updateBird(dt) {
-  if (birdOwner === 'ambient') updateBirdAmbient(dt);
+  // The ambient layer only runs during a story that is about the bird. It
+  // used to run all the time, and a bird permanently pottering about two
+  // metres away is not a bird -- it is furniture. Now it arrives with its
+  // episode and goes when the episode does.
+  if (birdOwner === 'ambient' && birdEpisode) updateBirdAmbient(dt);
   if (birdState === 'offstage') return;
 
   // Wings fold against the body when it lands and open again when it goes.
@@ -919,7 +1250,24 @@ function enterBeat(index) {
   setPoseKeys(beat.pose);
   heldExpression = beat.expression;
   beatTimer = beatHold(beat);
-  birdCue(beat.cue);
+  applyCue(beat.cue);
+}
+
+// One episode at a time, and only while the story that is about it is
+// running. This is the rule that keeps each of them meaning something: a bird
+// that is always there stops being an event, and so does weather.
+function beginEpisode(kind) {
+  birdEpisode = kind === 'bird';
+  if (birdEpisode) {
+    birdRelease();
+  } else {
+    // Anything left over from the last story clears out. The bird flies off
+    // rather than blinking out, because the player may be looking at it.
+    if (birdState !== 'offstage') birdLeave(1.6);
+    birdEpisode = false;
+  }
+  if (kind !== 'wind') weather.setWind(0);
+  if (kind !== 'rain') weather.setRain(0);
 }
 
 // Starts a specific story, or the next one out of the bag. Returns its peak
@@ -932,7 +1280,7 @@ function startScenario(key) {
   const chosen = (key && scenarioByKey(key)) || scenarioByKey(scenarioBag.next());
   if (key) scenarioBag.note(chosen.key);
   currentScenario = chosen;
-  birdRelease();
+  beginEpisode(chosen.episode);
   enterBeat(0);
   const beat = peakBeat(chosen);
   return { key: chosen.key, pose: beat.pose, expression: beat.expression, story: beat.story };
@@ -949,7 +1297,9 @@ function stopDirector() {
   currentScenario = null;
   setPoseKeys('idle');
   heldExpression = null;
+  birdEpisode = false;
   birdReset();
+  weather.reset();
 }
 
 function runDirector(dt) {
@@ -1010,6 +1360,43 @@ const SPRING_TUNING = [
   { match: /Bust/, dragForce: 0.80, stiffness: 1.3 },
   { match: /^HairJoint/, dragForce: 0.78 },
 ];
+
+// Wind on the hair and the skirt. The spring bones already integrate a
+// gravity vector every step, so the cheapest honest wind is to tilt that
+// vector: straight down in still air, leaning downwind as it picks up. The
+// authored values are captured first, because they are per joint and the wind
+// has to return to them rather than to a guess.
+const WIND_SPRING_POWER = 0.11;
+
+function captureSpringDefaults(target) {
+  if (!target || !target.springBoneManager) return;
+  for (const joint of target.springBoneManager.joints) {
+    if (joint.userData === undefined) joint.userData = {};
+    joint.userData.baseGravityDir = joint.settings.gravityDir.clone();
+    joint.userData.baseGravityPower = joint.settings.gravityPower;
+  }
+}
+
+const windVector = new THREE.Vector3();
+
+function applyWindToSpringBones() {
+  if (!vrm || !vrm.springBoneManager) return;
+  const gust = weather.state.gust;
+  windVector.set(
+    Math.sin(weather.state.windDirection) * gust,
+    0,
+    Math.cos(weather.state.windDirection) * gust
+  );
+  for (const joint of vrm.springBoneManager.joints) {
+    const base = joint.userData && joint.userData.baseGravityDir;
+    if (!base) continue;
+    joint.settings.gravityDir
+      .copy(base)
+      .addScaledVector(windVector, 3.2)
+      .normalize();
+    joint.settings.gravityPower = joint.userData.baseGravityPower + gust * WIND_SPRING_POWER;
+  }
+}
 
 function calmSpringBones(target) {
   if (!target || !target.springBoneManager) return 0;
@@ -1168,6 +1555,7 @@ function setUpCharacter(gltf, source) {
     if (vrm.lookAt) vrm.lookAt.target = gazeTarget;
 
     calmSpringBones(vrm);
+    captureSpringDefaults(vrm);
   }
   return loaded;
 }
@@ -1220,6 +1608,13 @@ CHARACTER_SOURCES.forEach((source, index) => {
         getCharacter: () => (activeCharacter ? activeCharacter.key : null),
         setCharacter: setActiveCharacter,
         setSun,
+        listScenes: () => SCENES.map((entry) => ({ key: entry.key, label: entry.label })),
+        setScene: (key) => applyScene(key, null).scene.key,
+        getScene: () => (activeScene ? activeScene.key : null),
+        listTimes: () => TIMES.map((entry) => ({ key: entry.key, label: entry.label })),
+        setTime: (key) => applyScene(null, key).time.key,
+        getTime: () => (activeTime ? activeTime.key : null),
+        sunElevationBand: sceneElevationBand,
         lightAngle: lightAngleDegrees,
         getExposure: () => ({
           auto: autoExposure, compensation: exposureCompensation, metered: lastMeteredLuma,
@@ -1740,6 +2135,52 @@ function applyCrouchLook(dt) {
 
 // Head up, following something leaving. Paired with the sad expression this
 // is the shot the bird's departure exists to create.
+// Wind. One hand pinning the skirt at the thigh, the other catching the hair
+// off her face, shoulders drawn up and turned a few degrees out of it. The
+// hair and the skirt themselves are spring bones and are handled by the wind
+// itself -- this is only what she does about it.
+function applyHoldSkirt(dt) {
+  actionCycle += dt * 1.5;
+  const gust = 0.6 + weather.state.gust * 0.6;
+  // Right hand down and forward, pressing the front of the skirt. Near the
+  // hanging Z with a forward swing on X -- the same shape as the squat's
+  // hands-on-knees arm, which is the measured one.
+  bones.rightUpperArm.rotation.set(-0.55, 0, -ARM_DOWN_Z);
+  bones.rightLowerArm.rotation.set(0.42, 0.38, 0);
+  bones.rightHand.rotation.set(0.25, 0, 0);
+  // Left hand up at the temple, holding the hair off her face. Modelled on
+  // the wave, which is the arm-to-the-head pose that is already measured:
+  // well past horizontal on Z, swung forward on X, and a hard elbow.
+  bones.leftUpperArm.rotation.set(-1.42, -0.22, 0.48);
+  bones.leftLowerArm.rotation.set(0.15, -2.15, 0);
+  bones.leftHand.rotation.set(0.2, 0, 0);
+  bones.chest.rotation.set(0.05, 0.18, -0.05 * gust);
+  bones.head.rotation.set(0.06, 0.24, -0.08 * gust + Math.sin(actionCycle) * 0.012);
+  setAnimName('hold-skirt');
+}
+
+// Rain. The arm that holds the umbrella is doing real work, so it is up and
+// bent rather than raised straight: the hand sits just above and in front of
+// the shoulder, which is where the shaft has to be for the canopy to cover
+// her at all. updateUmbrella puts the prop on that hand.
+function applyUmbrella(dt) {
+  actionCycle += dt * 1.1;
+  // Swept, not guessed. The first attempt raised the whole arm past
+  // horizontal, which put her hand level with her ear and the canopy a metre
+  // over her head with the shaft going past her face. A person carries one
+  // with the upper arm hanging and the forearm up: these land the hand a
+  // fifth of a metre below the head, a quarter forward and a little to her
+  // right, which is where a shaft actually goes.
+  bones.rightUpperArm.rotation.set(-0.2, 0.2, 0.9);
+  bones.rightLowerArm.rotation.set(0, 1.8, 0);
+  bones.rightHand.rotation.set(-0.2, 0, 0);
+  bones.leftUpperArm.rotation.set(-0.12, 0, ARM_DOWN_Z + 0.14);
+  bones.leftLowerArm.rotation.set(0.18, -0.2, 0);
+  bones.chest.rotation.set(0.03, -0.04, 0);
+  bones.head.rotation.set(0.05 + Math.sin(actionCycle * 0.8) * 0.015, -0.06, 0);
+  setAnimName('umbrella');
+}
+
 function applyLookUp(dt) {
   actionCycle += dt * 1.2;
   // Negative X on the head pitches it up -- the same direction the dance's
@@ -2006,9 +2447,18 @@ function step(dt) {
   if (!vrm) return;
 
   if (directorActive) runDirector(dt);
-  // Outside runDirector, so the bird is still there between sessions. It is
-  // part of the place, not a prop the photo game wheels on.
   updateBird(dt);
+
+  // Centred on the camera rather than on her: rain that is only around the
+  // subject leaves the near half of the frame -- the half a phone camera
+  // actually fills with weather -- completely dry.
+  weather.update(dt, camera.position);
+  applyWeatherToWorld();
+  applyWindToScenery();
+  applyWindToSpringBones();
+  animateSurf();
+  animateWater(dt);
+  updateUmbrella(dt);
 
   let moveX = 0;
   let moveZ = 0;
@@ -2084,6 +2534,8 @@ function step(dt) {
     else if (keys.reachOut) applyReachOut(dt);
     else if (keys.crouchLook) applyCrouchLook(dt);
     else if (keys.lookUp) applyLookUp(dt);
+    else if (keys.holdSkirt) applyHoldSkirt(dt);
+    else if (keys.umbrella) applyUmbrella(dt);
     else applyIdle(dt);
   }
 
@@ -2266,7 +2718,9 @@ const METER_PERIOD = 0.08;        // seconds between readings
 const METER_TAU = 0.25;           // seconds; the exposure's time constant
 const METER_TARGET = 0.42;        // mean luma the auto exposure aims for
 const EXPOSURE_MIN = 0.25;
-const EXPOSURE_MAX = 6.0;
+// The exposure ceiling lives up with the scene state -- see exposureCeiling --
+// because applyScene sets it, and applyScene runs while this module is still
+// being evaluated.
 const COMPENSATION_LIMIT = 2.0;   // EV, matching the range a phone slider gives
 
 const meterCanvas = document.createElement('canvas');
@@ -2290,7 +2744,7 @@ function meterTarget() {
 }
 
 function applyExposure() {
-  renderer.toneMappingExposure = THREE.MathUtils.clamp(autoExposure, EXPOSURE_MIN, EXPOSURE_MAX);
+  renderer.toneMappingExposure = THREE.MathUtils.clamp(autoExposure, EXPOSURE_MIN, exposureCeiling);
 }
 
 // Mean luma of whatever is on screen. Must run in the same tick as the render,
@@ -2313,7 +2767,7 @@ function runAutoExposure(elapsed) {
   // ramp takes the same quarter-second whatever the frame rate.
   const wanted = autoExposure * (meterTarget() / Math.max(lastMeteredLuma, 0.02));
   const ease = 1 - Math.exp(-elapsed / METER_TAU);
-  autoExposure += (THREE.MathUtils.clamp(wanted, EXPOSURE_MIN, EXPOSURE_MAX) - autoExposure) * ease;
+  autoExposure += (THREE.MathUtils.clamp(wanted, EXPOSURE_MIN, exposureCeiling) - autoExposure) * ease;
   applyExposure();
 }
 
@@ -2594,6 +3048,36 @@ window.__char = {
     step(0.001);
   },
   setPausedForTest: (on) => { paused = on; },
+  setExposureCeilingForTest: (value) => { exposureCeiling = value; },
+  placeForTest: (x, z) => {
+    state.position.set(x, 0, z);
+    vrm.scene.position.copy(state.position);
+  },
+  setSceneForTest: (key, time) => applyScene(key, time).scene.key,
+  setTimeForTest: (key) => applyScene(null, key).time.key,
+  getTimeForTest: () => (activeTime ? activeTime.key : null),
+  listTimesForTest: () => TIMES.map((entry) => ({ key: entry.key, label: entry.label })),
+  getEnvForTest: () => (activeEnv ? {
+    night: activeEnv.night,
+    sunIntensity: sun.intensity,
+    hemiIntensity: hemi.intensity,
+    sunElevation: activeEnv.sunElevation,
+    litWindows: nightGlow.length,
+    nightLights: nightLights.length,
+  } : null),
+  getWeatherForTest: () => ({
+    wind: weather.state.wind, rain: weather.state.rain,
+    windTarget: weather.state.windTarget, rainTarget: weather.state.rainTarget,
+    umbrella: umbrellaOpen, umbrellaVisible: umbrella.visible,
+  }),
+  setWeatherForTest: (wind, rain) => { weather.setWind(wind); weather.setRain(rain); },
+  getSceneForTest: () => (activeScene ? activeScene.key : null),
+  listScenesForTest: () => SCENES.map((entry) => ({ key: entry.key, label: entry.label })),
+  sceneryCountForTest: () => {
+    let meshes = 0;
+    sceneryRoot.traverse((object) => { if (object.isMesh) meshes++; });
+    return { groups: sceneryRoot.children.length, meshes };
+  },
   // Freezes the auto exposure so a measurement can see the lighting on its own.
   // With it running, every frame is normalised to the same average and the
   // light direction looks like it makes no difference at all.
@@ -2620,6 +3104,7 @@ window.__char = {
   scenarioPeaksForTest: () => scenarioPeaks(),
   getBirdStateForTest: () => ({
     state: birdState, visible: bird.visible, owner: birdOwner, anchor: birdAnchor,
+    episode: birdEpisode,
     position: { x: bird.position.x, y: bird.position.y, z: bird.position.z },
   }),
   // Lets a test hold her heading still. Only the gaze tests want this: they

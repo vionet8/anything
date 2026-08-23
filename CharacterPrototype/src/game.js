@@ -24,6 +24,8 @@ export const POSES = [
   { key: 'reach-out', label: '手をのばす' },
   { key: 'crouch-look', label: 'しゃがんでのぞく' },
   { key: 'look-up', label: '見上げる' },
+  { key: 'hold-skirt', label: '風に押さえる' },
+  { key: 'umbrella', label: '傘をさす' },
   { key: 'idle', label: '自然体' },
   { key: 'dance', label: 'ダンス' },
 ];
@@ -111,7 +113,7 @@ const EXPRESSION_SETTLED = 0.6;
 
 const byKey = (list, key) => list.find((entry) => entry.key === key);
 
-export function scoreShot(request, shot) {
+export function scoreShot(request, shot, { night = false } = {}) {
   const framing = shot.framing;
   const band = byKey(FRAMINGS, request.framing);
   const parts = [];
@@ -163,10 +165,15 @@ export function scoreShot(request, shot) {
   const brightOk = bright && luma >= FACE_LUMA.min && luma <= FACE_LUMA.max;
   add({
     key: 'brightness', label: '顔の明るさ', max: POINTS.brightness, ok: brightOk,
+    // After dark the advice changes completely, and saying "compensate" would
+    // be wrong: the camera is already at its ceiling, so the slider does
+    // nothing. The answer at night is to move her, not to move the slider.
     hint: brightOk ? null
       : !bright ? '顔が写っていないので明るさを測れません'
         : luma < FACE_LUMA.min
-          ? '顔が暗く沈んでいます。逆光では明るさを＋に補正します'
+          ? (night
+            ? '夜は補正では持ち上がりません。街灯や自販機の明かりのそばに立たせましょう'
+            : '顔が暗く沈んでいます。逆光では明るさを＋に補正します')
           : '顔が明るく飛んでいます。明るさを−に戻しましょう',
   });
 
@@ -284,6 +291,8 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
 .pg-cast { display: flex; gap: 6px; margin-top: 10px; }
 .pg-burstpick { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
 .pg-burstpick-label { font-size: 11px; color: #8b93a7; white-space: nowrap; }
+/* Four options where the burst picker has three, in the same width. */
+.pg-scenepick .pg-pick { font-size: 12px; padding: 8px 2px; }
 .pg-pick { flex: 1; padding: 8px 0; font: inherit; font-size: 13px; font-weight: 600;
   color: #8b93a7; background: #0c0e14; border: 1px solid #2a3040; border-radius: 6px;
   cursor: pointer; }
@@ -365,6 +374,7 @@ export function initPhotoGame(api) {
   // camera drag away from anyone who just wants to look at her.
   const session = {
     shots: [], request: null, burst: null, phase: 'free', burstFrames: DEFAULT_BURST_FRAMES,
+    sceneChosen: false, timeChosen: false,
   };
 
   const el = (tag, className, html) => {
@@ -392,10 +402,14 @@ export function initPhotoGame(api) {
         + `前ぶれを見て身構えて、${SHOTS_PER_SESSION}枚撮ってください。`),
     );
     panel.append(renderCastPicker());
+    panel.append(renderScenePicker());
+    panel.append(renderTimePicker());
     panel.append(renderBurstPicker());
     const start = el('button', 'pg-button', '撮影を始める');
     start.addEventListener('click', () => {
       session.shots = [];
+      if (!session.sceneChosen) placeScene();
+      if (!session.timeChosen) placeTime();
       placeSun();
       setDirector(true);
       nextRequest();
@@ -434,6 +448,55 @@ export function initPhotoGame(api) {
       button.dataset.on = String(member.key === current);
       button.addEventListener('click', () => {
         api.setCharacter(member.key);
+        render();
+      });
+      row.append(button);
+    }
+    return row;
+  }
+
+  // Somewhere to shoot. Left on 「おまかせ」 by default so a session still
+  // moves you around rather than settling into one familiar background, but
+  // pickable, because wanting to shoot the same place twice to compare is
+  // exactly the thing this game is supposed to teach.
+  function renderScenePicker() {
+    const scenes = api.listScenes ? api.listScenes() : [];
+    if (scenes.length < 2) return el('span');
+    const row = el('div', 'pg-burstpick pg-scenepick');
+    row.append(el('span', 'pg-burstpick-label', '場所'));
+    const options = [{ key: null, label: 'おまかせ' }, ...scenes];
+    for (const option of options) {
+      const button = el('button', 'pg-pick', option.label);
+      const chosen = option.key === null
+        ? !session.sceneChosen
+        : session.sceneChosen && api.getScene() === option.key;
+      button.dataset.on = String(chosen);
+      button.addEventListener('click', () => {
+        session.sceneChosen = option.key !== null;
+        if (option.key) api.setScene(option.key);
+        render();
+      });
+      row.append(button);
+    }
+    return row;
+  }
+
+  // Same shape as the place picker. Kept separate rather than folded into one
+  // long list, because place and hour are independent choices and pairing them
+  // into twelve buttons would be a menu rather than two decisions.
+  function renderTimePicker() {
+    const times = api.listTimes ? api.listTimes() : [];
+    if (times.length < 2) return el('span');
+    const row = el('div', 'pg-burstpick pg-scenepick');
+    row.append(el('span', 'pg-burstpick-label', '時間'));
+    for (const option of [{ key: null, label: 'おまかせ' }, ...times]) {
+      const button = el('button', 'pg-pick', option.label);
+      button.dataset.on = String(option.key === null
+        ? !session.timeChosen
+        : session.timeChosen && api.getTime() === option.key);
+      button.addEventListener('click', () => {
+        session.timeChosen = option.key !== null;
+        if (option.key) api.setTime(option.key);
         render();
       });
       row.append(button);
@@ -579,6 +642,10 @@ export function initPhotoGame(api) {
     const again = el('button', 'pg-button', 'もう一度');
     again.addEventListener('click', () => {
       session.shots = [];
+      session.sceneChosen = false;
+      session.timeChosen = false;
+      placeScene();
+      placeTime();
       placeSun();
       setDirector(true);
       nextRequest();
@@ -615,14 +682,35 @@ export function initPhotoGame(api) {
   // next time: where the light is decides which way you have to walk.
   function placeSun() {
     if (!api.setSun) return;
-    // Kept low. A sun overhead is out of frame from every angle, so it lights
-    // everything the same and there is nothing to walk around; a low one is
-    // also when backlight is a problem in real life.
-    api.setSun(Math.random() * Math.PI * 2, 0.18 + Math.random() * 0.24);
+    // Kept low, and inside the band the place allows. A sun overhead is out
+    // of frame from every angle, so it lights everything the same and there
+    // is nothing to walk around; a low one is also when backlight is a
+    // problem in real life. The band is per scene because a low sun over
+    // water is the whole point of a beach and on a street it just sits behind
+    // a building where nothing can be done about it.
+    const [low, high] = api.sunElevationBand ? api.sunElevationBand() : [0.18, 0.42];
+    api.setSun(Math.random() * Math.PI * 2, low + Math.random() * (high - low));
+  }
+
+  // Where the session happens. Picked per session rather than fixed, because
+  // the background is half the photograph: the same brief in the park and on
+  // the beach are different problems.
+  function placeScene() {
+    if (!api.listScenes || !api.setScene) return;
+    const scenes = api.listScenes();
+    if (scenes.length) api.setScene(pick(scenes).key);
+  }
+
+  // The hour, which for this game matters more than the place: it is what
+  // decides whether the light is soft, harsh, golden or absent.
+  function placeTime() {
+    if (!api.listTimes || !api.setTime) return;
+    const times = api.listTimes();
+    if (times.length) api.setTime(pick(times).key);
   }
 
   function keep(shot) {
-    shot.score = scoreShot(session.request, shot);
+    shot.score = scoreShot(session.request, shot, { night: api.getTime && api.getTime() === 'night' });
     shot.request = session.request;
     session.shots.push(shot);
     session.phase = 'result';
@@ -778,7 +866,7 @@ export function initPhotoGame(api) {
     },
     shootForTest: () => new Promise((resolve) => {
       api.takePhoto((shot) => {
-        shot.score = scoreShot(session.request, shot);
+        shot.score = scoreShot(session.request, shot, { night: api.getTime && api.getTime() === 'night' });
         shot.request = session.request;
         session.shots.push(shot);
         session.phase = 'result';
