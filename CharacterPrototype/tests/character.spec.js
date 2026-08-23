@@ -677,32 +677,71 @@ async function lightHerAt(page, degrees, stops) {
 // lands somewhere on the way down -- which is how the whole measured light
 // table came to be wrong. Wait for it to stop moving instead.
 async function settleExposure(page) {
+  // Three consecutive quiet samples, not one. A single small delta happens on
+  // any plateau on the way down, and taking it as "settled" is worth about
+  // 0.03 of face luma -- which is the same size as the effects these tests
+  // measure, and is why a threshold here kept flipping between runs.
   let previous = null;
-  for (let i = 0; i < 80; i++) {
+  let quiet = 0;
+  for (let i = 0; i < 120; i++) {
     const auto = (await page.evaluate(() => window.__game.getExposureForTest())).auto;
-    if (previous !== null && Math.abs(auto - previous) < 0.005) return;
+    if (previous !== null && Math.abs(auto - previous) < 0.003) {
+      if (++quiet >= 3) return;
+    } else {
+      quiet = 0;
+    }
     previous = auto;
     await page.waitForTimeout(200);
   }
 }
 
+// The median of three frames. One frame's face luma carries the noise of
+// whatever the renderer happened to finish; the median of three does not.
+async function shootSteady(page) {
+  const shots = [];
+  for (let i = 0; i < 3; i++) {
+    shots.push(await page.evaluate(() => window.__game.shootForTest()));
+    await page.waitForTimeout(120);
+  }
+  shots.sort((a, b) => a.faceLuma - b.faceLuma);
+  return shots[1];
+}
+
 test('shooting into the sun darkens her face, and compensation is the fix', async ({ page }) => {
   test.setTimeout(90000);
-  // On the street, explicitly. The park at noon has no real backlight problem
-  // -- measured, a face there is 0.50 into the sun against 0.52 away from it --
-  // because the frame is full of dark trees either way and the meter opens up
-  // to match. A street is where turning round actually costs you.
+  // On the street, and with a named character, because both of those change
+  // the answer. Measured face luma at noon, front lit / into the sun / into
+  // the sun at +1/3 stop:
+  //
+  //         park                 beach                street
+  //   a  0.559 0.453 0.553   0.442 0.398 0.477   0.668 0.561 0.725
+  //   b  0.447 0.338 0.420   0.356 0.274 0.335   0.534 0.436 0.552
+  //   c  0.552 0.420 0.525   0.433 0.337 0.419   0.624 0.533 0.672
+  //
+  // Two things fall out of that. Turning round costs about 0.11 of luma
+  // wherever you stand -- but the three characters are spread by just as much,
+  // so whether that 0.11 carries a face out of the 0.46-0.74 band depends on
+  // which of them is standing there. A's face is bright enough that backlit
+  // she still lands inside it; B's is not. An absolute threshold cannot be
+  // character-blind, so this test names its subject rather than pretending the
+  // lesson lands identically for all three.
+  //
+  // The park is also the wrong place to ask: it is full of dark trees either
+  // way, so the meter opens up to match and turning round costs almost
+  // nothing. A street is where it actually bites.
+  await page.evaluate(() => window.__game.setCharacterForTest('b'));
+  await page.waitForFunction(() => window.__char.ready);
   await page.evaluate(() => window.__char.setSceneForTest('street', 'noon'));
   await page.evaluate(() => window.__game.startForTest(
     { pose: 'idle', expression: 'happy', framing: 'medium' }
   ));
 
   await lightHerAt(page, 0, 0);          // sun behind the camera
-  const frontLit = await page.evaluate(() => window.__game.shootForTest());
+  const frontLit = await shootSteady(page);
   await lightHerAt(page, 180, 0);        // shooting into it
-  const backLit = await page.evaluate(() => window.__game.shootForTest());
+  const backLit = await shootSteady(page);
   await lightHerAt(page, 180, 1 / 3);    // ...and lifted a third of a stop
-  const lifted = await page.evaluate(() => window.__game.shootForTest());
+  const lifted = await shootSteady(page);
 
   // The angle is reported the way a photographer means it.
   expect(frontLit.lightAngle).toBeLessThan(20);
@@ -720,6 +759,9 @@ test('shooting into the sun darkens her face, and compensation is the fix', asyn
 });
 
 test('exposure compensation survives the auto exposure rather than being cancelled by it', async ({ page }) => {
+  // Two settles, and a settle is a poll loop against a renderer running at a
+  // few frames a second. That does not fit in the default twenty seconds.
+  test.setTimeout(90000);
   // Written the other way round first, where compensation multiplied the auto
   // exposure's output: the meter simply pulled the brighter frame back down and
   // two stops bought about half of one.

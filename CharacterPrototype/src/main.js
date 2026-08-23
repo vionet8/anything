@@ -1740,12 +1740,23 @@ const SHADE_DARKEN = 0.62;      // multiplier on the shade colour
 const SHADE_SHIFT = -0.32;      // where the lit/shade boundary sits, -1..1
 const SHADE_TOONY = 0.3;        // how hard the boundary is, 0..1
 
+// Kept so the shade term can be re-applied from the stock colour rather than
+// compounded onto an already-darkened one. Without this, sweeping the value to
+// find it costs a page reload per step.
+const toonMaterials = [];
+
 function deepenToonShading(material) {
   if (!material || !material.isMToonMaterial) return;
-  if (material.shadeColorFactor) material.shadeColorFactor.multiplyScalar(SHADE_DARKEN);
+  if (material.shadeColorFactor) {
+    if (!material.userData.stockShade) {
+      material.userData.stockShade = material.shadeColorFactor.clone();
+    }
+    material.shadeColorFactor.copy(material.userData.stockShade).multiplyScalar(SHADE_DARKEN);
+  }
   material.shadingShiftFactor = SHADE_SHIFT;
   material.shadingToonyFactor = SHADE_TOONY;
   material.needsUpdate = true;
+  if (!toonMaterials.includes(material)) toonMaterials.push(material);
 }
 
 function setUpCharacter(gltf, source) {
@@ -3403,6 +3414,19 @@ window.__char = {
     return out;
   },
   setExposureCeilingForTest: (value) => { exposureCeiling = value; },
+  // Re-applies the toon shade term from the stock colour, so how dark her
+  // shadow side goes can be swept without a reload.
+  setShadeForTest: (darken, shift, toony) => {
+    for (const material of toonMaterials) {
+      if (material.shadeColorFactor && material.userData.stockShade) {
+        material.shadeColorFactor.copy(material.userData.stockShade).multiplyScalar(darken);
+      }
+      if (shift !== undefined) material.shadingShiftFactor = shift;
+      if (toony !== undefined) material.shadingToonyFactor = toony;
+      material.needsUpdate = true;
+    }
+    return toonMaterials.length;
+  },
   placeForTest: (x, z) => {
     state.position.set(x, 0, z);
     vrm.scene.position.copy(state.position);
