@@ -573,18 +573,23 @@ test('the framing bands tell a tight shot from a loose one', async ({ page }) =>
 // after each, and an album at the end.
 test('the dance has a peak worth waiting for, and it is brief', async ({ page }) => {
   test.setTimeout(60000);
-  await page.keyboard.down('KeyR');
-  await page.waitForTimeout(400);
-  const samples = await page.evaluate(async () => {
+  // Stepped, not sampled off requestAnimationFrame. What is being measured is
+  // the shape of the routine over a couple of seconds of its own time, and
+  // tying that to rendered frames made it a measurement of the renderer
+  // instead: headless falls back to software rasterising and runs at three or
+  // four frames a second, so a hundred and fifty frames took the better part
+  // of a minute and timed the test out. Stepping the simulation directly
+  // covers exactly the intended slice, at any frame rate, in a moment.
+  const samples = await page.evaluate(() => {
     const out = [];
     for (let i = 0; i < 150; i++) {
+      window.__char.holdActionForTest('dance', 16);
       out.push(window.__game.reachForTest());
-      await new Promise((frame) => requestAnimationFrame(frame));
     }
     return out;
   });
   const state = await page.evaluate(() => window.__char.getState().animName);
-  await page.keyboard.up('KeyR');
+  await page.evaluate(() => window.__char.releaseActionsForTest());
 
   expect(state).toBe('dance');
   // Hands well above her head at the peak, well below it the rest of the time.
@@ -737,24 +742,46 @@ test('the director can be switched off, which gives manual control back', async 
   expect(state).toBe('peace');
 });
 
+// The shutter is a press-and-hold: a quick tap is one frame, holding it keeps
+// shooting until release. Playwright's click() is too fast to ever become a
+// burst, which is the point -- these two helpers are the two gestures.
+// Headless Chromium can go several hundred milliseconds without running a
+// single animation frame right after a screen changes, and a burst captures
+// one frame per rendered frame -- so a hold started into a stall collects
+// nothing. Waiting for the loop to actually be turning first makes the
+// measurement about the gesture rather than about the harness.
+async function warmFrames(page, count = 4) {
+  await page.evaluate((n) => new Promise((resolve) => {
+    let left = n;
+    const spin = () => (left-- > 0 ? requestAnimationFrame(spin) : resolve());
+    requestAnimationFrame(spin);
+  }), count);
+}
+
+async function pressShutter(page, ms) {
+  await warmFrames(page);
+  const box = await page.locator('.pg-shutter').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(ms);
+  await page.mouse.up();
+}
+
+const tapShutter = (page) => pressShutter(page, 60);
+const holdShutter = (page, ms) => pressShutter(page, ms);
+
 test('a session runs three shots and ends in an album', async ({ page }) => {
-  // Three photographs, each of which is a real burst captured over real time,
-  // plus a pick, plus the model load. On a loaded machine that has come in at
-  // a shade over a minute, so the budget is 90s rather than 60s.
+  // Three photographs, taken the ordinary way: a tap each. There is no picker
+  // in this path at all now -- one frame has nothing to choose between, and a
+  // review screen with a single option on it was most of what made the old
+  // always-burst flow tiring.
   test.setTimeout(90000);
   await page.getByRole('button', { name: '撮影を始める' }).click();
   expect(await page.evaluate(() => window.__game.getPhase())).toBe('shooting');
 
   for (let shot = 1; shot <= 3; shot++) {
-    await page.locator('.pg-shutter').click();
-    // Every shot is a burst now: wait for the picker rather than checking the
-    // phase synchronously right after the click, which raced the burst still
-    // being in flight (it runs over real time, not instantly). Picking a
-    // frame only selects it for preview now; ".pg-use" is the actual keep.
-    await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
-    await page.locator('.pg-frame').first().click();
-    await page.locator('.pg-use').click();
-    await expect(page.locator('.pg-stars')).toBeVisible();
+    await tapShutter(page);
+    await expect(page.locator('.pg-stars')).toBeVisible({ timeout: 10000 });
     expect(await page.evaluate(() => window.__game.getShots())).toHaveLength(shot);
     await page.locator('.pg-card .pg-button').first().click();
   }
@@ -905,8 +932,11 @@ test('the bird causes her reaction rather than accompanying it', async ({ page }
   // timer while a shuffle bag picked her pose. That is the opposite of a
   // story. Now the bird only appears in the scenarios that are about it, and
   // in those the landing comes before the beat it motivates.
-  test.setTimeout(60000);
-  const trace = await traceScenario(page, 'bird-to-hand', 30);
+  // The whole story is around fourteen seconds of simulated time, and
+  // headless runs at roughly half wall-clock, so the window has to cover the
+  // sad beat at the end rather than only the landing at the start.
+  test.setTimeout(90000);
+  const trace = await traceScenario(page, 'bird-to-hand', 48);
 
   expect(trace.some((f) => f.bird === 'flying'), 'the bird flew in').toBe(true);
   expect(trace.some((f) => f.owner === 'story'), 'the story had hold of it').toBe(true);
@@ -966,32 +996,43 @@ test('a scenario runs its beats in order rather than cutting at random', async (
   expect(poses).toEqual(['idle', 'wave', 'peace', 'idle']);
 });
 
-test('the burst frame count is the player\'s choice and the shutter honours it', async ({ page }) => {
-  // Two bursts, one of them twenty-four full frames, all captured over real
-  // time. This is the heaviest test in the suite; 30s was not enough for it
-  // on a loaded machine.
+test('how long you hold the shutter is how long it shoots', async ({ page }) => {
+  // How long you hold it is how long it shoots. That used to be a number
+  // chosen from a menu before the session began, which is a decision nobody
+  // can make before they know what they are about to photograph.
   test.setTimeout(60000);
   await page.getByRole('button', { name: '撮影を始める' }).click();
 
-  // The chosen count is a ceiling, not a promise: a frame needs an actual
-  // render in between captures, so a slow renderer can come in under it (see
-  // the BURST_SPACING comment in main.js). What has to hold regardless of
-  // speed is that the count never exceeds what was asked for, and that
-  // asking for more frames gets at least as many.
-  await page.getByRole('button', { name: '6枚' }).click();
-  await page.locator('.pg-shutter').click();
+  // Both holds are long by the standards of a thumb. Headless renders in
+  // fits, and a burst can only capture frames that were actually drawn, so a
+  // realistic half-second press collects two or three frames here and none at
+  // all if it lands in a stall. The relationship being checked -- longer hold,
+  // more frames -- is the same either way.
+  await holdShutter(page, 1800);
   await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
-  const smallCount = await page.locator('.pg-frame').count();
-  expect(smallCount).toBeGreaterThan(0);
-  expect(smallCount).toBeLessThanOrEqual(6);
+  const shortHold = await page.locator('.pg-frame').count();
+  expect(shortHold).toBeGreaterThan(1);
 
   await page.getByRole('button', { name: '撮り直す' }).click();
-  await page.getByRole('button', { name: '24枚' }).click();
-  await page.locator('.pg-shutter').click();
+  await holdShutter(page, 3600);
   await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
-  const largeCount = await page.locator('.pg-frame').count();
-  expect(largeCount).toBeLessThanOrEqual(24);
-  expect(largeCount).toBeGreaterThanOrEqual(smallCount);
+  const longHold = await page.locator('.pg-frame').count();
+  // Not a fixed ratio: a frame needs an actual render between captures, so a
+  // slow renderer comes in under the nominal rate either way. What has to hold
+  // is that holding longer gets you more of them, and that leaning on the
+  // button cannot fill memory without bound.
+  expect(longHold).toBeGreaterThan(shortHold);
+  expect(longHold).toBeLessThanOrEqual(48);
+});
+
+test('a tap is one photograph and skips the picker entirely', async ({ page }) => {
+  test.setTimeout(60000);
+  await page.getByRole('button', { name: '撮影を始める' }).click();
+  await tapShutter(page);
+  await expect(page.locator('.pg-stars')).toBeVisible({ timeout: 10000 });
+  expect(await page.locator('.pg-frame').count()).toBe(0);
+  expect(await page.evaluate(() => window.__game.getPhase())).toBe('result');
+  expect(await page.evaluate(() => window.__game.getShots())).toHaveLength(1);
 });
 
 test('retaking a burst discards it without spending a shot', async ({ page }) => {
@@ -999,7 +1040,7 @@ test('retaking a burst discards it without spending a shot', async ({ page }) =>
   // model load. 30s was not enough for that on a loaded machine.
   test.setTimeout(60000);
   await page.getByRole('button', { name: '撮影を始める' }).click();
-  await page.locator('.pg-shutter').click();
+  await holdShutter(page, 2500);
   await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
 
   await page.getByRole('button', { name: '撮り直す' }).click();
@@ -1007,7 +1048,7 @@ test('retaking a burst discards it without spending a shot', async ({ page }) =>
   expect(await page.evaluate(() => window.__game.getShots())).toHaveLength(0);
 
   // A second attempt still completes normally.
-  await page.locator('.pg-shutter').click();
+  await holdShutter(page, 2500);
   await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
   await page.locator('.pg-frame').first().click();
   await page.locator('.pg-use').click();

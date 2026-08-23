@@ -33491,12 +33491,7 @@ void main() {
     { key: "dance", label: "\u30C0\u30F3\u30B9" }
   ];
   var DANCE_PEAK_REACH = 0.15;
-  var BURST_OPTIONS = [
-    { frames: 6, label: "6\u679A" },
-    { frames: 12, label: "12\u679A" },
-    { frames: 24, label: "24\u679A" }
-  ];
-  var DEFAULT_BURST_FRAMES = 12;
+  var HOLD_TO_BURST = 190;
   var EXPRESSIONS = [
     { key: "happy", label: "\u7B11\u9854" },
     { key: "relaxed", label: "\u306B\u3063\u3053\u308A" },
@@ -33683,8 +33678,11 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
 .pg-cast { display: flex; gap: 6px; margin-top: 10px; }
 .pg-burstpick { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
 .pg-burstpick-label { font-size: 11px; color: #8b93a7; white-space: nowrap; }
-/* Four options where the burst picker has three, in the same width. */
-.pg-scenepick .pg-pick { font-size: 12px; padding: 8px 2px; }
+/* Four options in a 280px panel do not fit beside a label, and \u300C\u304A\u307E\u304B\u305B\u300D
+   wrapped onto two lines when they tried. The label goes above instead. */
+.pg-scenepick { flex-wrap: wrap; }
+.pg-scenepick .pg-burstpick-label { flex: 0 0 100%; margin-bottom: 2px; }
+.pg-scenepick .pg-pick { font-size: 12px; padding: 7px 2px; }
 .pg-pick { flex: 1; padding: 8px 0; font: inherit; font-size: 13px; font-weight: 600;
   color: #8b93a7; background: #0c0e14; border: 1px solid #2a3040; border-radius: 6px;
   cursor: pointer; }
@@ -33698,8 +33696,19 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   width: 68px; height: 68px; border-radius: 50%; background: #ffb454; border: 4px solid #0c0e14;
   box-shadow: 0 0 0 2px #ffb454; cursor: pointer; pointer-events: auto; }
 .pg-shutter:active { transform: translateX(-50%) scale(0.94); }
-.pg-burst { display: flex; align-items: center; justify-content: center; }
-.pg-burst-label { font-size: 12px; font-weight: 700; color: #0c0e14; letter-spacing: 0.04em; }
+.pg-shutter { display: flex; align-items: center; justify-content: center;
+  touch-action: none; -webkit-user-select: none; user-select: none; }
+/* Held down: it turns red and counts, so it is obvious the burst is running
+   and obvious that letting go is what stops it. */
+.pg-shutter[data-rolling] { background: #ff5c5c; box-shadow: 0 0 0 2px #ff5c5c;
+  animation: pg-rolling 0.9s ease-in-out infinite; }
+@keyframes pg-rolling {
+  0%, 100% { box-shadow: 0 0 0 2px #ff5c5c; }
+  50% { box-shadow: 0 0 0 8px rgba(255, 92, 92, 0.35); }
+}
+.pg-burst-label { font-size: 15px; font-weight: 700; color: #0c0e14; letter-spacing: 0.02em; }
+.pg-shutter-hint { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid #232838;
+  font-size: 11px; letter-spacing: 0.04em; color: #8b93a7; text-align: center; }
 /* The review screen: one large preview plus a horizontally scrolling strip of
    every frame, rather than a small fixed grid -- picking the right one out of
    a burst of frames that can look nearly identical at thumbnail size needs
@@ -33750,7 +33759,10 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   .pg-panel { top: auto; bottom: 104px; left: 16px; right: 16px; width: auto; }
   .pg-card { padding: 14px; }
 }
-@media (prefers-reduced-motion: reduce) { .pg-flash.pg-firing { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .pg-flash.pg-firing { animation: none; }
+  .pg-shutter[data-rolling] { animation: none; }
+}
 `;
   function initPhotoGame(api) {
     const root = document.createElement("div");
@@ -33764,7 +33776,6 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       request: null,
       burst: null,
       phase: "free",
-      burstFrames: DEFAULT_BURST_FRAMES,
       sceneChosen: false,
       timeChosen: false
     };
@@ -33795,7 +33806,6 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       panel.append(renderCastPicker());
       panel.append(renderScenePicker());
       panel.append(renderTimePicker());
-      panel.append(renderBurstPicker());
       const start = el("button", "pg-button", "\u64AE\u5F71\u3092\u59CB\u3081\u308B");
       start.addEventListener("click", () => {
         session.shots = [];
@@ -33807,20 +33817,6 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       });
       panel.append(start);
       root.append(panel);
-    }
-    function renderBurstPicker() {
-      const wrap = el("div", "pg-burstpick");
-      wrap.append(el("span", "pg-burstpick-label", "\u9023\u5199"));
-      for (const option of BURST_OPTIONS) {
-        const button = el("button", "pg-pick", option.label);
-        button.dataset.on = String(option.frames === session.burstFrames);
-        button.addEventListener("click", () => {
-          session.burstFrames = option.frames;
-          render();
-        });
-        wrap.append(button);
-      }
-      return wrap;
     }
     function renderCastPicker() {
       const row = el("div", "pg-cast");
@@ -33893,14 +33889,45 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       panel.append(brief);
       panel.append(el("p", "pg-count", `${session.shots.length + 1} / ${SHOTS_PER_SESSION} \u679A\u76EE`));
       panel.append(renderExposure());
-      panel.append(renderBurstPicker());
+      panel.append(el("p", "pg-shutter-hint", "\u30BF\u30C3\u30D7\uFF1D1\u679A\u3000\u9577\u62BC\u3057\uFF1D\u9023\u5199"));
       root.append(panel);
       renderShootingChips();
-      const shutter = el("button", "pg-shutter pg-burst");
-      shutter.setAttribute("aria-label", "\u9023\u5199");
-      shutter.append(el("span", "pg-burst-label", `${session.burstFrames}\u679A`));
-      shutter.addEventListener("click", shootBurst);
+      const shutter = el("button", "pg-shutter");
+      shutter.setAttribute("aria-label", "\u64AE\u5F71\uFF08\u9577\u62BC\u3057\u3067\u9023\u5199\uFF09");
+      shutter.append(el("span", "pg-burst-label", ""));
+      bindShutter(shutter);
       root.append(shutter, el("div", "pg-flash"));
+    }
+    function bindShutter(shutter) {
+      let holdTimer = null;
+      let rolling = false;
+      const press = (event) => {
+        if (event.button !== void 0 && event.button !== 0) return;
+        event.preventDefault();
+        if (session.phase !== "shooting" || holdTimer || rolling) return;
+        holdTimer = setTimeout(() => {
+          holdTimer = null;
+          rolling = true;
+          shutter.dataset.rolling = "true";
+          beginBurst();
+        }, HOLD_TO_BURST);
+      };
+      const release = () => {
+        if (holdTimer) {
+          clearTimeout(holdTimer);
+          holdTimer = null;
+          shootSingle();
+          return;
+        }
+        if (!rolling) return;
+        rolling = false;
+        delete shutter.dataset.rolling;
+        endBurst();
+      };
+      shutter.addEventListener("pointerdown", press);
+      window.addEventListener("pointerup", release);
+      window.addEventListener("pointercancel", release);
+      shutter.addEventListener("click", (event) => event.preventDefault());
     }
     function renderExposure() {
       const wrap = el("div", "pg-ev");
@@ -34043,15 +34070,32 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       session.phase = "result";
       render();
     }
-    function shootBurst() {
-      const flash = root.querySelector(".pg-flash");
-      if (flash) flash.classList.add("pg-firing");
-      api.takeBurst(session.burstFrames, (frames) => {
+    function flash() {
+      const element = root.querySelector(".pg-flash");
+      if (element) element.classList.add("pg-firing");
+    }
+    function shootSingle() {
+      if (session.phase !== "shooting") return;
+      flash();
+      api.takePhoto(keep);
+    }
+    function beginBurst() {
+      flash();
+      api.startBurst((frames) => {
+        const label = root.querySelector(".pg-burst-label");
+        if (label) label.textContent = "";
+        if (frames.length <= 1) {
+          if (frames.length === 1) keep(api.encodeFrame(frames[0]));
+          return;
+        }
         session.burst = frames;
         session.pickIndex = 0;
         session.phase = "picking";
         render();
       });
+    }
+    function endBurst() {
+      api.stopBurst();
     }
     function renderPicking() {
       const sheet = el("div", "pg-sheet");
@@ -34132,6 +34176,12 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       if (sinceRefresh < 6) return;
       sinceRefresh = 0;
       renderShootingChips();
+      const label = root.querySelector(".pg-burst-label");
+      if (label && api.burstFrameCount) {
+        const count = api.burstFrameCount();
+        const text = count > 0 ? String(count) : "";
+        if (label.textContent !== text) label.textContent = text;
+      }
     }
     function renderShootingChips() {
       const chips = root.querySelectorAll(".pg-chip");
@@ -34146,9 +34196,23 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
         chips[3].dataset.ok = String(angle >= wanted.min && angle <= wanted.max);
       }
     }
+    let enterHeld = null;
     window.addEventListener("keydown", (event) => {
       if (event.code !== "Enter" && event.code !== "NumpadEnter") return;
-      if (session.phase === "shooting") shootBurst();
+      if (session.phase !== "shooting" || event.repeat || enterHeld) return;
+      enterHeld = setTimeout(() => {
+        enterHeld = "rolling";
+        beginBurst();
+      }, HOLD_TO_BURST);
+    });
+    window.addEventListener("keyup", (event) => {
+      if (event.code !== "Enter" && event.code !== "NumpadEnter") return;
+      if (enterHeld === "rolling") endBurst();
+      else if (enterHeld) {
+        clearTimeout(enterHeld);
+        shootSingle();
+      }
+      enterHeld = null;
     });
     render();
     tick();
@@ -34183,14 +34247,16 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       }),
       reachForTest: () => api.danceReach(),
       setDirectorForTest: (on) => setDirector(on),
-      burstForTest: () => new Promise((resolve) => {
-        api.takeBurst(session.burstFrames, (frames) => {
+      // Holds the shutter for a stretch of real time, the way a thumb does.
+      burstForTest: (holdMs = 700) => new Promise((resolve) => {
+        api.startBurst((frames) => {
           session.burst = frames;
           session.pickIndex = 0;
           session.phase = "picking";
           render();
           resolve(frames.map((frame, index) => ({ index, reach: frame.reach })));
         });
+        setTimeout(() => api.stopBurst(), holdMs);
       }),
       pickForTest: (index) => {
         const frame = session.burst[index];
@@ -35565,76 +35631,85 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       foam.material.opacity = 0.35 + (t * 0.5 + 0.5) * 0.45;
     }
   }
-  function makeWingGeometry() {
-    const geometry = new BufferGeometry();
-    const vertices = new Float32Array([
-      0,
-      0,
-      0,
-      0.11,
-      -0.01,
-      -0.03,
-      0.05,
-      5e-3,
-      -0.09
-    ]);
-    geometry.setAttribute("position", new BufferAttribute(vertices, 3));
-    geometry.computeVertexNormals();
-    return geometry;
-  }
   function makeBird() {
     const group = new Group();
-    const bodyMat = new MeshStandardMaterial({ color: 7312847, roughness: 0.75 });
-    const breastMat = new MeshStandardMaterial({ color: 15974522, roughness: 0.8 });
-    const beakMat = new MeshStandardMaterial({ color: 15247420, roughness: 0.6 });
-    const legMat = new MeshStandardMaterial({ color: 13666874, roughness: 0.7 });
-    const wingMat = new MeshStandardMaterial({ color: 4878245, roughness: 0.75, side: DoubleSide });
-    const eyeMat = new MeshStandardMaterial({ color: 1316639, roughness: 0.4 });
-    const body = new Mesh(new SphereGeometry(0.045, 10, 8), bodyMat);
-    body.scale.set(1, 0.92, 1.5);
+    const bodyMat = new MeshStandardMaterial({ color: 9420008, roughness: 0.72 });
+    const bellyMat = new MeshStandardMaterial({ color: 16774110, roughness: 0.8 });
+    const beakMat = new MeshStandardMaterial({ color: 16759121, roughness: 0.55 });
+    const legMat = new MeshStandardMaterial({ color: 15771716, roughness: 0.6 });
+    const eyeMat = new MeshStandardMaterial({ color: 2237742, roughness: 0.25 });
+    const shineMat = new MeshBasicMaterial({ color: 16777215 });
+    const cheekMat = new MeshStandardMaterial({
+      color: 16754619,
+      roughness: 0.9,
+      transparent: true,
+      opacity: 0.75
+    });
+    const wingMat = new MeshStandardMaterial({ color: 8038875, roughness: 0.72 });
+    const body = new Mesh(new SphereGeometry(0.047, 14, 10), bodyMat);
+    body.scale.set(1, 0.92, 1.06);
+    body.castShadow = true;
     group.add(body);
-    const breast = new Mesh(new SphereGeometry(0.034, 8, 6), breastMat);
-    breast.position.set(0, -0.012, 0.032);
-    breast.scale.set(0.92, 0.9, 0.95);
-    group.add(breast);
-    const head = new Mesh(new SphereGeometry(0.034, 10, 8), bodyMat);
-    head.position.set(0, 0.03, 0.062);
+    const belly = new Mesh(new SphereGeometry(0.036, 10, 8), bellyMat);
+    belly.position.set(0, -6e-3, 0.022);
+    belly.scale.set(0.9, 0.82, 0.82);
+    group.add(belly);
+    const HEAD = { y: 0.068, z: 0.014, r: 0.042 };
+    const head = new Mesh(new SphereGeometry(HEAD.r, 14, 10), bodyMat);
+    head.position.set(0, HEAD.y, HEAD.z);
+    head.castShadow = true;
     group.add(head);
+    const onHead = (azimuth, elevation, depth = 1) => new Vector3(
+      Math.sin(azimuth) * Math.cos(elevation) * HEAD.r * depth,
+      HEAD.y + Math.sin(elevation) * HEAD.r * depth,
+      HEAD.z + Math.cos(azimuth) * Math.cos(elevation) * HEAD.r * depth
+    );
     for (const side of [-1, 1]) {
-      const eye = new Mesh(new SphereGeometry(8e-3, 6, 5), eyeMat);
-      eye.position.set(side * 0.023, 0.038, 0.079);
+      const eye = new Mesh(new SphereGeometry(0.0135, 10, 8), eyeMat);
+      eye.position.copy(onHead(side * 0.46, 0.14, 0.86));
       group.add(eye);
+      const shine = new Mesh(new SphereGeometry(48e-4, 6, 5), shineMat);
+      shine.position.copy(onHead(side * 0.37, 0.31, 0.94));
+      group.add(shine);
+      const cheek = new Mesh(new SphereGeometry(0.0115, 8, 6), cheekMat);
+      cheek.position.copy(onHead(side * 0.95, -0.2, 0.95));
+      cheek.scale.set(1, 0.7, 0.55);
+      group.add(cheek);
     }
-    const beak = new Mesh(new ConeGeometry(0.011, 0.034, 6), beakMat);
+    const beak = new Mesh(new ConeGeometry(0.0125, 0.026, 7), beakMat);
     beak.rotation.x = Math.PI / 2;
-    beak.position.set(0, 0.026, 0.102);
+    beak.position.copy(onHead(0, -0.08, 1));
     group.add(beak);
+    const wings = [];
     for (const side of [-1, 1]) {
-      const leg = new Mesh(new CylinderGeometry(4e-3, 4e-3, 0.03, 5), legMat);
+      const pivot = new Group();
+      pivot.position.set(side * 0.035, 0.018, 2e-3);
+      const wing = new Mesh(new SphereGeometry(0.032, 10, 8), wingMat);
+      wing.scale.set(0.34, 1, 1.15);
+      wing.position.set(0, -0.026, -4e-3);
+      wing.castShadow = true;
+      pivot.add(wing);
+      group.add(pivot);
+      wings.push(pivot);
+    }
+    const tail = new Mesh(new SphereGeometry(0.026, 8, 6), wingMat);
+    tail.scale.set(0.85, 0.35, 1.5);
+    tail.position.set(0, 6e-3, -0.056);
+    tail.rotation.x = -0.3;
+    group.add(tail);
+    for (const side of [-1, 1]) {
+      const leg = new Mesh(new CylinderGeometry(42e-4, 42e-4, 0.022, 5), legMat);
       leg.position.set(side * 0.016, -0.05, 4e-3);
       group.add(leg);
-      const foot = new Mesh(new BoxGeometry(0.014, 5e-3, 0.026), legMat);
-      foot.position.set(side * 0.016, -0.066, 8e-3);
+      const foot = new Mesh(new SphereGeometry(0.012, 7, 5), legMat);
+      foot.scale.set(0.85, 0.36, 1.15);
+      foot.position.set(side * 0.016, -0.062, 8e-3);
       group.add(foot);
     }
-    const leftWing = new Mesh(makeWingGeometry(), wingMat);
-    leftWing.position.set(0.026, 0.022, 4e-3);
-    const rightWing = new Mesh(makeWingGeometry(), wingMat);
-    rightWing.position.set(-0.026, 0.022, 4e-3);
-    rightWing.scale.x = -1;
-    group.add(leftWing, rightWing);
-    const tail = new Mesh(makeWingGeometry(), wingMat);
-    tail.position.set(0, 4e-3, -0.062);
-    tail.rotation.set(0.55, Math.PI / 2, 0);
-    tail.scale.set(0.62, 0.62, 0.8);
-    group.add(tail);
-    group.userData.leftWing = leftWing;
-    group.userData.rightWing = rightWing;
-    group.scale.setScalar(1.9);
+    group.userData.leftWing = wings[0];
+    group.userData.rightWing = wings[1];
+    group.scale.setScalar(1.25);
     group.visible = false;
-    group.traverse((obj) => {
-      if (obj.isMesh) obj.castShadow = true;
-    });
     return group;
   }
   var bird = makeBird();
@@ -36067,14 +36142,20 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     const base = new Vector3().setFromMatrixPosition(node.matrixWorld);
     const rotation = new Quaternion().setFromRotationMatrix(node.matrixWorld);
     const side = new Vector3(1, 0, 0).applyQuaternion(rotation).normalize();
-    return base.addScaledVector(side, outward).add(new Vector3(0, lift, forward));
+    return base.addScaledVector(side, outward).add(new Vector3(0, lift, 0)).addScaledVector(bodyForward, forward);
   }
-  var BIRD_GROUND_Y = 0.132;
+  var bodyForward = new Vector3();
+  var BIRD_GROUND_Y = 0.085;
   var BIRD_ANCHORS = {
-    shoulder: () => bodyAnchor("rightShoulder", 0.11, 0.155, 0.01),
+    // On the point of the shoulder, not in it. The shoulder *joint* is at the
+    // base of the neck and buried under her hair; the deltoid it has to stand on
+    // is measured at 0.06 further out and 0.08 higher, and these offsets put its
+    // feet there. Too far out and it floats beside her with daylight underneath,
+    // which is what the first attempt at getting it clear of the hair did.
+    shoulder: () => bodyAnchor("rightShoulder", 0.07, 0.16, 0.02),
     // On the back of the hand rather than at its origin, so it reads as perched
     // on her rather than growing out of her wrist.
-    hand: () => bodyAnchor("rightHand", 0.02, 0.135, 0.03),
+    hand: () => bodyAnchor("rightHand", 0.02, 0.1, 0.03),
     ground: () => {
       if (!vrm) return null;
       const forward = new Vector3(0, 0, 1).applyAxisAngle(new Vector3(0, 1, 0), facing);
@@ -36091,14 +36172,29 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     const fn = BIRD_ANCHORS[name];
     return fn ? fn() : null;
   }
-  function birdOffstage() {
-    const angle = Math.random() * Math.PI * 2;
+  function birdOffstage(target) {
     const base = vrm ? vrm.scene.position : new Vector3();
+    const towards = target ? Math.atan2(target.x - base.x, target.z - base.z) : Math.random() * Math.PI * 2;
+    const angle = towards + (Math.random() - 0.5) * 1.1;
     return new Vector3(
       base.x + Math.sin(angle) * 3.2,
       base.y + 1.9 + Math.random() * 0.6,
       base.z + Math.cos(angle) * 3.2
     );
+  }
+  var BIRD_KEEP_OUT = 0.46;
+  var BIRD_KEEP_OUT_TOP = 1.8;
+  var BIRD_ON_HER = /* @__PURE__ */ new Set(["hand", "shoulder"]);
+  function keepBirdClear() {
+    if (!vrm || BIRD_ON_HER.has(birdAnchor)) return;
+    if (bird.position.y > BIRD_KEEP_OUT_TOP) return;
+    const dx = bird.position.x - vrm.scene.position.x;
+    const dz = bird.position.z - vrm.scene.position.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance >= BIRD_KEEP_OUT || distance < 1e-4) return;
+    const push = BIRD_KEEP_OUT / distance;
+    bird.position.x = vrm.scene.position.x + dx * push;
+    bird.position.z = vrm.scene.position.z + dz * push;
   }
   function birdGroundSpot(minRadius, maxRadius) {
     const base = vrm ? vrm.scene.position : new Vector3();
@@ -36115,7 +36211,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     const target = birdAnchorPoint(anchor);
     if (!target) return;
     if (birdState === "offstage") {
-      birdFrom.copy(birdOffstage());
+      birdFrom.copy(birdOffstage(target));
       bird.visible = true;
     } else {
       birdFrom.copy(bird.position);
@@ -36131,7 +36227,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     birdSettleTime = randRange(2.5, 5);
     if (birdState === "offstage") return;
     birdFrom.copy(bird.position);
-    birdFixed.copy(birdOffstage()).setY(birdFrom.y + 2.2);
+    birdFixed.copy(birdOffstage(bird.position)).setY(birdFrom.y + 2.2);
     birdAnchor = null;
     birdTravel = Math.max(0.2, travel);
     birdT = 0;
@@ -36207,16 +36303,18 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     birdSettleTime = randRange(0.5, 1.5);
   }
   function updateBird(dt) {
+    bodyForward.set(Math.sin(facing), 0, Math.cos(facing));
     if (birdOwner === "ambient" && birdEpisode) updateBirdAmbient(dt);
     if (birdState === "offstage") return;
-    birdFlap += dt * 16;
+    birdFlap += dt * 15;
     const wantFold = birdState === "settled" ? 1 : 0;
     birdWingFold += (wantFold - birdWingFold) * Math.min(1, dt * 9);
-    const flap = Math.sin(birdFlap);
-    const sweep = 0.25 + birdWingFold * 1.25;
-    const lift = flap * 0.85 * (1 - birdWingFold) + birdWingFold * (0.12 + Math.sin(birdFlap * 0.18) * 0.03);
-    bird.userData.leftWing.rotation.set(0, sweep, lift);
-    bird.userData.rightWing.rotation.set(0, -sweep, -lift);
+    const folded = -0.12;
+    const beat = Math.sin(birdFlap) * 0.85;
+    const shiver = Math.sin(birdFlap * 0.2) * 0.035;
+    const lift = MathUtils.lerp(beat, folded + shiver, birdWingFold);
+    bird.userData.leftWing.rotation.z = lift;
+    bird.userData.rightWing.rotation.z = -lift;
     const departing = birdState === "flying" && birdAnchor === null;
     const target = departing ? birdFixed : birdAnchorPoint(birdAnchor);
     if (!target) {
@@ -36228,6 +36326,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       const t = Math.min(1, birdT);
       if (departing) {
         bird.position.lerpVectors(birdFrom, target, t * t);
+        keepBirdClear();
         bird.lookAt(target);
         if (t >= 1) birdReset();
         return;
@@ -36235,6 +36334,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       const eased = 1 - (1 - t) ** 3;
       bird.position.lerpVectors(birdFrom, target, eased);
       bird.position.y += Math.sin(t * Math.PI) * birdArc;
+      keepBirdClear();
       bird.lookAt(target.x, bird.position.y, target.z);
       birdFacing = Math.atan2(target.x - birdFrom.x, target.z - birdFrom.z);
       if (t >= 1) {
@@ -36245,8 +36345,15 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     }
     bird.position.copy(target);
     bird.position.y += Math.sin(performance.now() * 4e-3) * 6e-3;
+    keepBirdClear();
     if (birdAnchor === "sky" && vrm) {
       bird.lookAt(vrm.scene.position.x, target.y - 0.6, vrm.scene.position.z);
+    } else if (BIRD_ON_HER.has(birdAnchor)) {
+      bird.lookAt(
+        target.x + bodyForward.x * 0.6,
+        target.y - 0.12,
+        target.z + bodyForward.z * 0.6
+      );
     } else if (birdAnchor === "spot") {
       birdT += dt;
       const look = birdFacing + Math.sin(birdT * 0.9) * 0.8 + Math.sin(birdT * 2.3) * 0.12;
@@ -36570,7 +36677,9 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
             heldExpression = name;
           },
           danceReach,
-          takeBurst,
+          startBurst,
+          stopBurst,
+          burstFrameCount,
           encodeFrame,
           setDirectorActive: (on) => {
             if (on) startDirector();
@@ -37287,17 +37396,19 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     return frame;
   }
   var BURST_SPACING = 0.05;
+  var BURST_HARD_MAX = 48;
   var burst = null;
-  function takeBurst(maxFrames, callback) {
-    burst = {
-      frames: [],
-      callback,
-      maxFrames,
-      elapsed: 0,
-      sinceFrame: Infinity,
-      duration: maxFrames * BURST_SPACING
-    };
+  function startBurst(callback) {
+    if (burst) return;
+    burst = { frames: [], callback, sinceFrame: Infinity };
   }
+  function stopBurst() {
+    if (!burst) return;
+    const finished = burst;
+    burst = null;
+    finished.callback(finished.frames);
+  }
+  var burstFrameCount = () => burst ? burst.frames.length : 0;
   var paused = false;
   function animate() {
     requestAnimationFrame(animate);
@@ -37312,17 +37423,12 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       deliver(encodeFrame(captureFrame()));
     }
     if (burst) {
-      burst.elapsed += dt;
       burst.sinceFrame += dt;
-      if (burst.sinceFrame >= BURST_SPACING && burst.frames.length < burst.maxFrames) {
+      if (burst.sinceFrame >= BURST_SPACING) {
         burst.sinceFrame = 0;
         burst.frames.push(captureFrame({ measureLuma: false, maxEdge: BURST_MAX_EDGE }));
       }
-      if (burst.elapsed >= burst.duration || burst.frames.length >= burst.maxFrames) {
-        const finished = burst;
-        burst = null;
-        finished.callback(finished.frames);
-      }
+      if (burst.frames.length >= BURST_HARD_MAX) stopBurst();
     }
     if (!paused && autoExposureEnabled) {
       sinceMetered += dt;

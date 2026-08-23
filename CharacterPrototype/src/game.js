@@ -36,17 +36,15 @@ export const POSES = [
 // two-and-a-bit second loop, which is roughly the window a burst covers.
 export const DANCE_PEAK_REACH = 0.15;
 
-// How many frames a burst takes, player's choice. Spacing is held constant
-// across the options (about 20 frames/second) rather than the total window,
-// so "few" is a quick, short burst and "many" is a longer one that covers
-// more time -- not the same half-second sampled at different resolutions.
-export const BURST_OPTIONS = [
-  { frames: 6, label: '6枚' },
-  { frames: 12, label: '12枚' },
-  { frames: 24, label: '24枚' },
-];
-const BURST_SPACING = 0.05;
-const DEFAULT_BURST_FRAMES = 12;
+// Tap the shutter for one frame; hold it to keep shooting until you let go.
+//
+// This used to be a count chosen before the session started -- six, twelve or
+// twenty-four -- and it was wrong twice over. You cannot pick a burst length
+// before you know what you are about to photograph, and once picked it applied
+// to every shot whether anything was moving or not, so most shots were twelve
+// near-identical frames to scroll through for no reason. Holding the button is
+// the same decision made at the only moment it can be made well.
+const HOLD_TO_BURST = 190;   // ms before a press becomes a burst
 
 // '>_<' (the model's 'Extra' morph) is deliberately not here. It replaces her
 // eyes with a drawn squeeze that is fine at a distance and falls apart in a
@@ -291,8 +289,11 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
 .pg-cast { display: flex; gap: 6px; margin-top: 10px; }
 .pg-burstpick { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
 .pg-burstpick-label { font-size: 11px; color: #8b93a7; white-space: nowrap; }
-/* Four options where the burst picker has three, in the same width. */
-.pg-scenepick .pg-pick { font-size: 12px; padding: 8px 2px; }
+/* Four options in a 280px panel do not fit beside a label, and 「おまかせ」
+   wrapped onto two lines when they tried. The label goes above instead. */
+.pg-scenepick { flex-wrap: wrap; }
+.pg-scenepick .pg-burstpick-label { flex: 0 0 100%; margin-bottom: 2px; }
+.pg-scenepick .pg-pick { font-size: 12px; padding: 7px 2px; }
 .pg-pick { flex: 1; padding: 8px 0; font: inherit; font-size: 13px; font-weight: 600;
   color: #8b93a7; background: #0c0e14; border: 1px solid #2a3040; border-radius: 6px;
   cursor: pointer; }
@@ -306,8 +307,19 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   width: 68px; height: 68px; border-radius: 50%; background: #ffb454; border: 4px solid #0c0e14;
   box-shadow: 0 0 0 2px #ffb454; cursor: pointer; pointer-events: auto; }
 .pg-shutter:active { transform: translateX(-50%) scale(0.94); }
-.pg-burst { display: flex; align-items: center; justify-content: center; }
-.pg-burst-label { font-size: 12px; font-weight: 700; color: #0c0e14; letter-spacing: 0.04em; }
+.pg-shutter { display: flex; align-items: center; justify-content: center;
+  touch-action: none; -webkit-user-select: none; user-select: none; }
+/* Held down: it turns red and counts, so it is obvious the burst is running
+   and obvious that letting go is what stops it. */
+.pg-shutter[data-rolling] { background: #ff5c5c; box-shadow: 0 0 0 2px #ff5c5c;
+  animation: pg-rolling 0.9s ease-in-out infinite; }
+@keyframes pg-rolling {
+  0%, 100% { box-shadow: 0 0 0 2px #ff5c5c; }
+  50% { box-shadow: 0 0 0 8px rgba(255, 92, 92, 0.35); }
+}
+.pg-burst-label { font-size: 15px; font-weight: 700; color: #0c0e14; letter-spacing: 0.02em; }
+.pg-shutter-hint { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid #232838;
+  font-size: 11px; letter-spacing: 0.04em; color: #8b93a7; text-align: center; }
 /* The review screen: one large preview plus a horizontally scrolling strip of
    every frame, rather than a small fixed grid -- picking the right one out of
    a burst of frames that can look nearly identical at thumbnail size needs
@@ -358,7 +370,10 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   .pg-panel { top: auto; bottom: 104px; left: 16px; right: 16px; width: auto; }
   .pg-card { padding: 14px; }
 }
-@media (prefers-reduced-motion: reduce) { .pg-flash.pg-firing { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .pg-flash.pg-firing { animation: none; }
+  .pg-shutter[data-rolling] { animation: none; }
+}
 `;
 
 export function initPhotoGame(api) {
@@ -373,7 +388,7 @@ export function initPhotoGame(api) {
   // sandbox as well as a game, and a modal over the canvas on load takes the
   // camera drag away from anyone who just wants to look at her.
   const session = {
-    shots: [], request: null, burst: null, phase: 'free', burstFrames: DEFAULT_BURST_FRAMES,
+    shots: [], request: null, burst: null, phase: 'free',
     sceneChosen: false, timeChosen: false,
   };
 
@@ -404,7 +419,6 @@ export function initPhotoGame(api) {
     panel.append(renderCastPicker());
     panel.append(renderScenePicker());
     panel.append(renderTimePicker());
-    panel.append(renderBurstPicker());
     const start = el('button', 'pg-button', '撮影を始める');
     start.addEventListener('click', () => {
       session.shots = [];
@@ -418,26 +432,6 @@ export function initPhotoGame(api) {
     root.append(panel);
   }
 
-  // How many frames the next shutter press takes. Offered both before a
-  // session starts and while shooting, since the right choice can depend on
-  // the pose -- a still peace sign barely needs it, a dance benefits from more.
-  function renderBurstPicker() {
-    const wrap = el('div', 'pg-burstpick');
-    wrap.append(el('span', 'pg-burstpick-label', '連写'));
-    for (const option of BURST_OPTIONS) {
-      const button = el('button', 'pg-pick', option.label);
-      button.dataset.on = String(option.frames === session.burstFrames);
-      button.addEventListener('click', () => {
-        session.burstFrames = option.frames;
-        render();
-      });
-      wrap.append(button);
-    }
-    return wrap;
-  }
-
-  // Only offered between sessions: swapping the model mid-brief would reset
-  // the pose she is holding, and the shot you were lining up with it.
   function renderCastPicker() {
     const row = el('div', 'pg-cast');
     const cast = api.listCast ? api.listCast() : [];
@@ -525,18 +519,63 @@ export function initPhotoGame(api) {
     panel.append(brief);
     panel.append(el('p', 'pg-count', `${session.shots.length + 1} / ${SHOTS_PER_SESSION} 枚目`));
     panel.append(renderExposure());
-    panel.append(renderBurstPicker());
+    // Inside the panel rather than floating above the shutter: on a phone in
+    // portrait there is barely a centimetre between the two, and a caption
+    // parked in that gap lands on top of the exposure slider.
+    panel.append(el('p', 'pg-shutter-hint', 'タップ＝1枚　長押し＝連写'));
     root.append(panel);
     renderShootingChips();
 
-    // Always a burst now, not just for the dance: she is never holding still
-    // for you, so any shot can catch her a beat early or late. Burst and pick
-    // is the forgiveness for that, not a special case for one pose.
-    const shutter = el('button', 'pg-shutter pg-burst');
-    shutter.setAttribute('aria-label', '連写');
-    shutter.append(el('span', 'pg-burst-label', `${session.burstFrames}枚`));
-    shutter.addEventListener('click', shootBurst);
+    // One button, two gestures, the way a phone does it: tap for a frame,
+    // hold to keep shooting. Most of what she does is held for two or three
+    // seconds and a single frame catches it perfectly well -- burst is for the
+    // few things that are gone in a blink, and it should cost nothing when you
+    // do not need it.
+    const shutter = el('button', 'pg-shutter');
+    shutter.setAttribute('aria-label', '撮影（長押しで連写）');
+    shutter.append(el('span', 'pg-burst-label', ''));
+    bindShutter(shutter);
     root.append(shutter, el('div', 'pg-flash'));
+  }
+
+  // The press/hold gesture. Pointer events rather than click, because a click
+  // only exists once the button has already been released and by then the
+  // burst that should have been running never started.
+  function bindShutter(shutter) {
+    let holdTimer = null;
+    let rolling = false;
+
+    const press = (event) => {
+      if (event.button !== undefined && event.button !== 0) return;
+      event.preventDefault();
+      if (session.phase !== 'shooting' || holdTimer || rolling) return;
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        rolling = true;
+        shutter.dataset.rolling = 'true';
+        beginBurst();
+      }, HOLD_TO_BURST);
+    };
+
+    const release = () => {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+        shootSingle();
+        return;
+      }
+      if (!rolling) return;
+      rolling = false;
+      delete shutter.dataset.rolling;
+      endBurst();
+    };
+
+    shutter.addEventListener('pointerdown', press);
+    // On the window, not the button: letting go with the thumb slid off the
+    // shutter is a release, not a reason to keep shooting forever.
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
+    shutter.addEventListener('click', (event) => event.preventDefault());
   }
 
   // The exposure slider. A phone puts this under your thumb for a reason: the
@@ -717,18 +756,43 @@ export function initPhotoGame(api) {
     render();
   }
 
-  // Burst, then choose. Shooting a moving subject and then picking the frame
-  // that caught it is one skill in two halves, and the second half is the one
-  // people skip.
-  function shootBurst() {
-    const flash = root.querySelector('.pg-flash');
-    if (flash) flash.classList.add('pg-firing');
-    api.takeBurst(session.burstFrames, (frames) => {
+  function flash() {
+    const element = root.querySelector('.pg-flash');
+    if (element) element.classList.add('pg-firing');
+  }
+
+  // A tap: one frame, straight to the result. Nothing to review, because there
+  // is nothing to choose between.
+  function shootSingle() {
+    if (session.phase !== 'shooting') return;
+    flash();
+    api.takePhoto(keep);
+  }
+
+  // A hold: frames until you let go, then choose. Shooting a moving subject
+  // and then picking the frame that caught it is one skill in two halves, and
+  // the second half is the one people skip.
+  function beginBurst() {
+    flash();
+    api.startBurst((frames) => {
+      const label = root.querySelector('.pg-burst-label');
+      if (label) label.textContent = '';
+      if (frames.length <= 1) {
+        // Let go almost at once, or the machine only managed one frame. That
+        // is a single photograph; sending it to a picker with one option in it
+        // would be a screen that asks a question with one answer.
+        if (frames.length === 1) keep(api.encodeFrame(frames[0]));
+        return;
+      }
       session.burst = frames;
       session.pickIndex = 0;
       session.phase = 'picking';
       render();
     });
+  }
+
+  function endBurst() {
+    api.stopBurst();
   }
 
   function renderPicking() {
@@ -824,6 +888,12 @@ export function initPhotoGame(api) {
     if (sinceRefresh < 6) return;   // ~10Hz; rebuilding the panel every frame is wasteful
     sinceRefresh = 0;
     renderShootingChips();
+    const label = root.querySelector('.pg-burst-label');
+    if (label && api.burstFrameCount) {
+      const count = api.burstFrameCount();
+      const text = count > 0 ? String(count) : '';
+      if (label.textContent !== text) label.textContent = text;
+    }
   }
 
   function renderShootingChips() {
@@ -841,9 +911,19 @@ export function initPhotoGame(api) {
     }
   }
 
+  // The keyboard gets the same two gestures. Held keys repeat, so the repeat
+  // has to be ignored or every repeat would try to start a second burst.
+  let enterHeld = null;
   window.addEventListener('keydown', (event) => {
     if (event.code !== 'Enter' && event.code !== 'NumpadEnter') return;
-    if (session.phase === 'shooting') shootBurst();
+    if (session.phase !== 'shooting' || event.repeat || enterHeld) return;
+    enterHeld = setTimeout(() => { enterHeld = 'rolling'; beginBurst(); }, HOLD_TO_BURST);
+  });
+  window.addEventListener('keyup', (event) => {
+    if (event.code !== 'Enter' && event.code !== 'NumpadEnter') return;
+    if (enterHeld === 'rolling') endBurst();
+    else if (enterHeld) { clearTimeout(enterHeld); shootSingle(); }
+    enterHeld = null;
   });
 
   render();
@@ -882,14 +962,16 @@ export function initPhotoGame(api) {
     }),
     reachForTest: () => api.danceReach(),
     setDirectorForTest: (on) => setDirector(on),
-    burstForTest: () => new Promise((resolve) => {
-      api.takeBurst(session.burstFrames, (frames) => {
+    // Holds the shutter for a stretch of real time, the way a thumb does.
+    burstForTest: (holdMs = 700) => new Promise((resolve) => {
+      api.startBurst((frames) => {
         session.burst = frames;
         session.pickIndex = 0;
         session.phase = 'picking';
         render();
         resolve(frames.map((frame, index) => ({ index, reach: frame.reach })));
       });
+      setTimeout(() => api.stopBurst(), holdMs);
     }),
     pickForTest: (index) => {
       const frame = session.burst[index];

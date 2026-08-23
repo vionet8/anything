@@ -339,95 +339,118 @@ function animateSurf() {
 // ---- Bird ----
 // A visiting bird, built once and re-used for every visit. What it does and
 // why is down with the scenarios that send it -- see birdCue / updateBird.
-// One flat triangle, reused for both wings (mirrored) and the tail.
-function makeWingGeometry() {
-  const geometry = new THREE.BufferGeometry();
-  const vertices = new Float32Array([
-    0, 0, 0,
-    0.11, -0.01, -0.03,
-    0.05, 0.005, -0.09,
-  ]);
-  geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-  geometry.computeVertexNormals();
-  return geometry;
-}
-
+//
+// Drawn for charm rather than for ornithology. The first version had a real
+// bird's proportions -- small head, long body, sharp triangular wings -- and
+// at the size it appears on screen that reads as a dart with a beak. Chibi
+// proportions fix it: the head is nearly as big as the body and sits high and
+// forward, the eyes are enormous and have a catchlight, the wings are rounded
+// rather than pointed, and everything that can be a sphere is one.
 function makeBird() {
   const group = new THREE.Group();
-  // Brighter than the first pass. A small dark bird on dark grass is a smudge
-  // -- and this one has to be legible at two or three metres, in a frame the
-  // player is composing around somebody else.
-  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x6f95cf, roughness: 0.75 });
-  const breastMat = new THREE.MeshStandardMaterial({ color: 0xf3c07a, roughness: 0.8 });
-  const beakMat = new THREE.MeshStandardMaterial({ color: 0xe8a83c, roughness: 0.6 });
-  const legMat = new THREE.MeshStandardMaterial({ color: 0xd08a3a, roughness: 0.7 });
-  const wingMat = new THREE.MeshStandardMaterial({ color: 0x4a6fa5, roughness: 0.75, side: THREE.DoubleSide });
-  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x14171f, roughness: 0.4 });
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x8fbce8, roughness: 0.72 });
+  const bellyMat = new THREE.MeshStandardMaterial({ color: 0xfff3de, roughness: 0.8 });
+  const beakMat = new THREE.MeshStandardMaterial({ color: 0xffb951, roughness: 0.55 });
+  const legMat = new THREE.MeshStandardMaterial({ color: 0xf0a844, roughness: 0.6 });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x22252e, roughness: 0.25 });
+  const shineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const cheekMat = new THREE.MeshStandardMaterial({
+    color: 0xffa7bb, roughness: 0.9, transparent: true, opacity: 0.75,
+  });
+  const wingMat = new THREE.MeshStandardMaterial({ color: 0x7aa9db, roughness: 0.72 });
 
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), bodyMat);
-  body.scale.set(1, 0.92, 1.5);
+  // Round, not streamlined.
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.047, 14, 10), bodyMat);
+  body.scale.set(1, 0.92, 1.06);
+  body.castShadow = true;
   group.add(body);
 
-  const breast = new THREE.Mesh(new THREE.SphereGeometry(0.034, 8, 6), breastMat);
-  breast.position.set(0, -0.012, 0.032);
-  breast.scale.set(0.92, 0.9, 0.95);
-  group.add(breast);
+  const belly = new THREE.Mesh(new THREE.SphereGeometry(0.036, 10, 8), bellyMat);
+  belly.position.set(0, -0.006, 0.022);
+  belly.scale.set(0.9, 0.82, 0.82);
+  group.add(belly);
 
-  // Bigger than life. A correctly proportioned head on a bird this size is
-  // three or four pixels at the distance it is usually seen from, and a bird
-  // you cannot find the head of does not read as facing anywhere.
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.034, 10, 8), bodyMat);
-  head.position.set(0, 0.03, 0.062);
+  // Nearly as wide as the body, sitting high and a little forward. This one
+  // proportion is most of the difference between cute and not.
+  const HEAD = { y: 0.068, z: 0.014, r: 0.042 };
+  const head = new THREE.Mesh(new THREE.SphereGeometry(HEAD.r, 14, 10), bodyMat);
+  head.position.set(0, HEAD.y, HEAD.z);
+  head.castShadow = true;
   group.add(head);
 
+  // Features go on the head by angle rather than by hand-written coordinates.
+  // Placed by eye in x/y/z, the eyes ended up a few millimetres inside the
+  // skull and vanished entirely -- which is not something you can see coming
+  // from reading the numbers, only from rendering it. Angles cannot sink.
+  const onHead = (azimuth, elevation, depth = 1) => new THREE.Vector3(
+    Math.sin(azimuth) * Math.cos(elevation) * HEAD.r * depth,
+    HEAD.y + Math.sin(elevation) * HEAD.r * depth,
+    HEAD.z + Math.cos(azimuth) * Math.cos(elevation) * HEAD.r * depth
+  );
+
   for (const side of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.008, 6, 5), eyeMat);
-    eye.position.set(side * 0.023, 0.038, 0.079);
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.0135, 10, 8), eyeMat);
+    eye.position.copy(onHead(side * 0.46, 0.14, 0.86));
     group.add(eye);
+    // The catchlight, up and in. A black bead with no highlight in it reads
+    // as a hole rather than as an eye.
+    const shine = new THREE.Mesh(new THREE.SphereGeometry(0.0048, 6, 5), shineMat);
+    shine.position.copy(onHead(side * 0.37, 0.31, 0.94));
+    group.add(shine);
+    const cheek = new THREE.Mesh(new THREE.SphereGeometry(0.0115, 8, 6), cheekMat);
+    cheek.position.copy(onHead(side * 0.95, -0.2, 0.95));
+    cheek.scale.set(1, 0.7, 0.55);
+    group.add(cheek);
   }
 
-  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.011, 0.034, 6), beakMat);
+  // Short and blunt. A long cone turns the whole face into a nose.
+  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.0125, 0.026, 7), beakMat);
   beak.rotation.x = Math.PI / 2;
-  beak.position.set(0, 0.026, 0.102);
+  beak.position.copy(onHead(0, -0.08, 1.0));
   group.add(beak);
 
-  // Legs, so it stands on the grass instead of resting on its belly. Short
-  // and stubby; the body sits just clear of the ground.
+  // Wings on pivots at the shoulder, so a flap is one rotation about one axis
+  // and folding is the same rotation nearly closed. The previous version
+  // rotated the wing mesh on three axes at once and needed a comment to
+  // explain which order they composed in, which is a sign the rig is wrong.
+  const wings = [];
   for (const side of [-1, 1]) {
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.03, 5), legMat);
+    const pivot = new THREE.Group();
+    pivot.position.set(side * 0.035, 0.018, 0.002);
+    const wing = new THREE.Mesh(new THREE.SphereGeometry(0.032, 10, 8), wingMat);
+    wing.scale.set(0.34, 1, 1.15);
+    wing.position.set(0, -0.026, -0.004);
+    wing.castShadow = true;
+    pivot.add(wing);
+    group.add(pivot);
+    wings.push(pivot);
+  }
+
+  const tail = new THREE.Mesh(new THREE.SphereGeometry(0.026, 8, 6), wingMat);
+  tail.scale.set(0.85, 0.35, 1.5);
+  tail.position.set(0, 0.006, -0.056);
+  tail.rotation.x = -0.3;
+  group.add(tail);
+
+  // Stubby. Long legs on a round body look like a wading bird.
+  for (const side of [-1, 1]) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.0042, 0.0042, 0.022, 5), legMat);
     leg.position.set(side * 0.016, -0.05, 0.004);
     group.add(leg);
-    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.005, 0.026), legMat);
-    foot.position.set(side * 0.016, -0.066, 0.008);
+    const foot = new THREE.Mesh(new THREE.SphereGeometry(0.012, 7, 5), legMat);
+    foot.scale.set(0.85, 0.36, 1.15);
+    foot.position.set(side * 0.016, -0.062, 0.008);
     group.add(foot);
   }
 
-  // Wings sit high on the flanks so that folding them back lays them along
-  // the body rather than hanging them underneath it.
-  const leftWing = new THREE.Mesh(makeWingGeometry(), wingMat);
-  leftWing.position.set(0.026, 0.022, 0.004);
-  const rightWing = new THREE.Mesh(makeWingGeometry(), wingMat);
-  rightWing.position.set(-0.026, 0.022, 0.004);
-  rightWing.scale.x = -1;
-  group.add(leftWing, rightWing);
-
-  const tail = new THREE.Mesh(makeWingGeometry(), wingMat);
-  tail.position.set(0, 0.004, -0.062);
-  tail.rotation.set(0.55, Math.PI / 2, 0);
-  tail.scale.set(0.62, 0.62, 0.8);
-  group.add(tail);
-
-  group.userData.leftWing = leftWing;
-  group.userData.rightWing = rightWing;
-  // Built at roughly 9cm nose to tail, which is life-size for a small bird
-  // and a speck on screen: at the two-and-a-bit metres the ambient layer
-  // keeps it at, it came out about fourteen pixels wide -- present in the
-  // render, invisible to the player. Scaled up to read as a bird at that
-  // distance, which matters more here than anatomical scale does, because the
-  // whole job of this thing is to be noticed arriving.
-  group.scale.setScalar(1.9);
+  group.userData.leftWing = wings[0];
+  group.userData.rightWing = wings[1];
+  // About 16cm nose to tail. The previous model was built at life size for a
+  // sparrow and was a speck on screen, so it got scaled to 1.9 -- but this one
+  // is intrinsically bigger (the chibi head is most of it), and 1.9 on top of
+  // that made a bird the size of her head sitting on her shoulder.
+  group.scale.setScalar(1.25);
   group.visible = false;
-  group.traverse((obj) => { if (obj.isMesh) obj.castShadow = true; });
   return group;
 }
 
@@ -992,16 +1015,30 @@ function bodyAnchor(boneName, outward, lift, forward = 0) {
   const side = new THREE.Vector3(1, 0, 0).applyQuaternion(rotation).normalize();
   return base
     .addScaledVector(side, outward)
-    .add(new THREE.Vector3(0, lift, forward));
+    .add(new THREE.Vector3(0, lift, 0))
+    // Her forward, not the world's. This was a bare +Z offset, which points
+    // ahead of her only while she happens to be facing that way and behind her
+    // when she has turned around.
+    .addScaledVector(bodyForward, forward);
 }
 
-const BIRD_GROUND_Y = 0.132;   // group origin, so the feet land on the grass
+const bodyForward = new THREE.Vector3();
+
+// The group origin, set so the feet land on the ground rather than the belly.
+// It is the model's foot offset times its scale, and it has to move whenever
+// either does -- at the old 1.9 scale this was 0.132.
+const BIRD_GROUND_Y = 0.085;
 
 const BIRD_ANCHORS = {
-  shoulder: () => bodyAnchor('rightShoulder', 0.11, 0.155, 0.01),
+  // On the point of the shoulder, not in it. The shoulder *joint* is at the
+  // base of the neck and buried under her hair; the deltoid it has to stand on
+  // is measured at 0.06 further out and 0.08 higher, and these offsets put its
+  // feet there. Too far out and it floats beside her with daylight underneath,
+  // which is what the first attempt at getting it clear of the hair did.
+  shoulder: () => bodyAnchor('rightShoulder', 0.07, 0.16, 0.02),
   // On the back of the hand rather than at its origin, so it reads as perched
   // on her rather than growing out of her wrist.
-  hand: () => bodyAnchor('rightHand', 0.02, 0.135, 0.03),
+  hand: () => bodyAnchor('rightHand', 0.02, 0.1, 0.03),
   ground: () => {
     if (!vrm) return null;
     const forward = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), facing);
@@ -1022,14 +1059,43 @@ function birdAnchorPoint(name) {
 
 // Somewhere off-stage to enter from, or to leave towards: a random bearing at
 // a distance, so the same story does not always play out on the same side.
-function birdOffstage() {
-  const angle = Math.random() * Math.PI * 2;
+// Given somewhere it is heading for, this enters from roughly that side. A
+// bearing picked at random put it on the far side of her about half the time,
+// and the straight run in then went through her -- which is where the flights
+// that clipped her body came from. Entering on the target's own side makes the
+// path radial, so it approaches from outside rather than across.
+function birdOffstage(target) {
   const base = vrm ? vrm.scene.position : new THREE.Vector3();
+  const towards = target
+    ? Math.atan2(target.x - base.x, target.z - base.z)
+    : Math.random() * Math.PI * 2;
+  const angle = towards + (Math.random() - 0.5) * 1.1;
   return new THREE.Vector3(
     base.x + Math.sin(angle) * 3.2,
     base.y + 1.9 + Math.random() * 0.6,
     base.z + Math.cos(angle) * 3.2
   );
+}
+
+// She is roughly a 0.45m cylinder to a metre and three quarters. Anything
+// flying to a point that is not on her gets pushed out of it -- entering on
+// the right side handles most of it, but a target close in front of her feet
+// still leaves a path that grazes her shins, and a bird disappearing into her
+// skirt is the kind of thing you only ever notice once it has happened.
+const BIRD_KEEP_OUT = 0.46;
+const BIRD_KEEP_OUT_TOP = 1.8;
+const BIRD_ON_HER = new Set(['hand', 'shoulder']);
+
+function keepBirdClear() {
+  if (!vrm || BIRD_ON_HER.has(birdAnchor)) return;
+  if (bird.position.y > BIRD_KEEP_OUT_TOP) return;
+  const dx = bird.position.x - vrm.scene.position.x;
+  const dz = bird.position.z - vrm.scene.position.z;
+  const distance = Math.hypot(dx, dz);
+  if (distance >= BIRD_KEEP_OUT || distance < 1e-4) return;
+  const push = BIRD_KEEP_OUT / distance;
+  bird.position.x = vrm.scene.position.x + dx * push;
+  bird.position.z = vrm.scene.position.z + dz * push;
 }
 
 // A patch of ground to potter about on, at `radius` metres from her. Biased
@@ -1051,7 +1117,7 @@ function birdGoTo(anchor, travel, arc = 0.22) {
   const target = birdAnchorPoint(anchor);
   if (!target) return;
   if (birdState === 'offstage') {
-    birdFrom.copy(birdOffstage());
+    birdFrom.copy(birdOffstage(target));
     bird.visible = true;
   } else {
     birdFrom.copy(bird.position);
@@ -1071,7 +1137,7 @@ function birdLeave(travel = BIRD_DEPART_TIME) {
   birdSettleTime = randRange(2.5, 5);
   if (birdState === 'offstage') return;
   birdFrom.copy(bird.position);
-  birdFixed.copy(birdOffstage()).setY(birdFrom.y + 2.2);
+  birdFixed.copy(birdOffstage(bird.position)).setY(birdFrom.y + 2.2);
   birdAnchor = null;
   birdTravel = Math.max(0.2, travel);
   birdT = 0;
@@ -1177,6 +1243,7 @@ function updateBirdAmbient(dt) {
 }
 
 function updateBird(dt) {
+  bodyForward.set(Math.sin(facing), 0, Math.cos(facing));
   // The ambient layer only runs during a story that is about the bird. It
   // used to run all the time, and a bird permanently pottering about two
   // metres away is not a bird -- it is furniture. Now it arrives with its
@@ -1185,18 +1252,18 @@ function updateBird(dt) {
   if (birdState === 'offstage') return;
 
   // Wings fold against the body when it lands and open again when it goes.
-  // Before this they stayed stuck out sideways the whole time, oscillating
-  // gently -- which on a bird standing still on the grass reads less like a
-  // bird and more like a paper aeroplane.
-  birdFlap += dt * 16;
+  // One rotation on one axis now that each wing hangs off a pivot at its own
+  // shoulder: folded is the wing hanging down the flank, flying is that same
+  // angle beating up and down about it.
+  birdFlap += dt * 15;
   const wantFold = birdState === 'settled' ? 1 : 0;
   birdWingFold += (wantFold - birdWingFold) * Math.min(1, dt * 9);
-  const flap = Math.sin(birdFlap);
-  const sweep = 0.25 + birdWingFold * 1.25;                       // back along the body
-  const lift = flap * 0.85 * (1 - birdWingFold)                   // the beat
-    + birdWingFold * (0.12 + Math.sin(birdFlap * 0.18) * 0.03);  // a folded shiver
-  bird.userData.leftWing.rotation.set(0, sweep, lift);
-  bird.userData.rightWing.rotation.set(0, -sweep, -lift);
+  const folded = -0.12;                       // tucked along the body
+  const beat = Math.sin(birdFlap) * 0.85;     // the stroke
+  const shiver = Math.sin(birdFlap * 0.2) * 0.035;
+  const lift = THREE.MathUtils.lerp(beat, folded + shiver, birdWingFold);
+  bird.userData.leftWing.rotation.z = lift;
+  bird.userData.rightWing.rotation.z = -lift;
 
   // Leaving is the one flight with no anchor to track -- everything else
   // homes on a point that can move under it.
@@ -1209,6 +1276,7 @@ function updateBird(dt) {
     const t = Math.min(1, birdT);
     if (departing) {
       bird.position.lerpVectors(birdFrom, target, t * t);   // accelerating away
+      keepBirdClear();
       bird.lookAt(target);
       if (t >= 1) birdReset();
       return;
@@ -1216,6 +1284,7 @@ function updateBird(dt) {
     const eased = 1 - (1 - t) ** 3;                          // decelerating in
     bird.position.lerpVectors(birdFrom, target, eased);
     bird.position.y += Math.sin(t * Math.PI) * birdArc;
+    keepBirdClear();
     bird.lookAt(target.x, bird.position.y, target.z);
     birdFacing = Math.atan2(target.x - birdFrom.x, target.z - birdFrom.z);
     if (t >= 1) { birdState = 'settled'; birdT = 0; }
@@ -1224,9 +1293,20 @@ function updateBird(dt) {
 
   bird.position.copy(target);
   bird.position.y += Math.sin(performance.now() * 0.004) * 0.006;  // idle bob
+  // Also while it is sitting there: she can walk into it, and a hop can take
+  // it a little further in than the spot it was aiming at.
+  keepBirdClear();
   if (birdAnchor === 'sky' && vrm) {
     // Hovering: it faces her.
     bird.lookAt(vrm.scene.position.x, target.y - 0.6, vrm.scene.position.z);
+  } else if (BIRD_ON_HER.has(birdAnchor)) {
+    // Perched on her, it looks where she is looking -- along her forward, not
+    // along the world's, which is where the old +Z bias pointed it.
+    bird.lookAt(
+      target.x + bodyForward.x * 0.6,
+      target.y - 0.12,
+      target.z + bodyForward.z * 0.6
+    );
   } else if (birdAnchor === 'spot') {
     // On the ground it keeps roughly the heading it landed on, with a slow
     // look about -- a bird on a lawn is never quite still.
@@ -1636,7 +1716,9 @@ CHARACTER_SOURCES.forEach((source, index) => {
         setPose: setPoseKeys,
         setExpression: (name) => { heldExpression = name; },
         danceReach,
-        takeBurst,
+        startBurst,
+        stopBurst,
+        burstFrameCount,
         encodeFrame,
         setDirectorActive: (on) => { if (on) startDirector(); else stopDirector(); },
         startScenario,
@@ -2872,29 +2954,42 @@ function encodeFrame(frame) {
   return frame;
 }
 
-// A burst, the way a phone shoots a moving subject: hold it down, get a run of
-// frames, keep the one that caught the moment.
+// A burst, the way a phone actually does it: hold the shutter down and it
+// keeps shooting until you let go.
 //
-// Both the spacing between frames and the run's length are measured in
-// seconds, not in frames — the third time this lesson has come up in this
-// file. A count tied to frames alone is a fifth of a second on a fast machine
-// and seven seconds on a slow one, which is not the same photograph at all;
-// this way a slow device gets fewer frames of the same slice of time rather
-// than a different slice.
+// It used to ask for a frame count before the session began -- six, twelve or
+// twenty-four -- which is a decision nobody can make before they know what
+// they are about to photograph, and which then applied to every shot whether
+// or not anything was moving. Now the length of the burst is how long you held
+// the button, which is the same information arriving at the moment it is
+// actually known.
 //
-// The frame count is the player's choice (BURST_OPTIONS in game.js) and, at
-// this fixed spacing, decides how long the burst runs: a short burst is a
-// quick, easy-to-review handful of frames, a long one covers more time and
-// forgives worse timing, at the cost of more frames to review afterward.
+// The spacing is in seconds rather than frames -- the third time this lesson
+// has come up in this file. A count tied to frames alone is a fifth of a
+// second on a fast machine and seven seconds on a slow one, which is not the
+// same photograph at all; this way a slow device gets fewer frames of the same
+// slice of time rather than a different slice.
 const BURST_SPACING = 0.05;
+// A ceiling, not a target: leaning on the shutter should not be able to fill
+// memory with two hundred canvases, and past a couple of seconds you are no
+// longer catching a moment, you are filming.
+const BURST_HARD_MAX = 48;
 let burst = null;
 
-function takeBurst(maxFrames, callback) {
-  burst = {
-    frames: [], callback, maxFrames, elapsed: 0, sinceFrame: Infinity,
-    duration: maxFrames * BURST_SPACING,
-  };
+function startBurst(callback) {
+  if (burst) return;
+  burst = { frames: [], callback, sinceFrame: Infinity };
 }
+
+function stopBurst() {
+  if (!burst) return;
+  const finished = burst;
+  burst = null;
+  finished.callback(finished.frames);
+}
+
+// For the shutter to show a live count while it is held down.
+const burstFrameCount = () => (burst ? burst.frames.length : 0);
 
 // Set by the test hooks so a screenshot can catch a moment that the real-time
 // loop would otherwise have run straight past — the apex of a jump lasts about
@@ -2919,17 +3014,12 @@ function animate() {
     deliver(encodeFrame(captureFrame()));
   }
   if (burst) {
-    burst.elapsed += dt;
     burst.sinceFrame += dt;
-    if (burst.sinceFrame >= BURST_SPACING && burst.frames.length < burst.maxFrames) {
+    if (burst.sinceFrame >= BURST_SPACING) {
       burst.sinceFrame = 0;
       burst.frames.push(captureFrame({ measureLuma: false, maxEdge: BURST_MAX_EDGE }));
     }
-    if (burst.elapsed >= burst.duration || burst.frames.length >= burst.maxFrames) {
-      const finished = burst;
-      burst = null;
-      finished.callback(finished.frames);
-    }
+    if (burst.frames.length >= BURST_HARD_MAX) stopBurst();
   }
   if (!paused && autoExposureEnabled) {
     sinceMetered += dt;
