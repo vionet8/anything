@@ -80,19 +80,31 @@ export const LIGHTS = [
 ];
 
 // How bright her face should come out in the finished picture, as mean luma.
-// Measured, not chosen. tools/measure_light.js reads her face at each light
-// angle and compensation:
+// Measured, not chosen -- and re-measured after the first table turned out to
+// have been read off an exposure that had not finished settling. The meter
+// only steps when a frame renders, so a fixed wait is a different number of
+// steps on a slow machine; these are taken after the auto exposure stops
+// moving.
 //
-//            no compensation   +1 stop   +2 stops
-//   順光            0.46         0.75       0.92
-//   サイド光         0.44         0.68       0.91
-//   半逆光          0.42         0.65       0.90
-//   逆光            0.41         0.63       0.90
+//                    EV0    +1/3   +2/3    +1
+//   公園   順光      0.52   0.64   0.77   0.84
+//   公園   逆光      0.49   0.60   0.76   0.81
+//   海辺   順光      0.36   0.43   0.57   0.72
+//   海辺   逆光      0.28   0.34   0.45   0.60
+//   街角   順光      0.52   0.65   0.80   0.86
+//   街角   逆光      0.41   0.53   0.69   0.80
 //
-// The band is drawn so that the easy light needs nothing, shooting into the sun
-// needs a stop of lift, and pushing every shot to +2 blows the face out. That
-// gradient is the lesson.
-export const FACE_LUMA = { min: 0.43, max: 0.72 };
+// The band turns that into a different lesson in each place. The park at noon
+// is easy and needs nothing, either way you face. A street shot into the sun
+// lands just under and wants a third of a stop. The beach is bright sand
+// filling the frame, so the meter stops down and everything there needs
+// lifting -- which is the real rule about snow and sand. And a whole stop
+// overshoots almost everywhere, which is why the slider moves in thirds.
+//
+// The bounds are set to clear every one of those cells by about ten per cent
+// rather than to hug them. An earlier band sat four per cent off the backlit
+// street reading, which is not a lesson, it is a coin toss.
+export const FACE_LUMA = { min: 0.46, max: 0.74 };
 
 const SHOTS_PER_SESSION = 3;
 
@@ -589,7 +601,10 @@ export function initPhotoGame(api) {
     slider.className = 'pg-ev-slider';
     slider.min = String(-(api.compensationLimit || 2));
     slider.max = String(api.compensationLimit || 2);
-    slider.step = '0.25';
+    // Thirds of a stop, which is what a phone's compensation dial offers and
+    // what the measured face brightnesses need: a whole stop takes a backlit
+    // face straight from under the band to blown out past it.
+    slider.step = '0.3333';
     slider.value = String(api.getExposure().compensation);
     slider.setAttribute('aria-label', '明るさ補正');
     const readout = el('span', 'pg-ev-value', formatStops(Number(slider.value)));

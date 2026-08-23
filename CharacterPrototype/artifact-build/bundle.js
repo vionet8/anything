@@ -7068,14 +7068,14 @@
     return dst;
   }
   function mergeUniforms(uniforms) {
-    const merged = {};
+    const merged2 = {};
     for (let u = 0; u < uniforms.length; u++) {
       const tmp2 = cloneUniforms(uniforms[u]);
       for (const p in tmp2) {
-        merged[p] = tmp2[p];
+        merged2[p] = tmp2[p];
       }
     }
-    return merged;
+    return merged2;
   }
   function cloneUniformsGroups(src) {
     const dst = [];
@@ -20636,6 +20636,120 @@ void main() {
       return new _DodecahedronGeometry(data.radius, data.detail);
     }
   };
+  var IcosahedronGeometry = class _IcosahedronGeometry extends PolyhedronGeometry {
+    constructor(radius = 1, detail = 0) {
+      const t = (1 + Math.sqrt(5)) / 2;
+      const vertices = [
+        -1,
+        t,
+        0,
+        1,
+        t,
+        0,
+        -1,
+        -t,
+        0,
+        1,
+        -t,
+        0,
+        0,
+        -1,
+        t,
+        0,
+        1,
+        t,
+        0,
+        -1,
+        -t,
+        0,
+        1,
+        -t,
+        t,
+        0,
+        -1,
+        t,
+        0,
+        1,
+        -t,
+        0,
+        -1,
+        -t,
+        0,
+        1
+      ];
+      const indices = [
+        0,
+        11,
+        5,
+        0,
+        5,
+        1,
+        0,
+        1,
+        7,
+        0,
+        7,
+        10,
+        0,
+        10,
+        11,
+        1,
+        5,
+        9,
+        5,
+        11,
+        4,
+        11,
+        10,
+        2,
+        10,
+        7,
+        6,
+        7,
+        1,
+        8,
+        3,
+        9,
+        4,
+        3,
+        4,
+        2,
+        3,
+        2,
+        6,
+        3,
+        6,
+        8,
+        3,
+        8,
+        9,
+        4,
+        9,
+        5,
+        2,
+        4,
+        11,
+        6,
+        2,
+        10,
+        8,
+        6,
+        7,
+        9,
+        8,
+        1
+      ];
+      super(vertices, indices, radius, detail);
+      this.type = "IcosahedronGeometry";
+      this.parameters = {
+        radius,
+        detail
+      };
+    }
+    static fromJSON(data) {
+      return new _IcosahedronGeometry(data.radius, data.detail);
+    }
+  };
   var RingGeometry = class _RingGeometry extends BufferGeometry {
     constructor(innerRadius = 0.5, outerRadius = 1, thetaSegments = 32, phiSegments = 1, thetaStart = 0, thetaLength = Math.PI * 2) {
       super();
@@ -23286,6 +23400,154 @@ void main() {
   }
 
   // node_modules/three/examples/jsm/utils/BufferGeometryUtils.js
+  function mergeGeometries(geometries, useGroups = false) {
+    const isIndexed = geometries[0].index !== null;
+    const attributesUsed = new Set(Object.keys(geometries[0].attributes));
+    const morphAttributesUsed = new Set(Object.keys(geometries[0].morphAttributes));
+    const attributes = {};
+    const morphAttributes = {};
+    const morphTargetsRelative = geometries[0].morphTargetsRelative;
+    const mergedGeometry = new BufferGeometry();
+    let offset = 0;
+    for (let i = 0; i < geometries.length; ++i) {
+      const geometry = geometries[i];
+      let attributesCount = 0;
+      if (isIndexed !== (geometry.index !== null)) {
+        console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ". All geometries must have compatible attributes; make sure index attribute exists among all geometries, or in none of them.");
+        return null;
+      }
+      for (const name in geometry.attributes) {
+        if (!attributesUsed.has(name)) {
+          console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + '. All geometries must have compatible attributes; make sure "' + name + '" attribute exists among all geometries, or in none of them.');
+          return null;
+        }
+        if (attributes[name] === void 0) attributes[name] = [];
+        attributes[name].push(geometry.attributes[name]);
+        attributesCount++;
+      }
+      if (attributesCount !== attributesUsed.size) {
+        console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ". Make sure all geometries have the same number of attributes.");
+        return null;
+      }
+      if (morphTargetsRelative !== geometry.morphTargetsRelative) {
+        console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ". .morphTargetsRelative must be consistent throughout all geometries.");
+        return null;
+      }
+      for (const name in geometry.morphAttributes) {
+        if (!morphAttributesUsed.has(name)) {
+          console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ".  .morphAttributes must be consistent throughout all geometries.");
+          return null;
+        }
+        if (morphAttributes[name] === void 0) morphAttributes[name] = [];
+        morphAttributes[name].push(geometry.morphAttributes[name]);
+      }
+      if (useGroups) {
+        let count;
+        if (isIndexed) {
+          count = geometry.index.count;
+        } else if (geometry.attributes.position !== void 0) {
+          count = geometry.attributes.position.count;
+        } else {
+          console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ". The geometry must have either an index or a position attribute");
+          return null;
+        }
+        mergedGeometry.addGroup(offset, count, i);
+        offset += count;
+      }
+    }
+    if (isIndexed) {
+      let indexOffset = 0;
+      const mergedIndex = [];
+      for (let i = 0; i < geometries.length; ++i) {
+        const index = geometries[i].index;
+        for (let j = 0; j < index.count; ++j) {
+          mergedIndex.push(index.getX(j) + indexOffset);
+        }
+        indexOffset += geometries[i].attributes.position.count;
+      }
+      mergedGeometry.setIndex(mergedIndex);
+    }
+    for (const name in attributes) {
+      const mergedAttribute = mergeAttributes(attributes[name]);
+      if (!mergedAttribute) {
+        console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed while trying to merge the " + name + " attribute.");
+        return null;
+      }
+      mergedGeometry.setAttribute(name, mergedAttribute);
+    }
+    for (const name in morphAttributes) {
+      const numMorphTargets = morphAttributes[name][0].length;
+      if (numMorphTargets === 0) break;
+      mergedGeometry.morphAttributes = mergedGeometry.morphAttributes || {};
+      mergedGeometry.morphAttributes[name] = [];
+      for (let i = 0; i < numMorphTargets; ++i) {
+        const morphAttributesToMerge = [];
+        for (let j = 0; j < morphAttributes[name].length; ++j) {
+          morphAttributesToMerge.push(morphAttributes[name][j][i]);
+        }
+        const mergedMorphAttribute = mergeAttributes(morphAttributesToMerge);
+        if (!mergedMorphAttribute) {
+          console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed while trying to merge the " + name + " morphAttribute.");
+          return null;
+        }
+        mergedGeometry.morphAttributes[name].push(mergedMorphAttribute);
+      }
+    }
+    return mergedGeometry;
+  }
+  function mergeAttributes(attributes) {
+    let TypedArray;
+    let itemSize;
+    let normalized;
+    let gpuType = -1;
+    let arrayLength = 0;
+    for (let i = 0; i < attributes.length; ++i) {
+      const attribute = attributes[i];
+      if (TypedArray === void 0) TypedArray = attribute.array.constructor;
+      if (TypedArray !== attribute.array.constructor) {
+        console.error("THREE.BufferGeometryUtils: .mergeAttributes() failed. BufferAttribute.array must be of consistent array types across matching attributes.");
+        return null;
+      }
+      if (itemSize === void 0) itemSize = attribute.itemSize;
+      if (itemSize !== attribute.itemSize) {
+        console.error("THREE.BufferGeometryUtils: .mergeAttributes() failed. BufferAttribute.itemSize must be consistent across matching attributes.");
+        return null;
+      }
+      if (normalized === void 0) normalized = attribute.normalized;
+      if (normalized !== attribute.normalized) {
+        console.error("THREE.BufferGeometryUtils: .mergeAttributes() failed. BufferAttribute.normalized must be consistent across matching attributes.");
+        return null;
+      }
+      if (gpuType === -1) gpuType = attribute.gpuType;
+      if (gpuType !== attribute.gpuType) {
+        console.error("THREE.BufferGeometryUtils: .mergeAttributes() failed. BufferAttribute.gpuType must be consistent across matching attributes.");
+        return null;
+      }
+      arrayLength += attribute.count * itemSize;
+    }
+    const array = new TypedArray(arrayLength);
+    const result = new BufferAttribute(array, itemSize, normalized);
+    let offset = 0;
+    for (let i = 0; i < attributes.length; ++i) {
+      const attribute = attributes[i];
+      if (attribute.isInterleavedBufferAttribute) {
+        const tupleOffset = offset / itemSize;
+        for (let j = 0, l = attribute.count; j < l; j++) {
+          for (let c = 0; c < itemSize; c++) {
+            const value = attribute.getComponent(j, c);
+            result.setComponent(j + tupleOffset, c, value);
+          }
+        }
+      } else {
+        array.set(attribute.array, offset);
+      }
+      offset += attribute.count * itemSize;
+    }
+    if (gpuType !== void 0) {
+      result.gpuType = gpuType;
+    }
+    return result;
+  }
   function toTrianglesDrawMode(geometry, drawMode) {
     if (drawMode === TrianglesDrawMode) {
       console.warn("THREE.BufferGeometryUtils.toTrianglesDrawMode(): Geometry already defined as triangles.");
@@ -33186,7 +33448,7 @@ void main() {
     { key: "side", label: "\u30B5\u30A4\u30C9\u5149", min: 55, max: 125 },
     { key: "back", label: "\u9006\u5149", min: 125, max: 180 }
   ];
-  var FACE_LUMA = { min: 0.43, max: 0.72 };
+  var FACE_LUMA = { min: 0.46, max: 0.74 };
   var SHOTS_PER_SESSION = 3;
   var POINTS = {
     pose: 25,
@@ -33611,7 +33873,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       slider.className = "pg-ev-slider";
       slider.min = String(-(api.compensationLimit || 2));
       slider.max = String(api.compensationLimit || 2);
-      slider.step = "0.25";
+      slider.step = "0.3333";
       slider.value = String(api.getExposure().compensation);
       slider.setAttribute("aria-label", "\u660E\u308B\u3055\u88DC\u6B63");
       const readout = el("span", "pg-ev-value", formatStops(Number(slider.value)));
@@ -34125,6 +34387,22 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   }
 
   // src/scenes.js
+  function merged(parts) {
+    const geometries = parts.map(({ geometry, position, rotation, scale }) => {
+      const copy = geometry.clone();
+      const matrix = new Matrix4().compose(
+        position || new Vector3(),
+        rotation ? new Quaternion().setFromEuler(rotation) : new Quaternion(),
+        scale || new Vector3(1, 1, 1)
+      );
+      copy.applyMatrix4(matrix);
+      geometry.dispose();
+      return copy;
+    });
+    const result = mergeGeometries(geometries, false);
+    for (const geometry of geometries) geometry.dispose();
+    return result;
+  }
   function makeRandom2(seed) {
     let state2 = seed >>> 0;
     return () => {
@@ -34146,22 +34424,69 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       else disposeMaterial2(object.material);
     });
   }
-  function coneTree(random, trunkColor, leafColor) {
+  function coneTree(random, trunkColor, leafColor, scale = 1) {
     const group = new Group();
+    group.userData.prop = "tree";
+    const height = (10 + random() * 3.5) * scale;
+    const trunkHeight = height * 0.3;
     const trunk = new Mesh(
-      new CylinderGeometry(0.15, 0.22, 1.6, 6),
+      new CylinderGeometry(0.14 * scale, 0.24 * scale, trunkHeight, 7),
       new MeshStandardMaterial({ color: trunkColor, roughness: 1 })
     );
-    trunk.position.y = 0.8;
+    trunk.position.y = trunkHeight / 2;
+    trunk.castShadow = true;
+    group.add(trunk);
+    const leafMat = new MeshStandardMaterial({ color: leafColor, roughness: 0.9 });
+    const TIERS = 5;
+    const crownBase = trunkHeight * 0.72;
+    const crownHeight = height - crownBase;
+    const tiers = [];
+    for (let i = 0; i < TIERS; i++) {
+      const t = i / (TIERS - 1);
+      tiers.push({
+        geometry: new ConeGeometry((2.5 - t * 1.7) * scale, crownHeight * 0.42, 9),
+        position: new Vector3(0, crownBase + t * crownHeight * 0.76 + crownHeight * 0.18, 0)
+      });
+    }
+    const crown = new Group();
+    const crownMesh = new Mesh(merged(tiers), leafMat);
+    crownMesh.castShadow = true;
+    crown.add(crownMesh);
+    group.add(crown);
+    group.userData.crown = crown;
+    group.rotation.y = random() * Math.PI * 2;
+    return group;
+  }
+  function broadleafTree(random, scale = 1) {
+    const group = new Group();
+    group.userData.prop = "broadleaf";
+    const height = (5.4 + random() * 1.6) * scale;
+    const trunkHeight = height * 0.42;
+    const trunk = new Mesh(
+      new CylinderGeometry(0.13 * scale, 0.19 * scale, trunkHeight, 7),
+      new MeshStandardMaterial({ color: 7164216, roughness: 1 })
+    );
+    trunk.position.y = trunkHeight / 2;
     trunk.castShadow = true;
     group.add(trunk);
     const crown = new Group();
-    const leafMat = new MeshStandardMaterial({ color: leafColor, roughness: 0.9 });
-    for (let i = 0; i < 3; i++) {
-      const leaf = new Mesh(new ConeGeometry(1.1 - i * 0.22, 1.4, 8), leafMat);
-      leaf.position.y = 1.6 + i * 0.9;
-      leaf.castShadow = true;
-      crown.add(leaf);
+    const leafMat = new MeshStandardMaterial({ color: 5212740, roughness: 0.92 });
+    const crownSpan = height - trunkHeight;
+    const crownCentre = trunkHeight + crownSpan * 0.5;
+    for (let i = 0; i < 4; i++) {
+      const lobe = new Mesh(
+        new IcosahedronGeometry(crownSpan * (0.38 - i * 0.035), 1),
+        leafMat
+      );
+      const angle = i / 4 * Math.PI * 2 + random();
+      lobe.position.set(
+        Math.sin(angle) * crownSpan * 0.19,
+        crownCentre + (i % 2 - 0.5) * crownSpan * 0.22,
+        Math.cos(angle) * crownSpan * 0.19
+      );
+      lobe.scale.y = 0.86;
+      lobe.castShadow = true;
+      crown.add(lobe);
     }
     group.add(crown);
     group.userData.crown = crown;
@@ -34173,9 +34498,10 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     const material = new MeshStandardMaterial({ color, roughness: 1 });
     for (let i = 0; i < count; i++) {
       const angle = i / count * Math.PI * 2 + random() * 0.3;
-      const distance = radius + random() * 12;
-      const hill = new Mesh(new SphereGeometry(size + random() * size * 0.7, 12, 8), material);
+      const distance = radius * (0.9 + random() * 0.2);
+      const hill = new Mesh(new SphereGeometry(size * (0.8 + random() * 0.45), 12, 8), material);
       hill.position.set(Math.sin(angle) * distance, -sink, Math.cos(angle) * distance);
+      hill.userData.prop = "hill";
       group.add(hill);
     }
     return group;
@@ -34185,8 +34511,8 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     const group = new Group();
     const sway = [];
     const ground = new Mesh(
-      new CircleGeometry(60, 48),
-      new MeshStandardMaterial({ map: tiled(grassTexture(), 42), roughness: 1 })
+      new CircleGeometry(400, 64),
+      new MeshStandardMaterial({ map: tiled(grassTexture(), 280), roughness: 1 })
     );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
@@ -34206,9 +34532,8 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       const z = Math.cos(angle) * radius;
       if (Math.abs(x) < 2.4 && z > -3 && z < 42) continue;
       if (Math.hypot(x, z) < 3) continue;
-      const tree = coneTree(random, 7031344, 4160058);
+      const tree = random() < 0.45 ? broadleafTree(random, 1.15 + random() * 0.5) : coneTree(random, 7031344, 4160058, 0.85 + random() * 0.35);
       tree.position.set(x, 0, z);
-      tree.scale.setScalar(0.8 + random() * 0.55);
       group.add(tree);
       sway.push(tree.userData.crown);
     }
@@ -34224,7 +34549,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       sway.push(shrub);
     }
     group.add(pond(-8.5, -6, 4.6, random));
-    group.add(hillRing(random, 10, 6066002, 48, 8, 6));
+    group.add(hillRing(random, 14, 7639674, 760, 135, 58));
     const nightGlow2 = [];
     const nightLights2 = [];
     for (const [x, z] of [[2.6, -1.5], [-2.6, 9]]) {
@@ -34242,6 +34567,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   }
   function parkLamp() {
     const group = new Group();
+    group.userData.prop = "park lamp";
     const metal = new MeshStandardMaterial({ color: 3356735, roughness: 0.7 });
     const post = new Mesh(new CylinderGeometry(0.05, 0.08, 2.8, 7), metal);
     post.position.y = 1.4;
@@ -34256,6 +34582,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   }
   function floweringShrub(random) {
     const group = new Group();
+    group.userData.prop = "shrub";
     const leafMat = new MeshStandardMaterial({ color: 4685630, roughness: 1 });
     const bush = new Mesh(new SphereGeometry(0.42 + random() * 0.2, 7, 5), leafMat);
     bush.scale.y = 0.72;
@@ -34275,6 +34602,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   }
   function pond(x, z, radius, random) {
     const group = new Group();
+    group.userData.prop = "pond";
     const water = new Mesh(
       new CircleGeometry(radius, 40),
       new MeshStandardMaterial({
@@ -34298,22 +34626,28 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     rim.receiveShadow = true;
     group.add(rim);
     const reedMat = new MeshStandardMaterial({ color: 6262594, roughness: 1 });
+    const reeds = [];
     for (let i = 0; i < 24; i++) {
       const angle = random() * Math.PI * 2;
-      const reed = new Mesh(new ConeGeometry(0.05, 0.7 + random() * 0.5, 4), reedMat);
-      reed.position.set(
-        Math.sin(angle) * (radius - 0.2),
-        0.35,
-        Math.cos(angle) * (radius - 0.2)
-      );
-      reed.castShadow = true;
-      group.add(reed);
+      const height = 0.7 + random() * 0.5;
+      reeds.push({
+        geometry: new ConeGeometry(0.05, height, 4),
+        position: new Vector3(
+          Math.sin(angle) * (radius - 0.2),
+          height / 2,
+          Math.cos(angle) * (radius - 0.2)
+        )
+      });
     }
+    const reedMesh = new Mesh(merged(reeds), reedMat);
+    reedMesh.castShadow = true;
+    group.add(reedMesh);
     group.position.set(x, 0, z);
     return group;
   }
   function parkBench(x, z, rotation) {
     const group = new Group();
+    group.userData.prop = "bench";
     const wood = new MeshStandardMaterial({ color: 11038783, roughness: 0.9 });
     const iron = new MeshStandardMaterial({ color: 3817287, roughness: 0.7 });
     for (let i = 0; i < 3; i++) {
@@ -34343,29 +34677,38 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     const random = makeRandom2(1071);
     const group = new Group();
     const sway = [];
-    const SHORE = 9;
+    const SHORE = 10.5;
+    const REACH = 300;
     const sand = new Mesh(
-      new CircleGeometry(SHORE + 1.2, 56),
-      new MeshStandardMaterial({ map: tiled(sandTexture(), 16), roughness: 1 })
+      new PlaneGeometry(REACH * 2, REACH),
+      new MeshStandardMaterial({ map: tiled(sandTexture(), 150, 75), roughness: 1 })
     );
     sand.rotation.x = -Math.PI / 2;
+    sand.position.z = SHORE - REACH / 2;
     sand.receiveShadow = true;
     group.add(sand);
     const wet = new Mesh(
-      new RingGeometry(SHORE - 1.6, SHORE + 1.2, 56),
-      new MeshStandardMaterial({ map: tiled(wetSandTexture(), 12), roughness: 0.55 })
+      new PlaneGeometry(REACH * 2, 4.6),
+      new MeshStandardMaterial({
+        map: tiled(wetSandTexture(), 120, 1),
+        color: 10655100,
+        roughness: 0.35
+      })
     );
     wet.rotation.x = -Math.PI / 2;
-    wet.position.y = 0.012;
+    wet.position.set(0, 0.012, SHORE - 2.3);
     group.add(wet);
-    const seaGeo = new RingGeometry(SHORE - 2, 220, 72, 6);
+    const SEA = 2800;
+    const seaGeo = new PlaneGeometry(SEA * 2, SEA, 24, 48);
     const shallow = new Color(4829373);
-    const deep = new Color(1789818);
+    const deep = new Color(2517652);
     const colors = [];
     const position = seaGeo.attributes.position;
     for (let i = 0; i < position.count; i++) {
-      const radius = Math.hypot(position.getX(i), position.getY(i));
-      const t = MathUtils.clamp((radius - SHORE) / 48, 0, 1);
+      const even = (SEA / 2 - position.getY(i)) / SEA;
+      const out = SEA * even * even;
+      position.setY(i, SEA / 2 - out);
+      const t = MathUtils.clamp(out / 110, 0, 1);
       const c = shallow.clone().lerp(deep, Math.sqrt(t));
       colors.push(c.r, c.g, c.b);
     }
@@ -34374,16 +34717,17 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       vertexColors: true,
       roughness: 0.24,
       metalness: 0,
-      normalMap: tiled(rippleNormal(), 34),
+      normalMap: tiled(rippleNormal(), 320, 160),
       normalScale: new Vector2(0.5, 0.5)
     }));
     sea.rotation.x = -Math.PI / 2;
-    sea.position.y = -0.02;
+    position.needsUpdate = true;
+    sea.position.set(0, -0.02, SHORE + SEA / 2);
     sea.userData.scroll = 0.02;
     group.add(sea);
     for (let i = 0; i < 2; i++) {
       const foam = new Mesh(
-        new RingGeometry(SHORE - 1.5, SHORE - 0.95, 64),
+        new PlaneGeometry(REACH * 2, 0.9),
         new MeshStandardMaterial({
           color: 16186363,
           roughness: 1,
@@ -34392,78 +34736,88 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
         })
       );
       foam.rotation.x = -Math.PI / 2;
-      foam.position.y = 0.02;
+      const home = SHORE - 1.1 - i * 0.9;
+      foam.position.set(0, 0.02, home);
       foam.userData.surfPhase = i * Math.PI;
+      foam.userData.surfHome = home;
       group.add(foam);
       if (!group.userData.surf) group.userData.surf = [];
       group.userData.surf.push(foam);
     }
     const rockMat = new MeshStandardMaterial({ color: 8222313, roughness: 1 });
-    for (let i = 0; i < 9; i++) {
-      const angle = random() * Math.PI * 2;
-      const radius = 3.4 + random() * 5.5;
-      const rock = new Mesh(new DodecahedronGeometry(0.3 + random() * 0.75, 0), rockMat);
-      rock.position.set(Math.sin(angle) * radius, 0.05 + random() * 0.2, Math.cos(angle) * radius);
+    for (let i = 0; i < 14; i++) {
+      const rock = new Mesh(new DodecahedronGeometry(0.14 + random() * 0.34, 0), rockMat);
+      rock.position.set((random() - 0.5) * 34, 0.02 + random() * 0.08, SHORE - 1 - random() * 16);
       rock.rotation.set(random(), random(), random());
       rock.scale.y = 0.6 + random() * 0.4;
       rock.castShadow = true;
       rock.receiveShadow = true;
       group.add(rock);
     }
-    for (let i = 0; i < 7; i++) {
-      const angle = random() * Math.PI * 2;
-      const radius = 5.5 + random() * 3.5;
+    for (let i = 0; i < 11; i++) {
       const palm = palmTree(random);
-      palm.position.set(Math.sin(angle) * radius, 0, Math.cos(angle) * radius);
+      palm.position.set((i - 5) * 6.5 + (random() - 0.5) * 4, 0, -6 - random() * 9);
       palm.scale.setScalar(0.9 + random() * 0.4);
       group.add(palm);
       sway.push(palm.userData.crown);
     }
-    group.add(hillRing(random, 5, 5074775, 96, 14, 9));
+    group.add(hillRing(random, 8, 6586478, 1180, 210, 95));
     group.add(jetty());
     return { group, sway, nightGlow: [], nightLights: [] };
   }
   function jetty() {
     const group = new Group();
+    group.userData.prop = "jetty";
     const wood = new MeshStandardMaterial({ color: 9072462, roughness: 0.95 });
     const dark = new MeshStandardMaterial({ color: 7165756, roughness: 1 });
     const LENGTH = 11;
+    const planks = [];
     for (let i = 0; i < 26; i++) {
-      const plank = new Mesh(new BoxGeometry(1.7, 0.08, 0.34), wood);
-      plank.position.set(0, 0.62, -3 - i * (LENGTH / 26));
-      plank.castShadow = true;
-      plank.receiveShadow = true;
-      group.add(plank);
+      planks.push({
+        geometry: new BoxGeometry(1.7, 0.08, 0.34),
+        position: new Vector3(0, 0.62, -3 - i * (LENGTH / 26))
+      });
     }
+    const deck = new Mesh(merged(planks), wood);
+    deck.castShadow = true;
+    deck.receiveShadow = true;
+    group.add(deck);
+    const piles = [];
     for (let i = 0; i < 5; i++) {
       for (const side of [-1, 1]) {
-        const pile = new Mesh(new CylinderGeometry(0.09, 0.09, 1.4, 6), dark);
-        pile.position.set(side * 0.72, 0, -3.4 - i * 2.5);
-        pile.castShadow = true;
-        group.add(pile);
+        piles.push({
+          geometry: new CylinderGeometry(0.09, 0.09, 1.4, 6),
+          position: new Vector3(side * 0.72, 0, -3.4 - i * 2.5)
+        });
       }
     }
-    group.rotation.y = 0.5;
+    const pileMesh = new Mesh(merged(piles), dark);
+    pileMesh.castShadow = true;
+    group.add(pileMesh);
+    group.rotation.y = Math.PI + 0.24;
+    group.position.z = 3.5;
     return group;
   }
   function palmTree(random) {
     const group = new Group();
+    group.userData.prop = "palm";
     const lean = (random() - 0.5) * 0.35;
+    const TRUNK = 7.4 + random() * 1.8;
     const trunk = new Mesh(
-      new CylinderGeometry(0.11, 0.18, 3.4, 7),
+      new CylinderGeometry(0.13, 0.26, TRUNK, 8),
       new MeshStandardMaterial({ color: 9071174, roughness: 1 })
     );
-    trunk.position.y = 1.7;
+    trunk.position.y = TRUNK / 2;
     trunk.rotation.z = lean;
     trunk.castShadow = true;
     group.add(trunk);
     const crown = new Group();
-    crown.position.set(Math.sin(lean) * -1.7, 3.35, 0);
+    crown.position.set(Math.sin(lean) * -TRUNK * 0.5, TRUNK, 0);
     const frondMat = new MeshStandardMaterial({ color: 4949058, roughness: 0.9, side: DoubleSide });
-    for (let i = 0; i < 7; i++) {
-      const frond = new Mesh(new ConeGeometry(0.3, 1.9, 4), frondMat);
-      const angle = i / 7 * Math.PI * 2;
-      frond.position.set(Math.sin(angle) * 0.75, -0.15, Math.cos(angle) * 0.75);
+    for (let i = 0; i < 9; i++) {
+      const frond = new Mesh(new ConeGeometry(0.42, 3.4, 4), frondMat);
+      const angle = i / 9 * Math.PI * 2;
+      frond.position.set(Math.sin(angle) * 1.3, -0.2, Math.cos(angle) * 1.3);
       frond.rotation.set(Math.cos(angle) * 1.15, -angle, -Math.sin(angle) * 1.15);
       frond.scale.set(1, 1, 0.35);
       frond.castShadow = true;
@@ -34482,58 +34836,67 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     const ROAD_HALF = 4.2;
     const KERB = 0.14;
     const ground = new Mesh(
-      new CircleGeometry(70, 48),
-      new MeshStandardMaterial({ map: tiled(asphaltTexture(), 40), roughness: 1 })
+      new CircleGeometry(300, 56),
+      new MeshStandardMaterial({ map: tiled(asphaltTexture(), 170), roughness: 1 })
     );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     group.add(ground);
     for (const side of [-1, 1]) {
       const pavement = new Mesh(
-        new BoxGeometry(5.5, KERB, 120),
-        new MeshStandardMaterial({ map: tiled(pavementTexture(), 2, 44), roughness: 1 })
+        new BoxGeometry(5.5, KERB, 260),
+        new MeshStandardMaterial({ map: tiled(pavementTexture(), 2, 95), roughness: 1 })
       );
       pavement.position.set(side * (ROAD_HALF + 2.75), KERB / 2, 0);
       pavement.receiveShadow = true;
       group.add(pavement);
     }
     const lineMat = new MeshStandardMaterial({ color: 14209725, roughness: 1 });
-    for (let i = -18; i <= 18; i++) {
-      const dash = new Mesh(new PlaneGeometry(0.16, 1.6), lineMat);
-      dash.rotation.x = -Math.PI / 2;
-      dash.position.set(0, 0.012, i * 3.2);
-      group.add(dash);
+    const dashes = [];
+    for (let i = -38; i <= 38; i++) {
+      dashes.push({
+        geometry: new PlaneGeometry(0.16, 1.6),
+        position: new Vector3(0, 0.012, i * 3.2),
+        rotation: new Euler(-Math.PI / 2, 0, 0)
+      });
     }
+    group.add(new Mesh(merged(dashes), lineMat));
+    const stripes = [];
     for (let i = 0; i < 8; i++) {
-      const stripe = new Mesh(new PlaneGeometry(0.45, ROAD_HALF * 2 - 0.3), lineMat);
-      stripe.rotation.x = -Math.PI / 2;
-      stripe.rotation.z = Math.PI / 2;
-      stripe.position.set(0, 0.014, -3.15 + i * 0.9);
-      group.add(stripe);
+      stripes.push({
+        geometry: new PlaneGeometry(0.45, ROAD_HALF * 2 - 0.3),
+        position: new Vector3(0, 0.014, -3.15 + i * 0.9),
+        rotation: new Euler(-Math.PI / 2, 0, Math.PI / 2)
+      });
     }
+    group.add(new Mesh(merged(stripes), lineMat));
     const facadeColors = [12167315, 10463406, 12755084, 9280147, 13352870];
+    const glassMat = new MeshStandardMaterial({
+      color: 2832968,
+      roughness: 0.18,
+      metalness: 0.55
+    });
+    const litGlassMat = new MeshStandardMaterial({
+      color: 2832968,
+      roughness: 0.18,
+      metalness: 0.35
+    });
+    nightGlow2.push({ material: litGlassMat, color: 16768168, intensity: 1.9 });
     for (const side of [-1, 1]) {
-      let z = -46;
-      while (z < 46) {
+      let z = -95;
+      while (z < 95) {
         const depth = 7 + random() * 7;
-        const height = 5 + random() * 11;
+        const height = 7.5 + random() * 9;
         const width = 6 + random() * 4;
         const building = shopfront(
           width,
           height,
           depth,
           facadeColors[Math.floor(random() * facadeColors.length)],
-          random
+          random,
+          glassMat,
+          litGlassMat
         );
-        for (const pane of building.userData.windows) {
-          if (random() > 0.34) {
-            nightGlow2.push({
-              material: pane.material,
-              color: [16767392, 16771524, 13623551][Math.floor(random() * 3)],
-              intensity: 1.5 + random()
-            });
-          }
-        }
         building.position.set(side * (ROAD_HALF + 5.5 + width / 2), 0, z + depth / 2);
         building.rotation.y = side < 0 ? Math.PI / 2 : -Math.PI / 2;
         group.add(building);
@@ -34541,7 +34904,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       }
     }
     for (const side of [-1, 1]) {
-      for (let i = -3; i <= 3; i++) {
+      for (let i = -7; i <= 7; i++) {
         const z = i * 11 + side * 5.5;
         const post = lampPost(side * (ROAD_HALF + 0.9), z);
         nightGlow2.push({ material: post.userData.lampMaterial, color: 16770736, intensity: 2.4 });
@@ -34556,10 +34919,9 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       }
     }
     for (const side of [-1, 1]) {
-      for (let i = -2; i <= 2; i++) {
-        const tree = coneTree(random, 5981746, 5077573);
+      for (let i = -5; i <= 5; i++) {
+        const tree = broadleafTree(random);
         tree.position.set(side * (ROAD_HALF + 3.6), KERB, i * 11 + 5.5 - side * 3);
-        tree.scale.setScalar(0.62 + random() * 0.16);
         group.add(tree);
         sway.push(tree.userData.crown);
       }
@@ -34579,11 +34941,12 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   }
   function powerLines(offset) {
     const group = new Group();
+    group.userData.prop = "power lines";
     const poleMat = new MeshStandardMaterial({ color: 9274744, roughness: 0.95 });
     const wireMat = new MeshStandardMaterial({ color: 1842980, roughness: 0.9 });
     const SPAN = 22;
-    const HEIGHT = 7.6;
-    const positions = [-33, -11, 11, 33];
+    const HEIGHT = 9.8;
+    const positions = [-77, -55, -33, -11, 11, 33, 55, 77];
     for (const z of positions) {
       const pole = new Mesh(new CylinderGeometry(0.13, 0.17, HEIGHT, 7), poleMat);
       pole.position.set(-offset, HEIGHT / 2, z);
@@ -34613,7 +34976,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
         group.add(wire);
       }
     }
-    for (const z of [-11, 11]) {
+    for (const z of [-55, -11, 33]) {
       const points = [];
       for (let t = 0; t <= 10; t++) {
         const f = t / 10;
@@ -34632,6 +34995,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   }
   function vendingMachine() {
     const group = new Group();
+    group.userData.prop = "vending machine";
     const body = new Mesh(
       new BoxGeometry(1.05, 1.9, 0.72),
       new MeshStandardMaterial({ color: 12858927, roughness: 0.6 })
@@ -34652,14 +35016,10 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     group.userData.faceMaterial = faceMaterial;
     return group;
   }
-  function shopfront(width, height, depth, color, random) {
+  function shopfront(width, height, depth, color, random, glassMat, litGlassMat) {
     const group = new Group();
+    group.userData.prop = "building";
     const wallMat = new MeshStandardMaterial({ color, roughness: 0.95 });
-    const glassMat = new MeshStandardMaterial({
-      color: 2832968,
-      roughness: 0.18,
-      metalness: 0.55
-    });
     const block = new Mesh(new BoxGeometry(width, height, depth), wallMat);
     block.position.y = height / 2;
     block.castShadow = true;
@@ -34679,29 +35039,28 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     group.add(awning);
     const rows = Math.max(1, Math.floor((height - 4) / 2.6));
     const columns = Math.max(2, Math.round(width / 2.2));
-    const windows = [];
+    const dark = [];
+    const lit = [];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < columns; c++) {
-        const paneMat = new MeshStandardMaterial({
-          color: 2832968,
-          roughness: 0.18,
-          metalness: 0.55
-        });
-        const pane = new Mesh(new PlaneGeometry(0.95, 1.25), paneMat);
-        pane.position.set(
-          (c - (columns - 1) / 2) * (width / columns),
-          4.2 + r * 2.6,
-          front
-        );
-        group.add(pane);
-        windows.push(pane);
+        const pane = {
+          geometry: new PlaneGeometry(0.95, 1.25),
+          position: new Vector3(
+            (c - (columns - 1) / 2) * (width / columns),
+            4.2 + r * 2.6,
+            front
+          )
+        };
+        (random() > 0.34 ? lit : dark).push(pane);
       }
     }
-    group.userData.windows = windows;
+    if (dark.length) group.add(new Mesh(merged(dark), glassMat));
+    if (lit.length) group.add(new Mesh(merged(lit), litGlassMat));
     return group;
   }
   function lampPost(x, z) {
     const group = new Group();
+    group.userData.prop = "street lamp";
     const metal = new MeshStandardMaterial({ color: 3093563, roughness: 0.6 });
     const post = new Mesh(new CylinderGeometry(0.06, 0.09, 4.4, 7), metal);
     post.position.y = 2.2;
@@ -34788,8 +35147,8 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       build: buildPark,
       tint: {
         hemiGround: 7049050,
-        fogNear: 28,
-        fogFar: 75
+        fogNear: 70,
+        fogFar: 1500
       }
     },
     {
@@ -34798,8 +35157,8 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       build: buildBeach,
       tint: {
         hemiGround: 11049586,
-        fogNear: 40,
-        fogFar: 130,
+        fogNear: 110,
+        fogFar: 1600,
         // Sea haze is warm and pale at every hour, so the horizon keeps some of
         // its own colour rather than taking the sky's whole.
         horizon: 15787730,
@@ -34814,8 +35173,8 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       build: buildStreet,
       tint: {
         hemiGround: 5593182,
-        fogNear: 34,
-        fogFar: 95,
+        fogNear: 55,
+        fogFar: 320,
         horizon: 14410986,
         horizonMix: 0.25,
         // A low sun on a street spends its time behind a building, where there
@@ -35080,14 +35439,14 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   var canvas = document.getElementById("scene");
   var scene = new Scene();
   scene.fog = new Fog(12573160, 28, 75);
-  var camera = new PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 300);
+  var camera = new PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 6e3);
   var renderer = new WebGLRenderer({ canvas, antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.toneMapping = LinearToneMapping;
-  var SKY_RADIUS = 200;
+  var SKY_RADIUS = 3e3;
   var skyGeo = new SphereGeometry(SKY_RADIUS, 24, 16);
   skyGeo.setAttribute("color", new Float32BufferAttribute(
     new Float32Array(skyGeo.attributes.position.count * 3),
@@ -35138,11 +35497,11 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     return new CanvasTexture(canvas2);
   }
   var sunDisc = new Mesh(
-    new CircleGeometry(9, 32),
+    new CircleGeometry(127, 32),
     new MeshBasicMaterial({ color: 16776690, fog: false })
   );
   var sunGlow = new Mesh(
-    new PlaneGeometry(150, 150),
+    new PlaneGeometry(2100, 2100),
     new MeshBasicMaterial({
       map: makeGlowTexture(),
       transparent: true,
@@ -35160,7 +35519,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       Math.sin(elevation) * SUN_DISTANCE,
       Math.cos(azimuth) * ground
     );
-    const far = 170;
+    const far = 2400;
     for (const disc of [sunDisc, sunGlow]) {
       disc.position.set(
         Math.sin(azimuth) * Math.cos(elevation) * far,
@@ -35301,7 +35660,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   function animateSurf() {
     for (const foam of surfRings) {
       const t = Math.sin(weather.state.time * 0.55 + foam.userData.surfPhase);
-      foam.scale.setScalar(1 + t * 0.045);
+      foam.position.z = foam.userData.surfHome - t * 0.85;
       foam.material.opacity = 0.35 + (t * 0.5 + 0.5) * 0.45;
     }
   }
@@ -36486,17 +36845,19 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       if (loadingEl) loadingEl.textContent = "\u30E2\u30C7\u30EB\u306E\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F";
     });
   });
-  camera.position.set(0, 2.6, -4.5);
+  var EYE_HEIGHT = 1.5;
+  var LOOK_HEIGHT = 1.15;
+  camera.position.set(0, EYE_HEIGHT, -3.9);
   var controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.set(0, 1.1, 0);
+  controls.target.set(0, LOOK_HEIGHT, 0);
   controls.minDistance = 0.7;
   controls.maxDistance = 12;
-  controls.maxPolarAngle = Math.PI * 0.49;
+  controls.maxPolarAngle = Math.PI * 0.58;
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.update();
   function updateCamera() {
-    controls.target.lerp(state.position.clone().add(new Vector3(0, 1.1, 0)), 0.15);
+    controls.target.lerp(state.position.clone().add(new Vector3(0, LOOK_HEIGHT, 0)), 0.15);
     controls.update();
   }
   var ARM_DOWN_Z = -1.3;
@@ -37344,6 +37705,78 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     setPausedForTest: (on) => {
       paused = on;
     },
+    rendererInfoForTest: () => ({
+      calls: renderer.info.render.calls,
+      triangles: renderer.info.render.triangles
+    }),
+    characterSizeForTest: () => {
+      const box = new Box3().setFromObject(vrm.scene);
+      const size = box.getSize(new Vector3());
+      return { height: size.y, width: size.x, headTop: box.max.y };
+    },
+    birdSizeForTest: () => {
+      const wasVisible = bird.visible;
+      bird.visible = true;
+      bird.updateWorldMatrix(true, true);
+      const box = new Box3().setFromObject(bird);
+      bird.visible = wasVisible;
+      const size = box.getSize(new Vector3());
+      return { length: size.z, height: size.y, width: size.x };
+    },
+    umbrellaSizeForTest: () => {
+      const wasVisible = umbrella.visible;
+      const scale = umbrella.scale.clone();
+      umbrella.visible = true;
+      umbrella.scale.set(1, 1, 1);
+      umbrella.updateWorldMatrix(true, true);
+      const box = new Box3().setFromObject(umbrella);
+      umbrella.visible = wasVisible;
+      umbrella.scale.copy(scale);
+      const size = box.getSize(new Vector3());
+      return { span: Math.max(size.x, size.z), height: size.y };
+    },
+    propPositionsForTest: (name) => {
+      const out = [];
+      sceneryRoot.children[0].traverse((object) => {
+        if (object.userData.prop !== name) return;
+        const p = new Vector3();
+        object.getWorldPosition(p);
+        out.push({ x: p.x, y: p.y, z: p.z });
+      });
+      return out;
+    },
+    // Hide every prop except the one instance nearest the origin, so a scale
+    // check can stand her beside it with nothing in the way. Pass null to undo.
+    isolatePropForTest: (name) => {
+      let keep = null;
+      sceneryRoot.children[0].traverse((object) => {
+        if (!object.userData.prop) return;
+        object.visible = true;
+        if (object.userData.prop !== name) return;
+        const p = new Vector3();
+        object.getWorldPosition(p);
+        const d = Math.hypot(p.x, p.z);
+        if (!keep || d < keep.d) keep = { object, d, x: p.x, z: p.z };
+      });
+      if (!name) return null;
+      sceneryRoot.children[0].traverse((object) => {
+        if (object.userData.prop && object !== (keep && keep.object)) object.visible = false;
+      });
+      return keep ? { x: keep.x, z: keep.z } : null;
+    },
+    propSizesForTest: () => {
+      const out = [];
+      const seen = /* @__PURE__ */ new Map();
+      sceneryRoot.children[0].traverse((object) => {
+        if (!object.isMesh && !(object.isGroup && object.children.length)) return;
+        const name = object.userData.prop;
+        if (!name || seen.has(name)) return;
+        seen.set(name, true);
+        const size = new Box3().setFromObject(object).getSize(new Vector3());
+        out.push({ name, w: size.x, h: size.y, d: size.z });
+      });
+      return out;
+    },
     setExposureCeilingForTest: (value) => {
       exposureCeiling = value;
     },
@@ -37465,10 +37898,23 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     getCameraPosition: () => ({ x: camera.position.x, y: camera.position.y, z: camera.position.z }),
     // Park the camera for a screenshot. Goes through OrbitControls' target
     // rather than camera.lookAt so the next controls.update() doesn't undo it.
-    setCameraForTest: (position, target) => {
+    setCameraForTest: (position, target, fov2) => {
       camera.position.set(position.x, position.y, position.z);
+      if (fov2) {
+        camera.fov = fov2;
+        camera.updateProjectionMatrix();
+      }
       controls.target.set(target.x, target.y, target.z);
       controls.update();
+    },
+    // Where a world point lands on screen, so a scale check can draw a real
+    // metre ruler over the render instead of guessing from pixels.
+    projectForTest: (point) => {
+      const v = new Vector3(point.x, point.y, point.z).project(camera);
+      return {
+        x: (v.x * 0.5 + 0.5) * renderer.domElement.clientWidth,
+        y: (-v.y * 0.5 + 0.5) * renderer.domElement.clientHeight
+      };
     },
     jumpForTest: (durationMs) => {
       startJump();

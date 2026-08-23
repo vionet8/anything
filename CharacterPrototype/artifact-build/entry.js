@@ -12,7 +12,7 @@ const canvas = document.getElementById('scene');
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xbfd9e8, 28, 75);
 
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 300);
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 6000);
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -28,7 +28,7 @@ renderer.toneMapping = THREE.LinearToneMapping;
 // Repainted per scene rather than built once: the horizon over water is a
 // warm haze and the horizon over a street is a grey one, and getting that
 // wrong is most of what makes a swapped background look pasted on.
-const SKY_RADIUS = 200;
+const SKY_RADIUS = 3000;
 const skyGeo = new THREE.SphereGeometry(SKY_RADIUS, 24, 16);
 skyGeo.setAttribute('color', new THREE.Float32BufferAttribute(
   new Float32Array(skyGeo.attributes.position.count * 3), 3));
@@ -102,11 +102,11 @@ function makeGlowTexture() {
 }
 
 const sunDisc = new THREE.Mesh(
-  new THREE.CircleGeometry(9, 32),
+  new THREE.CircleGeometry(127, 32),
   new THREE.MeshBasicMaterial({ color: 0xfffdf2, fog: false })
 );
 const sunGlow = new THREE.Mesh(
-  new THREE.PlaneGeometry(150, 150),
+  new THREE.PlaneGeometry(2100, 2100),
   new THREE.MeshBasicMaterial({
     map: makeGlowTexture(), transparent: true, depthWrite: false, fog: false,
   })
@@ -123,8 +123,10 @@ function setSun(azimuth, elevation = sunElevation) {
     Math.cos(azimuth) * ground
   );
   // Out on the sky sphere, so it sits behind everything and reads as sky
-  // rather than as an object in the scene.
-  const far = 170;
+  // rather than as an object in the scene. It has to clear the far hills too:
+  // the beach headland is over a kilometre out, and a sun hung at one kilometre
+  // sets behind nothing and rises through the middle of an island.
+  const far = 2400;
   for (const disc of [sunDisc, sunGlow]) {
     disc.position.set(
       Math.sin(azimuth) * Math.cos(elevation) * far,
@@ -327,11 +329,13 @@ function applyWindToScenery() {
   }
 }
 
-// The surf, on the beach. Two rings running up the sand and back.
+// The surf, on the beach. Two lines of foam running up the sand and back.
+// Slid along z rather than scaled: the shoreline is straight now, and scaling
+// a straight line about the origin runs it sideways as well as up the beach.
 function animateSurf() {
   for (const foam of surfRings) {
     const t = Math.sin(weather.state.time * 0.55 + foam.userData.surfPhase);
-    foam.scale.setScalar(1 + t * 0.045);
+    foam.position.z = foam.userData.surfHome - t * 0.85;
     foam.material.opacity = 0.35 + (t * 0.5 + 0.5) * 0.45;
   }
 }
@@ -1899,22 +1903,35 @@ CHARACTER_SOURCES.forEach((source, index) => {
 // ---- Camera: orbit around the character, drag to look from any angle ----
 // (this is also how you can actually see her face — the old fixed
 // behind-the-back follow camera never showed it).
-camera.position.set(0, 2.6, -4.5);
+// Eye height, not head height. The camera used to sit at 2.6m looking down at
+// a 1.59m subject -- a twenty-degree downward tilt, which is the single
+// strongest miniature cue there is: it pushes the horizon out of the top of
+// the frame, so there is no sky and nothing full-size to measure the scenery
+// against, and a real park full of correctly-sized benches reads as a tabletop
+// model. Measured against the props side-on with a metre ruler, the benches,
+// lamps and trees were right all along; it was the vantage point that was
+// wrong. 1.5m is where somebody photographing her would actually hold a phone.
+const EYE_HEIGHT = 1.5;
+const LOOK_HEIGHT = 1.15;
+camera.position.set(0, EYE_HEIGHT, -3.9);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 1.1, 0);
+controls.target.set(0, LOOK_HEIGHT, 0);
 // Close enough for a real portrait. It used to stop at 1.8m, which is a full
 // figure — at that range her head is 9% of the frame height, so "寄り" and
 // "標準" were the same picture and there was nothing for the photo game's
 // framing brief to ask for.
 controls.minDistance = 0.7;
 controls.maxDistance = 12;
-controls.maxPolarAngle = Math.PI * 0.49;
+// Past level, so a low angle is available. Shooting up at somebody is how you
+// make them look tall, and a photo game that can only ever look down at its
+// subject cannot teach that.
+controls.maxPolarAngle = Math.PI * 0.58;
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.update();
 
 function updateCamera() {
-  controls.target.lerp(state.position.clone().add(new THREE.Vector3(0, 1.1, 0)), 0.15);
+  controls.target.lerp(state.position.clone().add(new THREE.Vector3(0, LOOK_HEIGHT, 0)), 0.15);
   controls.update();
 }
 
@@ -3005,6 +3022,16 @@ function applyExposure() {
 
 // Mean luma of whatever is on screen. Must run in the same tick as the render,
 // like the photo capture, or it reads a cleared buffer.
+// A flat average of the whole frame -- deliberately, and this was tried the
+// other way round.
+//
+// Centre-weighting is what a phone actually does, and it was measured here:
+// with the subject in the middle, a backlit face made the meter open up and
+// came out *brighter* than the same face front-lit (0.711 against 0.528 in
+// the park). That is real camera behaviour and it is exactly why modern
+// phones cope with backlight -- which leaves this game with nothing to teach.
+// Averaging the whole frame keeps the meter fooled by a bright background,
+// which is the problem the compensation slider exists to solve.
 function meanLuma() {
   meterContext.drawImage(renderer.domElement, 0, 0, METER_SIZE, METER_SIZE);
   const { data } = meterContext.getImageData(0, 0, METER_SIZE, METER_SIZE);
@@ -3312,6 +3339,78 @@ window.__char = {
     step(0.001);
   },
   setPausedForTest: (on) => { paused = on; },
+  rendererInfoForTest: () => ({
+    calls: renderer.info.render.calls,
+    triangles: renderer.info.render.triangles,
+  }),
+  characterSizeForTest: () => {
+    const box = new THREE.Box3().setFromObject(vrm.scene);
+    const size = box.getSize(new THREE.Vector3());
+    return { height: size.y, width: size.x, headTop: box.max.y };
+  },
+  birdSizeForTest: () => {
+    const wasVisible = bird.visible;
+    bird.visible = true;
+    bird.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(bird);
+    bird.visible = wasVisible;
+    const size = box.getSize(new THREE.Vector3());
+    return { length: size.z, height: size.y, width: size.x };
+  },
+  umbrellaSizeForTest: () => {
+    const wasVisible = umbrella.visible;
+    const scale = umbrella.scale.clone();
+    umbrella.visible = true;
+    umbrella.scale.set(1, 1, 1);
+    umbrella.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(umbrella);
+    umbrella.visible = wasVisible;
+    umbrella.scale.copy(scale);
+    const size = box.getSize(new THREE.Vector3());
+    return { span: Math.max(size.x, size.z), height: size.y };
+  },
+  propPositionsForTest: (name) => {
+    const out = [];
+    sceneryRoot.children[0].traverse((object) => {
+      if (object.userData.prop !== name) return;
+      const p = new THREE.Vector3();
+      object.getWorldPosition(p);
+      out.push({ x: p.x, y: p.y, z: p.z });
+    });
+    return out;
+  },
+  // Hide every prop except the one instance nearest the origin, so a scale
+  // check can stand her beside it with nothing in the way. Pass null to undo.
+  isolatePropForTest: (name) => {
+    let keep = null;
+    sceneryRoot.children[0].traverse((object) => {
+      if (!object.userData.prop) return;
+      object.visible = true;
+      if (object.userData.prop !== name) return;
+      const p = new THREE.Vector3();
+      object.getWorldPosition(p);
+      const d = Math.hypot(p.x, p.z);
+      if (!keep || d < keep.d) keep = { object, d, x: p.x, z: p.z };
+    });
+    if (!name) return null;
+    sceneryRoot.children[0].traverse((object) => {
+      if (object.userData.prop && object !== (keep && keep.object)) object.visible = false;
+    });
+    return keep ? { x: keep.x, z: keep.z } : null;
+  },
+  propSizesForTest: () => {
+    const out = [];
+    const seen = new Map();
+    sceneryRoot.children[0].traverse((object) => {
+      if (!object.isMesh && !(object.isGroup && object.children.length)) return;
+      const name = object.userData.prop;
+      if (!name || seen.has(name)) return;
+      seen.set(name, true);
+      const size = new THREE.Box3().setFromObject(object).getSize(new THREE.Vector3());
+      out.push({ name, w: size.x, h: size.y, d: size.z });
+    });
+    return out;
+  },
   setExposureCeilingForTest: (value) => { exposureCeiling = value; },
   placeForTest: (x, z) => {
     state.position.set(x, 0, z);
@@ -3414,10 +3513,18 @@ window.__char = {
   getCameraPosition: () => ({ x: camera.position.x, y: camera.position.y, z: camera.position.z }),
   // Park the camera for a screenshot. Goes through OrbitControls' target
   // rather than camera.lookAt so the next controls.update() doesn't undo it.
-  setCameraForTest: (position, target) => {
+  setCameraForTest: (position, target, fov) => {
     camera.position.set(position.x, position.y, position.z);
+    if (fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
     controls.target.set(target.x, target.y, target.z);
     controls.update();
+  },
+  // Where a world point lands on screen, so a scale check can draw a real
+  // metre ruler over the render instead of guessing from pixels.
+  projectForTest: (point) => {
+    const v = new THREE.Vector3(point.x, point.y, point.z).project(camera);
+    return { x: (v.x * 0.5 + 0.5) * renderer.domElement.clientWidth,
+      y: (-v.y * 0.5 + 0.5) * renderer.domElement.clientHeight };
   },
   jumpForTest: (durationMs) => {
     startJump();
