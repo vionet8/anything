@@ -1,10 +1,16 @@
 const { chromium } = require('@playwright/test');
 const OUT = '/tmp/claude-0/-home-user-anything/4b640c7c-0c47-565d-8a67-b3261436d439/scratchpad';
+// Three consecutive quiet samples. One is worth about 0.03 of face luma,
+// which is most of the effect being measured -- the whole reason the earlier
+// readings of this disagreed with each other.
 async function settle(page) {
   let previous = null;
-  for (let i = 0; i < 80; i++) {
+  let quiet = 0;
+  for (let i = 0; i < 120; i++) {
     const auto = (await page.evaluate(() => window.__game.getExposureForTest())).auto;
-    if (previous !== null && Math.abs(auto - previous) < 0.005) return;
+    if (previous !== null && Math.abs(auto - previous) < 0.003) {
+      if (++quiet >= 3) return;
+    } else { quiet = 0; }
     previous = auto;
     await page.waitForTimeout(200);
   }
@@ -18,7 +24,13 @@ async function shoot(page, degrees, stops) {
     window.__game.setCompensationForTest(ev);
   }, [degrees, stops]);
   await settle(page);
-  return page.evaluate(() => window.__game.shootForTest());
+  const shots = [];
+  for (let i = 0; i < 3; i++) {
+    shots.push(await page.evaluate(() => window.__game.shootForTest()));
+    await page.waitForTimeout(120);
+  }
+  shots.sort((a, b) => a.faceLuma - b.faceLuma);
+  return shots[1];
 }
 (async () => {
   const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
@@ -28,7 +40,7 @@ async function shoot(page, degrees, stops) {
   await page.waitForFunction(() => window.__char && window.__char.ready, null, { timeout: 40000 });
   await page.evaluate(() => window.__game.startForTest({ pose: 'idle', expression: 'happy', framing: 'medium' }));
   await page.evaluate(() => window.__char.setSceneForTest('street', 'noon'));
-  for (const darken of [0.62, 0.45, 0.3]) {
+  for (const darken of [0.62, 0.4, 0.25, 0.1]) {
     for (const who of ['a', 'b', 'c']) {
       await page.evaluate((k) => window.__game.setCharacterForTest(k), who);
       await page.waitForFunction(() => window.__char.ready, null, { timeout: 40000 });
