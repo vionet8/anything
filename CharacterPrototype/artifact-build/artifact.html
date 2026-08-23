@@ -35631,84 +35631,199 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       foam.material.opacity = 0.35 + (t * 0.5 + 0.5) * 0.45;
     }
   }
+  function loft(stations, segments = 16) {
+    const positions = [];
+    const indices = [];
+    for (const station of stations) {
+      for (let s = 0; s < segments; s++) {
+        const angle = s / segments * Math.PI * 2;
+        positions.push(
+          Math.cos(angle) * station.rx,
+          station.y + Math.sin(angle) * station.ry,
+          station.z
+        );
+      }
+    }
+    for (let i = 0; i < stations.length - 1; i++) {
+      for (let s = 0; s < segments; s++) {
+        const a = i * segments + s;
+        const b = i * segments + (s + 1) % segments;
+        const c = (i + 1) * segments + s;
+        const d = (i + 1) * segments + (s + 1) % segments;
+        indices.push(a, c, b, b, c, d);
+      }
+    }
+    const first = stations[0];
+    const last = stations[stations.length - 1];
+    const frontCap = positions.length / 3;
+    positions.push(0, first.y, first.z);
+    const backCap = positions.length / 3;
+    positions.push(0, last.y, last.z);
+    const base = (stations.length - 1) * segments;
+    for (let s = 0; s < segments; s++) {
+      indices.push(frontCap, (s + 1) % segments, s);
+      indices.push(backCap, base + s, base + (s + 1) % segments);
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    return geometry;
+  }
+  function featherGeometry(length, width, tipWidth = width * 0.28) {
+    const SEGMENTS = 7;
+    const positions = [];
+    const indices = [];
+    for (let i = 0; i <= SEGMENTS; i++) {
+      const t = i / SEGMENTS;
+      const shape = Math.sin(Math.min(1, t * 1.6) * Math.PI * 0.5);
+      const halfWidth = (width * shape * (1 - t) + tipWidth * t) * 0.5;
+      const drop = -t * t * length * 0.16;
+      const cup = -halfWidth * 0.22;
+      positions.push(0, drop, -t * length);
+      positions.push(halfWidth, drop + cup, -t * length);
+      positions.push(-halfWidth, drop + cup, -t * length);
+    }
+    for (let i = 0; i < SEGMENTS; i++) {
+      const a = i * 3;
+      const b = (i + 1) * 3;
+      indices.push(a, b, a + 1, a + 1, b, b + 1);
+      indices.push(a, a + 2, b, a + 2, b + 2, b);
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    return geometry;
+  }
   function makeBird() {
     const group = new Group();
-    const bodyMat = new MeshStandardMaterial({ color: 9420008, roughness: 0.72 });
-    const bellyMat = new MeshStandardMaterial({ color: 16774110, roughness: 0.8 });
-    const beakMat = new MeshStandardMaterial({ color: 16759121, roughness: 0.55 });
-    const legMat = new MeshStandardMaterial({ color: 15771716, roughness: 0.6 });
-    const eyeMat = new MeshStandardMaterial({ color: 2237742, roughness: 0.25 });
-    const shineMat = new MeshBasicMaterial({ color: 16777215 });
-    const cheekMat = new MeshStandardMaterial({
-      color: 16754619,
-      roughness: 0.9,
-      transparent: true,
-      opacity: 0.75
+    const backMat = new MeshStandardMaterial({ color: 4026288, roughness: 0.78 });
+    const bellyMat = new MeshStandardMaterial({ color: 15921638, roughness: 0.85 });
+    const flightMat = new MeshStandardMaterial({
+      color: 2376829,
+      roughness: 0.7,
+      side: DoubleSide
     });
-    const wingMat = new MeshStandardMaterial({ color: 8038875, roughness: 0.72 });
-    const body = new Mesh(new SphereGeometry(0.047, 14, 10), bodyMat);
-    body.scale.set(1, 0.92, 1.06);
+    const tipMat = new MeshStandardMaterial({
+      color: 1518418,
+      roughness: 0.7,
+      side: DoubleSide
+    });
+    const beakMat = new MeshStandardMaterial({ color: 2830136, roughness: 0.45 });
+    const legMat = new MeshStandardMaterial({ color: 11565633, roughness: 0.65 });
+    const eyeMat = new MeshStandardMaterial({ color: 1316380, roughness: 0.2 });
+    const shineMat = new MeshBasicMaterial({ color: 16777215 });
+    const BODY = [
+      { z: -0.034, y: 4e-3, rx: 6e-3, ry: 6e-3 },
+      { z: -0.025, y: 8e-3, rx: 0.014, ry: 0.015 },
+      { z: -0.013, y: 0.012, rx: 0.019, ry: 0.023 },
+      { z: -1e-3, y: 0.016, rx: 0.021, ry: 0.026 },
+      { z: 9e-3, y: 0.023, rx: 0.02, ry: 0.025 },
+      { z: 0.014, y: 0.034, rx: 0.016, ry: 0.018 },
+      { z: 0.017, y: 0.045, rx: 0.015, ry: 0.016 },
+      { z: 0.021, y: 0.055, rx: 0.017, ry: 0.017 },
+      { z: 0.03, y: 0.06, rx: 0.016, ry: 0.016 },
+      { z: 0.038, y: 0.059, rx: 0.011, ry: 0.011 },
+      { z: 0.042, y: 0.057, rx: 6e-3, ry: 6e-3 }
+    ];
+    const body = new Mesh(loft(BODY, 18), backMat);
     body.castShadow = true;
     group.add(body);
-    const belly = new Mesh(new SphereGeometry(0.036, 10, 8), bellyMat);
-    belly.position.set(0, -6e-3, 0.022);
-    belly.scale.set(0.9, 0.82, 0.82);
+    const UNDER = BODY.slice(1, 9).map((station) => ({
+      z: station.z,
+      y: station.y - station.ry * 0.46,
+      rx: station.rx * 0.8,
+      ry: station.ry * 0.62
+    }));
+    const belly = new Mesh(loft(UNDER, 16), bellyMat);
     group.add(belly);
-    const HEAD = { y: 0.068, z: 0.014, r: 0.042 };
-    const head = new Mesh(new SphereGeometry(HEAD.r, 14, 10), bodyMat);
-    head.position.set(0, HEAD.y, HEAD.z);
-    head.castShadow = true;
-    group.add(head);
-    const onHead = (azimuth, elevation, depth = 1) => new Vector3(
-      Math.sin(azimuth) * Math.cos(elevation) * HEAD.r * depth,
-      HEAD.y + Math.sin(elevation) * HEAD.r * depth,
-      HEAD.z + Math.cos(azimuth) * Math.cos(elevation) * HEAD.r * depth
-    );
+    const upperBill = new Mesh(loft([
+      { z: 0.0405, y: 0.0582, rx: 58e-4, ry: 46e-4 },
+      { z: 0.0465, y: 0.0578, rx: 38e-4, ry: 32e-4 },
+      { z: 0.0515, y: 0.0566, rx: 15e-4, ry: 15e-4 },
+      { z: 0.054, y: 0.0554, rx: 5e-4, ry: 5e-4 }
+    ], 8), beakMat);
+    group.add(upperBill);
+    const lowerBill = new Mesh(loft([
+      { z: 0.0405, y: 0.0546, rx: 5e-3, ry: 32e-4 },
+      { z: 0.046, y: 0.0546, rx: 3e-3, ry: 21e-4 },
+      { z: 0.0505, y: 0.0548, rx: 8e-4, ry: 8e-4 }
+    ], 8), beakMat);
+    group.add(lowerBill);
     for (const side of [-1, 1]) {
-      const eye = new Mesh(new SphereGeometry(0.0135, 10, 8), eyeMat);
-      eye.position.copy(onHead(side * 0.46, 0.14, 0.86));
+      const eye = new Mesh(new SphereGeometry(46e-4, 12, 10), eyeMat);
+      eye.position.set(side * 0.0132, 0.0632, 0.03);
       group.add(eye);
-      const shine = new Mesh(new SphereGeometry(48e-4, 6, 5), shineMat);
-      shine.position.copy(onHead(side * 0.37, 0.31, 0.94));
+      const shine = new Mesh(new SphereGeometry(14e-4, 6, 5), shineMat);
+      shine.position.set(side * 0.0146, 0.065, 0.0332);
       group.add(shine);
-      const cheek = new Mesh(new SphereGeometry(0.0115, 8, 6), cheekMat);
-      cheek.position.copy(onHead(side * 0.95, -0.2, 0.95));
-      cheek.scale.set(1, 0.7, 0.55);
-      group.add(cheek);
     }
-    const beak = new Mesh(new ConeGeometry(0.0125, 0.026, 7), beakMat);
-    beak.rotation.x = Math.PI / 2;
-    beak.position.copy(onHead(0, -0.08, 1));
-    group.add(beak);
     const wings = [];
     for (const side of [-1, 1]) {
       const pivot = new Group();
-      pivot.position.set(side * 0.035, 0.018, 2e-3);
-      const wing = new Mesh(new SphereGeometry(0.032, 10, 8), wingMat);
-      wing.scale.set(0.34, 1, 1.15);
-      wing.position.set(0, -0.026, -4e-3);
-      wing.castShadow = true;
-      pivot.add(wing);
+      pivot.position.set(side * 0.017, 0.03, 4e-3);
+      pivot.userData.side = side;
+      const spread = new Group();
+      pivot.add(spread);
+      pivot.userData.spread = spread;
+      const covert = new Mesh(loft([
+        { z: 6e-3, y: 0, rx: 5e-3, ry: 4e-3 },
+        { z: -7e-3, y: -5e-3, rx: 0.01, ry: 0.01 },
+        { z: -0.02, y: -0.012, rx: 8e-3, ry: 7e-3 },
+        { z: -0.03, y: -0.018, rx: 3e-3, ry: 3e-3 }
+      ], 10), backMat);
+      covert.castShadow = true;
+      spread.add(covert);
+      const FEATHERS = 8;
+      for (let i = 0; i < FEATHERS; i++) {
+        const t = i / (FEATHERS - 1);
+        const feather = new Mesh(
+          featherGeometry(0.028 + t * 0.022, 0.01 - t * 3e-3),
+          t > 0.6 ? tipMat : flightMat
+        );
+        feather.position.set(side * (1e-3 + t * 2e-3), -3e-3 - t * 6e-3, -4e-3 - t * 6e-3);
+        feather.rotation.set(-0.03 - t * 0.09, side * (0.05 - t * 0.07), side * (0.16 - t * 0.05));
+        feather.castShadow = true;
+        spread.add(feather);
+      }
       group.add(pivot);
       wings.push(pivot);
     }
-    const tail = new Mesh(new SphereGeometry(0.026, 8, 6), wingMat);
-    tail.scale.set(0.85, 0.35, 1.5);
-    tail.position.set(0, 6e-3, -0.056);
-    tail.rotation.x = -0.3;
+    const tail = new Group();
+    tail.position.set(0, 4e-3, -0.032);
+    tail.rotation.x = 0.13;
+    for (let i = 0; i < 6; i++) {
+      const spread = (i - 2.5) / 2.5;
+      const feather = new Mesh(
+        featherGeometry(0.045 - Math.abs(spread) * 4e-3, 0.01),
+        Math.abs(spread) > 0.7 ? tipMat : flightMat
+      );
+      feather.rotation.set(0, spread * 0.11, spread * 0.16);
+      feather.position.set(spread * 35e-4, -Math.abs(spread) * 8e-4, 0);
+      feather.castShadow = true;
+      tail.add(feather);
+    }
     group.add(tail);
+    const legs = [];
     for (const side of [-1, 1]) {
-      const leg = new Mesh(new CylinderGeometry(42e-4, 42e-4, 0.022, 5), legMat);
-      leg.position.set(side * 0.016, -0.05, 4e-3);
+      const leg = new Group();
+      leg.position.set(side * 9e-3, -8e-3, 4e-3);
+      legs.push(leg);
+      const tarsus = new Mesh(new CylinderGeometry(2e-3, 24e-4, 0.021, 6), legMat);
+      tarsus.position.y = -0.0105;
+      leg.add(tarsus);
+      for (const [angle, length] of [[0, 0.011], [0.55, 0.01], [-0.55, 0.01], [Math.PI, 8e-3]]) {
+        const toe = new Mesh(new CylinderGeometry(13e-4, 9e-4, length, 5), legMat);
+        toe.position.set(Math.sin(angle) * length * 0.45, -0.0215, Math.cos(angle) * length * 0.45);
+        toe.rotation.set(Math.cos(angle) * 1.45, 0, -Math.sin(angle) * 1.45);
+        leg.add(toe);
+      }
       group.add(leg);
-      const foot = new Mesh(new SphereGeometry(0.012, 7, 5), legMat);
-      foot.scale.set(0.85, 0.36, 1.15);
-      foot.position.set(side * 0.016, -0.062, 8e-3);
-      group.add(foot);
     }
     group.userData.leftWing = wings[0];
     group.userData.rightWing = wings[1];
-    group.scale.setScalar(1.25);
+    group.userData.legs = legs;
     group.visible = false;
     return group;
   }
@@ -36145,17 +36260,17 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     return base.addScaledVector(side, outward).add(new Vector3(0, lift, 0)).addScaledVector(bodyForward, forward);
   }
   var bodyForward = new Vector3();
-  var BIRD_GROUND_Y = 0.085;
+  var BIRD_GROUND_Y = 0.031;
   var BIRD_ANCHORS = {
     // On the point of the shoulder, not in it. The shoulder *joint* is at the
     // base of the neck and buried under her hair; the deltoid it has to stand on
     // is measured at 0.06 further out and 0.08 higher, and these offsets put its
     // feet there. Too far out and it floats beside her with daylight underneath,
     // which is what the first attempt at getting it clear of the hair did.
-    shoulder: () => bodyAnchor("rightShoulder", 0.07, 0.16, 0.02),
+    shoulder: () => bodyAnchor("rightShoulder", 0.07, 0.118, 0.02),
     // On the back of the hand rather than at its origin, so it reads as perched
     // on her rather than growing out of her wrist.
-    hand: () => bodyAnchor("rightHand", 0.02, 0.1, 0.03),
+    hand: () => bodyAnchor("rightHand", 0.02, 0.058, 0.03),
     ground: () => {
       if (!vrm) return null;
       const forward = new Vector3(0, 0, 1).applyAxisAngle(new Vector3(0, 1, 0), facing);
@@ -36306,15 +36421,18 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     bodyForward.set(Math.sin(facing), 0, Math.cos(facing));
     if (birdOwner === "ambient" && birdEpisode) updateBirdAmbient(dt);
     if (birdState === "offstage") return;
-    birdFlap += dt * 15;
+    birdFlap += dt * 13;
     const wantFold = birdState === "settled" ? 1 : 0;
-    birdWingFold += (wantFold - birdWingFold) * Math.min(1, dt * 9);
-    const folded = -0.12;
-    const beat = Math.sin(birdFlap) * 0.85;
-    const shiver = Math.sin(birdFlap * 0.2) * 0.035;
-    const lift = MathUtils.lerp(beat, folded + shiver, birdWingFold);
-    bird.userData.leftWing.rotation.z = lift;
-    bird.userData.rightWing.rotation.z = -lift;
+    birdWingFold += (wantFold - birdWingFold) * Math.min(1, dt * 7);
+    const open = 1 - birdWingFold;
+    const beat = Math.sin(birdFlap) * 0.62 * open;
+    const shiver = Math.sin(birdFlap * 0.18) * 0.03 * birdWingFold;
+    for (const pivot of [bird.userData.leftWing, bird.userData.rightWing]) {
+      const side = pivot.userData.side;
+      pivot.userData.spread.rotation.y = -side * (Math.PI / 2) * open;
+      pivot.rotation.z = side * (beat + shiver + birdWingFold * 0.06);
+    }
+    for (const leg of bird.userData.legs) leg.rotation.x = open * 1.25;
     const departing = birdState === "flying" && birdAnchor === null;
     const target = departing ? birdFixed : birdAnchorPoint(birdAnchor);
     if (!target) {
@@ -37627,6 +37745,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       owner: birdOwner,
       anchor: birdAnchor,
       episode: birdEpisode,
+      wingOpen: 1 - birdWingFold,
       position: { x: bird.position.x, y: bird.position.y, z: bird.position.z }
     }),
     // Lets a test hold her heading still. Only the gaze tests want this: they
