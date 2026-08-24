@@ -264,29 +264,39 @@ function paintBikini(ctx, colour, accent) {
   torsoShape(ctx, cupY1 - 15, cupY1, () => 1, colour);
   hemShadow(ctx, cupY1, 16, 0.6);
 
-  // The cleavage. The cups meeting either side of a bare strip is anatomically
-  // where it is and still reads flat, because a toon shader has no shadow to
-  // give it: the shadow has to be painted. A soft dark wedge down the sternum,
-  // narrow at the top and opening a little as it falls.
+  // The cleavage. The cups meeting either side of a bare strip is
+  // anatomically where it is and still reads flat, because a toon shader has
+  // no shadow to give it: the shadow has to be painted.
+  //
+  // Narrow and dark down the middle rather than a wide soft wash. A wash over
+  // the whole sternum reads as grubby skin; what reads as a shadow between two
+  // shapes is a tight dark line with a short falloff either side of it, so
+  // this is drawn as a core and a halo.
   {
-    const shadeTop = cupY0 + 22;
-    const shadeBottom = cupY1 - 4;
-    const grad = ctx.createLinearGradient(front, shadeTop, front, shadeBottom);
-    grad.addColorStop(0, 'rgba(96,58,44,0)');
-    grad.addColorStop(0.45, 'rgba(96,58,44,0.34)');
-    grad.addColorStop(1, 'rgba(96,58,44,0.16)');
-    ctx.fillStyle = grad;
-    for (const dir of [-1, 1]) {
-      ctx.beginPath();
+    const shadeTop = cupY0 + 16;
+    const shadeBottom = cupY1 - 2;
+    const height = shadeBottom - shadeTop;
+    const wedge = (widthAt, alphaAt) => {
       for (let y = shadeTop; y <= shadeBottom; y++) {
-        const t = (y - shadeTop) / (shadeBottom - shadeTop);
-        const w = half * (0.012 + 0.030 * Math.sin(t * Math.PI * 0.85));
-        if (y === shadeTop) ctx.moveTo(front, y); else ctx.lineTo(front + dir * w, y);
+        const t = (y - shadeTop) / height;
+        const w = half * widthAt(t);
+        if (w <= 0.2) continue;
+        const grad = ctx.createLinearGradient(front - w, 0, front + w, 0);
+        const a = alphaAt(t);
+        grad.addColorStop(0, 'rgba(88,50,36,0)');
+        grad.addColorStop(0.5, `rgba(88,50,36,${a.toFixed(3)})`);
+        grad.addColorStop(1, 'rgba(88,50,36,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(front - w, y, w * 2, 1);
       }
-      ctx.lineTo(front, shadeBottom);
-      ctx.closePath();
-      ctx.fill();
-    }
+    };
+    // The halo: wide, faint, and gone by the top.
+    wedge((t) => 0.006 + 0.034 * Math.sin(Math.min(1, t * 1.1) * Math.PI * 0.9),
+      (t) => 0.20 * Math.sin(Math.min(1, t * 1.15) * Math.PI * 0.95));
+    // The core: half the width, twice the weight, deepest two thirds down
+    // where the breasts actually meet.
+    wedge((t) => 0.003 + 0.013 * Math.sin(Math.min(1, t * 1.1) * Math.PI * 0.9),
+      (t) => 0.46 * Math.pow(Math.sin(Math.min(1, t * 1.12) * Math.PI * 0.95), 1.4));
   }
 
   // ---- The bottom ----
