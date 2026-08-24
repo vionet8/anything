@@ -34301,6 +34301,15 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
    makes every label wrap to two lines. Three across, which keeps the labels
    whole. */
 .pg-fitpick .pg-pick { flex: 0 0 calc(33.33% - 4px); font-size: 11px; }
+.pg-briefhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pg-briefhead .pg-label { margin: 0; }
+.pg-fold {
+  font: inherit; font-size: 11px; letter-spacing: 0.04em;
+  color: var(--pg-dim, #8b93a7); background: transparent;
+  border: 1px solid currentColor; border-radius: 999px;
+  padding: 3px 12px; cursor: pointer; flex: 0 0 auto;
+}
+.pg-fold:hover { color: var(--pg-text, #e8ebf2); }
 /* Capped and scrollable. With a cast, a wardrobe, a place and an hour to pick
    from, the setup panel grew tall enough to hide the subject it is dressing. */
 .pg-panel--setup { max-height: 54vh; overflow-y: auto; }
@@ -34513,20 +34522,31 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     function renderShooting() {
       const panel = el("div", "pg-panel");
       const described = describeRequest(session.request);
-      panel.append(el("p", "pg-label", "\u304A\u984C"));
-      if (described.story) panel.append(el("p", "pg-story", described.story));
-      const brief = el("div", "pg-brief");
-      for (const entry of [described.pose, described.expression, described.framing, described.light]) {
-        if (!entry) continue;
-        const node = el(
-          "span",
-          "pg-chip",
-          `${entry.label}${entry.hint ? `<small>${entry.hint}</small>` : ""}`
-        );
-        node.dataset.ok = "false";
-        brief.append(node);
+      const head = el("div", "pg-briefhead");
+      head.append(el("span", "pg-label", "\u304A\u984C"));
+      const fold = el("button", "pg-fold", session.briefHidden ? "\u898B\u308B" : "\u96A0\u3059");
+      fold.setAttribute("aria-expanded", String(!session.briefHidden));
+      fold.addEventListener("click", () => {
+        session.briefHidden = !session.briefHidden;
+        render();
+      });
+      head.append(fold);
+      panel.append(head);
+      if (!session.briefHidden) {
+        if (described.story) panel.append(el("p", "pg-story", described.story));
+        const brief = el("div", "pg-brief");
+        for (const entry of [described.pose, described.expression, described.framing, described.light]) {
+          if (!entry) continue;
+          const node = el(
+            "span",
+            "pg-chip",
+            `${entry.label}${entry.hint ? `<small>${entry.hint}</small>` : ""}`
+          );
+          node.dataset.ok = "false";
+          brief.append(node);
+        }
+        panel.append(brief);
       }
-      panel.append(brief);
       panel.append(el("p", "pg-count", `${session.shots.length + 1} / ${SHOTS_PER_SESSION} \u679A\u76EE`));
       panel.append(renderExposure());
       panel.append(el("p", "pg-shutter-hint", "\u30BF\u30C3\u30D7\uFF1D1\u679A\u3000\u9577\u62BC\u3057\uFF1D\u9023\u5199"));
@@ -36945,7 +36965,8 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     torso: { x0: 185, x1: 582, front: 384 },
     neck: { y0: 0, y1: 95 },
     chest: { y0: 95, y1: 245 },
-    hips: { y0: 245, y1: 400 },
+    hips: { y0: 245, y1: 458 },
+    // down to the crotch, at the foot of the column
     arms: [{ x0: 0, x1: 178 }, { x0: 590, x1: 768 }],
     armsY: { y0: 0, y1: 370 },
     legs: [{ x0: 0, x1: 178 }, { x0: 590, x1: 768 }],
@@ -37065,17 +37086,14 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     torsoShape(ctx, chest.y0 + 78, chest.y0 + 96, () => 1, colour);
     hemShadow(ctx, topY1, 18, 0.72);
     torsoShape(ctx, BODY.neck.y1 - 18, topY0 + 10, (t) => 0.085 + t * 0.045, colour);
-    const briefY0 = hips.y0 + 40;
-    const briefY1 = hips.y0 + 132;
-    torsoShape(ctx, briefY0, briefY1, (t) => {
-      const rise = 1 - Math.pow(1 - t, 2);
-      return 0.34 + rise * 0.52;
-    }, colour);
-    torsoShape(ctx, briefY0 + 6, briefY0 + 30, () => 1, colour);
-    hemShadow(ctx, briefY1, 16, 0.86);
+    const briefY0 = hips.y0 + 104;
+    const briefY1 = hips.y1;
+    torsoShape(ctx, briefY0, briefY1, () => 1, colour);
+    torsoShape(ctx, briefY0 - 16, briefY0 + 6, () => 1, colour);
+    hemShadow(ctx, briefY0 - 22, 14, 1);
     ctx.globalAlpha = 0.85;
     torsoShape(ctx, topY1 - 7, topY1, () => 0.72, accent);
-    torsoShape(ctx, briefY1 - 7, briefY1, () => 0.86, accent);
+    torsoShape(ctx, briefY0 - 16, briefY0 - 10, () => 1, accent);
     ctx.globalAlpha = 1;
   }
   function paintFrillSwimsuit(ctx, colour, accent) {
@@ -37083,12 +37101,12 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     const chest = BODY.chest;
     const hips = BODY.hips;
     const bodyY0 = chest.y0 + 40;
-    const bodyY1 = hips.y0 + 118;
+    const bodyY1 = hips.y1;
     torsoShape(ctx, bodyY0, bodyY1, (t) => {
       const waist = 0.78 - Math.sin(Math.max(0, Math.min(1, (t - 0.28) / 0.42)) * Math.PI) * 0.16;
       return t < 0.16 ? 0.34 + t * 2.9 : waist;
     }, colour);
-    torsoShape(ctx, chest.y0 + 80, hips.y0 + 40, () => 1, colour);
+    torsoShape(ctx, chest.y0 + 80, hips.y1, () => 1, colour);
     torsoShape(ctx, BODY.neck.y1 - 18, bodyY0 + 10, (t) => 0.1 + t * 0.05, colour);
     const { front, x0, x1 } = BODY.torso;
     const half = Math.min(front - x0, x1 - front);
@@ -37209,23 +37227,23 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
 
   // src/garments.js
   var TORSO = [
-    { y: 0.945, rx: 0.118, rz: 0.096 },
+    { y: 1.023, rx: 0.123, rz: 0.113 },
     // hip, where a tucked-in shirt ends
-    { y: 1.005, rx: 0.114, rz: 0.092 },
-    { y: 1.07, rx: 0.11, rz: 0.09 },
-    // waist
-    { y: 1.13, rx: 0.113, rz: 0.098 },
-    { y: 1.19, rx: 0.117, rz: 0.104 },
-    // chest
-    { y: 1.24, rx: 0.124, rz: 0.1 },
-    // shoulders, the widest point
-    { y: 1.272, rx: 0.108, rz: 0.086 },
-    { y: 1.286, rx: 0.05, rz: 0.048 }
+    { y: 1.089, rx: 0.103, rz: 0.109 },
+    // waist, the narrowest
+    { y: 1.154, rx: 0.102, rz: 0.11 },
+    { y: 1.219, rx: 0.114, rz: 0.123 },
+    { y: 1.252, rx: 0.126, rz: 0.145 },
+    // bust -- deeper than she is wide here
+    { y: 1.3, rx: 0.112, rz: 0.118 },
+    { y: 1.34, rx: 0.078, rz: 0.082 },
+    // coming in towards the shoulders
+    { y: 1.378, rx: 0.05, rz: 0.056 }
     // neck hole
   ];
   function shirtLift(y) {
     const t = MathUtils.clamp((y - TORSO[0].y) / (TORSO[TORSO.length - 1].y - TORSO[0].y), 0, 1);
-    return 0.013 + (1 - t) * 9e-3;
+    return 0.01 + (1 - t) * 6e-3;
   }
   function torsoAt(y, extra = 0) {
     let lo = TORSO[0];
@@ -37261,8 +37279,8 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   }
   function makeBlouse({
     cloth = 16185337,
-    hemY = 0.945,
-    neckY = 1.286,
+    hemY = 1.023,
+    neckY = 1.378,
     sleeve = 0.15,
     sleeveCloth = null
   } = {}) {
@@ -37341,8 +37359,8 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       roughness: 0.84,
       side: DoubleSide
     });
-    const NECK_Y = 1.272;
-    const BACK_HEM = 1.058;
+    const NECK_Y = 1.372;
+    const BACK_HEM = 1.19;
     const LIFT = 0.01 * scale;
     const COLS = 15;
     const ROWS = 9;
@@ -37387,24 +37405,24 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     group.add(trim);
     group.add(build(stripeMat, 0.272, 0.728, NECK_Y + 4e-3, BACK_HEM - 0.044, 0.12));
     const FRONT_LIFT = LIFT * 1.5;
-    const V_Y = 1.104;
+    const V_Y = 1.235;
     for (const [from, to] of [[0.952, 0.982], [0.018, 0.048]]) {
       group.add(build(stripeMat, from, to, NECK_Y, V_Y, 0, FRONT_LIFT));
     }
     const scarf = new Mesh(new BufferGeometry(), stripeMat);
     {
-      const body = torsoAt(1.12, FRONT_LIFT);
+      const body = torsoAt(1.24, FRONT_LIFT);
       const w = 0.026 * scale;
       const front = body.rz + 4e-3;
       const positions = [
         -w,
-        1.11,
+        1.24,
         front,
         w,
-        1.11,
+        1.24,
         front,
         0,
-        1.012,
+        1.13,
         front + 0.012 * scale
       ];
       scarf.geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
@@ -37416,8 +37434,8 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       new SphereGeometry(0.011 * scale, 10, 8),
       new MeshStandardMaterial({ color: stripe, roughness: 0.8 })
     );
-    const at = torsoAt(1.112, FRONT_LIFT);
-    knot.position.set(0, 1.112, at.rz + 6e-3);
+    const at = torsoAt(1.243, FRONT_LIFT);
+    knot.position.set(0, 1.243, at.rz + 6e-3);
     knot.scale.set(1.4, 0.8, 0.6);
     group.add(knot);
     group.userData.garment = "collar";
@@ -38793,8 +38811,10 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
           const arm = makeSleeve({
             cloth: group.userData.sleeveCloth,
             length: group.userData.sleeve * scale,
-            top: 0.062 * scale,
-            bottom: 0.054 * scale
+            // Her upper arm measures 42mm in the radius, so a sleeve is about
+            // 48. The first pass guessed 62 and gave her deltoids.
+            top: 0.05 * scale,
+            bottom: 0.045 * scale
           });
           const elbow = vrm.humanoid.getRawBoneNode(`${side}LowerArm`);
           armBone.add(arm);
@@ -40257,12 +40277,81 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     bodyProfileForTest: (heights) => {
       if (!vrm) return [];
       const points = [];
+      const TORSO_BONE = /Hips|Spine|Chest|Bust|Neck/i;
       vrm.scene.traverse((object) => {
         if (!object.isSkinnedMesh) return;
         const materials = Array.isArray(object.material) ? object.material : [object.material];
         if (!materials.some((m) => m.name && m.name.includes("Body_00_SKIN"))) return;
         const pos = object.geometry.attributes.position;
+        const skinIndex = object.geometry.attributes.skinIndex;
+        const skinWeight = object.geometry.attributes.skinWeight;
+        const bones2 = object.skeleton ? object.skeleton.bones : [];
+        const index = object.geometry.index;
         const v = new Vector3();
+        const seen = /* @__PURE__ */ new Set();
+        const count = index ? index.count : pos.count;
+        for (let i = 0; i < count; i++) {
+          const vi = index ? index.getX(i) : i;
+          if (seen.has(vi)) continue;
+          seen.add(vi);
+          let best = null;
+          for (let k = 0; k < 4; k++) {
+            const w = skinWeight.getComponent(vi, k);
+            if (w <= 1e-3) continue;
+            const bone = bones2[skinIndex.getComponent(vi, k)];
+            if (bone && (!best || w > best.w)) best = { name: bone.name, w };
+          }
+          if (!best || !TORSO_BONE.test(best.name)) continue;
+          v.fromBufferAttribute(pos, vi);
+          object.localToWorld(v);
+          points.push([v.x, v.y, v.z]);
+        }
+      });
+      const base = vrm.scene.position;
+      const pick2 = (values, q) => {
+        if (!values.length) return 0;
+        values.sort((a, b) => a - b);
+        return values[Math.min(values.length - 1, Math.floor(values.length * q))];
+      };
+      return heights.map((y) => {
+        const xs = [];
+        const zs = [];
+        for (const [px2, py2, pz2] of points) {
+          if (Math.abs(py2 - y) > 0.015) continue;
+          xs.push(Math.abs(px2 - base.x));
+          zs.push(Math.abs(pz2 - base.z));
+        }
+        return {
+          y,
+          rx: +pick2(xs, 0.9).toFixed(4),
+          rz: +pick2(zs, 0.9).toFixed(4),
+          samples: xs.length
+        };
+      });
+    },
+    // The radius of a limb around its bone, from the skin mesh. A sleeve built
+    // on a guessed number came out two and a half times too wide, which put
+    // deltoids on her.
+    limbRadiusForTest: (boneName, childName) => {
+      if (!vrm || !vrm.humanoid) return null;
+      const bone = vrm.humanoid.getRawBoneNode(boneName);
+      const child = childName ? vrm.humanoid.getRawBoneNode(childName) : null;
+      if (!bone) return null;
+      bone.updateWorldMatrix(true, false);
+      const origin = new Vector3().setFromMatrixPosition(bone.matrixWorld);
+      let axis = new Vector3(0, -1, 0);
+      if (child) {
+        child.updateWorldMatrix(true, false);
+        axis = new Vector3().setFromMatrixPosition(child.matrixWorld).sub(origin).normalize();
+      }
+      const out = [];
+      const v = new Vector3();
+      const rel = new Vector3();
+      vrm.scene.traverse((object) => {
+        if (!object.isSkinnedMesh) return;
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        if (!materials.some((m) => m.name && m.name.includes("Body_00_SKIN"))) return;
+        const pos = object.geometry.attributes.position;
         const index = object.geometry.index;
         const seen = /* @__PURE__ */ new Set();
         const count = index ? index.count : pos.count;
@@ -40272,22 +40361,22 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
           seen.add(vi);
           v.fromBufferAttribute(pos, vi);
           object.localToWorld(v);
-          points.push([v.x, v.y, v.z]);
+          rel.copy(v).sub(origin);
+          const along = rel.dot(axis);
+          if (along < 0.02 || along > 0.12) continue;
+          const r = rel.addScaledVector(axis, -along).length();
+          if (r > 0.075) continue;
+          out.push(r);
         }
       });
-      const base = vrm.scene.position;
-      return heights.map((y) => {
-        let rx = 0;
-        let rz = 0;
-        let n = 0;
-        for (const [px2, py2, pz2] of points) {
-          if (Math.abs(py2 - y) > 0.012) continue;
-          rx = Math.max(rx, Math.abs(px2 - base.x));
-          rz = Math.max(rz, Math.abs(pz2 - base.z));
-          n++;
-        }
-        return { y, rx: +rx.toFixed(4), rz: +rz.toFixed(4), samples: n };
-      });
+      if (!out.length) return null;
+      out.sort((a, b) => a - b);
+      return {
+        samples: out.length,
+        median: +out[Math.floor(out.length / 2)].toFixed(4),
+        p90: +out[Math.floor(out.length * 0.9)].toFixed(4),
+        max: +out[out.length - 1].toFixed(4)
+      };
     },
     getSpringSettings: () => {
       if (!vrm || !vrm.springBoneManager) return [];

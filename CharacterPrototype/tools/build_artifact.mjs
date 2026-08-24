@@ -68,16 +68,11 @@ const loader = new GLTFLoader();`,
   ],
   [
     // The artifact is the preview that runs inside a chat, and everything it
-    // shows has to be inlined in the page — three characters of base64 is past
-    // the size a published artifact may be. The real build fetches all three
-    // as files and has no such ceiling.
+    // shows has to be inlined in the page — a whole cast of base64 is past the
+    // size a published artifact may be. The real build fetches them as files
+    // and has no such ceiling.
     'the artifact previews one character, not the whole cast',
     "  { key: 'a', label: 'A', url: 'assets/char-a.vrm' },\n",
-    '',
-  ],
-  [
-    'the artifact previews one character, not the whole cast (2)',
-    "  { key: 'c', label: 'C', url: 'assets/char-c.vrm' },\n",
     '',
   ],
   [

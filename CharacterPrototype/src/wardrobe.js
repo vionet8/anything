@@ -41,7 +41,7 @@ export const BODY = {
   torso: { x0: 185, x1: 582, front: 384 },
   neck: { y0: 0, y1: 95 },
   chest: { y0: 95, y1: 245 },
-  hips: { y0: 245, y1: 400 },
+  hips: { y0: 245, y1: 458 },   // down to the crotch, at the foot of the column
   arms: [{ x0: 0, x1: 178 }, { x0: 590, x1: 768 }],
   armsY: { y0: 0, y1: 370 },
   legs: [{ x0: 0, x1: 178 }, { x0: 590, x1: 768 }],
@@ -245,22 +245,22 @@ function paintBikini(ctx, colour, accent) {
   // Halter ties over the shoulders, narrow and close to the neck.
   torsoShape(ctx, BODY.neck.y1 - 18, topY0 + 10, (t) => 0.085 + t * 0.045, colour);
 
-  // The briefs. Cut high at the hip and low at the front, so the waistline
-  // rises as it goes round -- the opposite of a rectangle.
-  const briefY0 = hips.y0 + 40;
-  const briefY1 = hips.y0 + 132;
-  torsoShape(ctx, briefY0, briefY1, (t) => {
-    const rise = 1 - Math.pow(1 - t, 2);
-    return 0.34 + rise * 0.52;
-  }, colour);
-  torsoShape(ctx, briefY0 + 6, briefY0 + 30, () => 1, colour);
-  hemShadow(ctx, briefY1, 16, 0.86);
+  // The briefs. A full ring: the bottom of this island is the crotch, so
+  // anything that stops short of it leaves her in a waistband and nothing
+  // else -- which is exactly what the first version did, having painted a
+  // band across the top half of the hip island and called it pants.
+  const briefY0 = hips.y0 + 104;
+  const briefY1 = hips.y1;
+  torsoShape(ctx, briefY0, briefY1, () => 1, colour);
+  // A waistband above it, sitting on the hip bone rather than the waist.
+  torsoShape(ctx, briefY0 - 16, briefY0 + 6, () => 1, colour);
+  hemShadow(ctx, briefY0 - 22, 14, 1);
 
   // A lighter piping along the hems, which is what stops a solid colour
   // reading as paint on skin.
   ctx.globalAlpha = 0.85;
   torsoShape(ctx, topY1 - 7, topY1, () => 0.72, accent);
-  torsoShape(ctx, briefY1 - 7, briefY1, () => 0.86, accent);
+  torsoShape(ctx, briefY0 - 16, briefY0 - 10, () => 1, accent);
   ctx.globalAlpha = 1;
 }
 
@@ -272,12 +272,12 @@ function paintFrillSwimsuit(ctx, colour, accent) {
   // A one-piece: continuous from the bust to the hip and all the way round,
   // pinched at the waist.
   const bodyY0 = chest.y0 + 40;
-  const bodyY1 = hips.y0 + 118;
+  const bodyY1 = hips.y1;
   torsoShape(ctx, bodyY0, bodyY1, (t) => {
     const waist = 0.78 - Math.sin(Math.max(0, Math.min(1, (t - 0.28) / 0.42)) * Math.PI) * 0.16;
     return t < 0.16 ? 0.34 + t * 2.9 : waist;
   }, colour);
-  torsoShape(ctx, chest.y0 + 80, hips.y0 + 40, () => 1, colour);
+  torsoShape(ctx, chest.y0 + 80, hips.y1, () => 1, colour);
   torsoShape(ctx, BODY.neck.y1 - 18, bodyY0 + 10, (t) => 0.10 + t * 0.05, colour);
 
   // The frill: overlapping scallops round the hip. Drawn as arcs and then

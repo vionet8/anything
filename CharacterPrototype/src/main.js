@@ -1601,13 +1601,18 @@ const loader = new GLTFLoader();
 loader.register(cspSafeTextures);
 loader.register((parser) => new VRMLoaderPlugin(parser));
 
-// The cast, in the order the picker offers them. All three are VRoid's own
-// sample avatars and share one skeleton, which is why every pose in this file
-// works on all of them without a per-character variant.
+// The cast, in the order the picker offers them. VRoid's own sample avatars,
+// sharing one skeleton, which is why every pose in this file works on both of
+// them without a per-character variant.
+//
+// There were three. The third was a male avatar, and once the wardrobe existed
+// he was being offered a sailor uniform and a bikini -- the outfits are cut for
+// this body and this game is about photographing a girl, so he had no set of
+// his own to be offered instead. Dropping him was the call; giving him his own
+// wardrobe is the other way to do it if he is ever wanted back.
 const CHARACTER_SOURCES = [
   { key: 'a', label: 'A', url: 'assets/char-a.vrm' },
   { key: 'b', label: 'B', url: 'assets/char-b.vrm' },
-  { key: 'c', label: 'C', url: 'assets/char-c.vrm' },
 ];
 
 // Loaded characters, keyed the same way. Only one is in the scene at a time.

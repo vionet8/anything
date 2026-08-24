@@ -40,6 +40,10 @@ test('moving forward for a fixed simulated duration advances position determinis
 });
 
 test('running moves the character further than walking for the same duration', async ({ page }) => {
+  // Reloads the page mid-test and waits for a cast of VRMs to come back, which
+  // does not reliably fit in the default twenty seconds on a cold headless
+  // browser. What is being measured is a distance, not a load time.
+  test.setTimeout(60000);
   const walked = await page.evaluate(() => window.__char.moveForTest('forward', 1000, false));
 
   // Reload for a clean position reset before comparing against a run.
@@ -477,9 +481,13 @@ test('every character in the cast holds the same peace sign', async ({ page }) =
   // hand-authored poses can be written once. This is the check on that claim:
   // the fingers are the fussiest thing in the file, so if a rig differs
   // anywhere it shows up here first.
-  await page.waitForFunction(() => window.__game.listCastForTest().length === 3, null, { timeout: 30000 });
+  // Both numbers here are the length of CHARACTER_SOURCES and have to move
+  // together: the wait was left at three when the cast went down to two, and
+  // the test then sat for thirty seconds waiting for a character that was
+  // never going to arrive.
+  await page.waitForFunction(() => window.__game.listCastForTest().length === 2, null, { timeout: 30000 });
   const cast = await page.evaluate(() => window.__game.listCastForTest());
-  expect(cast.map((member) => member.key)).toEqual(['a', 'b', 'c']);
+  expect(cast.map((member) => member.key)).toEqual(['a', 'b']);
 
   for (const member of cast) {
     await page.evaluate((key) => window.__game.setCharacterForTest(key), member.key);
@@ -1229,7 +1237,7 @@ test.describe('wardrobe', () => {
     // carried across as pixels -- it has to be rebuilt against the new model's
     // own textures. Easy to get wrong in a way that only shows on the swap.
     await page.evaluate(() => window.__char.setOutfitForTest('bikini'));
-    for (const who of ['b', 'c', 'a']) {
+    for (const who of ['b', 'a']) {
       const state = await page.evaluate(async (key) => {
         window.__game.setCharacterForTest(key);
         return window.__char.wardrobeStateForTest();
