@@ -11,6 +11,10 @@ const OUT = '/tmp/claude-0/-home-user-anything/4b640c7c-0c47-565d-8a67-b3261436d
     document.getElementById('ui').style.display = 'none';
     const g = document.querySelector('.pg-root'); if (g) g.style.display = 'none';
   });
+  // Pinned, because the cast loads in whatever order it finishes downloading
+  // and comparing two runs of this against two different avatars is useless.
+  await page.evaluate(() => window.__game.setCharacterForTest('a'));
+  await page.waitForFunction(() => window.__char.ready);
   await page.evaluate(() => window.__char.setSceneForTest('park', 'noon'));
   await page.evaluate(() => window.__char.setPausedForTest(true));
   const outfits = await page.evaluate(() => window.__char.listOutfitsForTest());

@@ -322,15 +322,18 @@ export const OUTFITS = [
   },
   {
     key: 'blazer', label: '制服（ブレザー）',
-    show: { Tops: true, Bottoms: true },
+    show: { Tops: true, Bottoms: false },
     tops: { colour: '#2b3350', gamma: 0.86 },
-    bottoms: { colour: '#3a4363' },
+    pieces: [{ kind: 'skirt', cloth: 0x39405c }],
   },
   {
     key: 'sailor', label: '制服（セーラー）',
-    show: { Tops: true, Bottoms: true },
+    show: { Tops: true, Bottoms: false },
     tops: { colour: '#f3f4f6', gamma: 1.15 },
-    bottoms: { colour: '#26304c' },
+    pieces: [
+      { kind: 'collar', cloth: 0xf6f7f9, stripe: 0x27314f },
+      { kind: 'skirt', cloth: 0x27314f },
+    ],
   },
   {
     key: 'street', label: '街角',
@@ -340,15 +343,19 @@ export const OUTFITS = [
   },
   {
     key: 'date', label: 'デート',
-    show: { Tops: true, Bottoms: true },
+    show: { Tops: true, Bottoms: false },
     tops: { colour: '#f0dfe4', gamma: 1.1 },
-    bottoms: { colour: '#8f5f78' },
+    pieces: [{ kind: 'skirt', cloth: 0x8f5f78, flare: 0.10, hemY: 0.70 }],
   },
   {
     key: 'idol', label: 'アイドル',
-    show: { Tops: true, Bottoms: true },
+    show: { Tops: true, Bottoms: false },
     tops: { colour: '#f7f2ff', gamma: 1.15 },
-    bottoms: { colour: '#7c4fb8' },
+    pieces: [
+      { kind: 'skirt', cloth: 0x7c4fb8, flare: 0.11, pleats: 28 },
+      { kind: 'frill', cloth: 0xfdf2f5, drop: 0.044, scallops: 26 },
+      { kind: 'collar', cloth: 0xfdf2f5, stripe: 0x7c4fb8 },
+    ],
   },
   {
     key: 'bikini', label: '水着（ビキニ）',

@@ -9,6 +9,7 @@ import {
 import { createWeather } from './weather.js';
 import { BIRDS, SCENE_BIRD, makeCrab, setWingSpread } from './fauna.js';
 import { OUTFITS, outfitByKey, buildOutfit, outfitIsDressed } from './wardrobe.js';
+import { attachToBone, makeSailorCollar, makePleatedSkirt, makeFrillRing } from './garments.js';
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xbfd9e8, 28, 75);
@@ -1690,6 +1691,67 @@ function setSlotVisible(slot, visible) {
   });
 }
 
+// Garment geometry currently hung on the skeleton, so the next outfit can take
+// it off again. Keyed by nothing -- there is only ever one costume on.
+let wornPieces = [];
+
+function clearWornPieces() {
+  for (const piece of wornPieces) {
+    if (piece.parent) piece.parent.remove(piece);
+    piece.traverse((object) => {
+      if (!object.isMesh) return;
+      object.geometry.dispose();
+      if (object.material.dispose) object.material.dispose();
+    });
+  }
+  wornPieces = [];
+}
+
+// Where each kind of garment hangs. A collar rides the upper chest and a skirt
+// the hips, which is what makes them follow her when she moves rather than
+// staying behind in the world like the umbrella does.
+const PIECE_BONE = { collar: 'upperChest', skirt: 'hips', frill: 'hips' };
+
+function wearPieces(outfit) {
+  clearWornPieces();
+  if (!outfit.pieces || !vrm || !vrm.humanoid) return;
+  // Authored against a 1.76m figure; the cast is not all the same height, so
+  // everything scales off whoever is standing there.
+  const size = new THREE.Box3().setFromObject(vrm.scene).getSize(new THREE.Vector3());
+  const scale = size.y / 1.756;
+  for (const spec of outfit.pieces) {
+    const boneName = PIECE_BONE[spec.kind];
+    const bone = vrm.humanoid.getRawBoneNode(boneName);
+    if (!bone) continue;
+    let group = null;
+    if (spec.kind === 'collar') group = makeSailorCollar({ ...spec, scale });
+    else if (spec.kind === 'skirt') group = makePleatedSkirt({ ...spec, scale });
+    else if (spec.kind === 'frill') {
+      const base = outfit.pieces.find((p) => p.kind === 'skirt');
+      group = makeFrillRing({
+        radius: spec.radius !== undefined ? spec.radius
+          : ((base && base.waist !== undefined ? base.waist : 0.118)
+            + (base && base.flare !== undefined ? base.flare : 0.086)),
+        y: spec.y !== undefined ? spec.y : (base && base.hemY !== undefined ? base.hemY : 0.735),
+        ...spec, scale,
+      });
+    }
+    if (!group) continue;
+    // Authored in world metres against her standing upright, so the attach
+    // point is the world origin of the model, not an offset in a bone frame.
+    // Her facing, not the scene node's rotation. The scene node carries the
+    // VRM0 half-turn on top of the facing, so using it put the sailor collar's
+    // back flap across her chest -- which is invisible on a symmetrical skirt
+    // and extremely visible on a collar.
+    attachToBone(bone, group, {
+      position: vrm.scene.position,
+      rotation: new THREE.Euler(0, facing, 0),
+      scale: 1,
+    });
+    wornPieces.push(group);
+  }
+}
+
 function applyOutfit(key) {
   if (!vrm || !activeCharacter) return outfitKey;
   const outfit = outfitByKey(key);
@@ -1705,6 +1767,7 @@ function applyOutfit(key) {
     if (show !== undefined) setSlotVisible(slot, show);
     else if (slot !== 'Body') setSlotVisible(slot, true);
   }
+  wearPieces(outfit);
   outfitKey = outfit.key;
   return outfitKey;
 }
