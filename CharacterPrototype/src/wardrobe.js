@@ -305,33 +305,36 @@ function paintBikini(ctx, colour, accent) {
   // the back panel are drawn separately: one span reaching out from the front
   // centre-line, one reaching in from the spine, with bare skin between them
   // where the leg comes through.
-  const briefY0 = hips.y0 + 62;
-  // Not the foot of the island. The island carries on down the thighs, so its
-  // bottom edge is not the crotch -- a panel drawn to it ends in a horizontal
-  // line across both legs, which is a leg hem, which is a pair of shorts. This
-  // is where the crotch actually is, found by painting bands and looking.
-  const briefY1 = hips.y0 + 170;
-  const span = briefY1 - briefY0;
-  // Front: starts as a narrow strap at the tie and widens into the panel.
+  // A bikini bottom sits on the hip bone, not on the waist, and it is small.
+  // The first one had its waistband up at her natural waist and ran from there
+  // past the crotch -- a block of cloth over the whole pelvis, which is
+  // high-waisted briefs whatever shape is cut into it. These two numbers did
+  // more for the silhouette than any amount of shaping: 62 put the band on her
+  // waist, 100 puts it on her hip.
+  const briefY0 = hips.y0 + 100;
+  const briefY1 = hips.y0 + 172;
+  // Front: a small triangle, widest at the tie and narrowing to the crotch.
+  // Narrowing hard towards the bottom, not gently. At a quarter of the way
+  // round at the crotch the panel's lower edge is a wide horizontal cut across
+  // the top of both thighs; a triangle has to come to something near a point.
   torsoShape(ctx, briefY0, briefY1,
-    (t) => 0.50 - Math.max(0, t - 0.35) * 0.34, colour,
-    (t) => 0.44 * Math.pow(1 - t / 0.42, 2) * (t < 0.42 ? 1 : 0));
+    (t) => 0.44 - 0.32 * Math.pow(t, 1.35), colour,
+    (t) => 0.30 * Math.pow(Math.max(0, 1 - t / 0.30), 2));
   // Back: the mirror of it, reaching in from the spine.
   torsoShape(ctx, briefY0, briefY1, () => 1, colour,
-    (t) => Math.min(0.80, 0.70 + Math.max(0, t - 0.4) * 0.40));
+    (t) => 0.74 + 0.14 * Math.pow(t, 1.35));
   // The ties over each hip, joining the two panels.
-  torsoShape(ctx, briefY0 - 4, briefY0 + 18, () => 0.80, colour, () => 0.56);
+  torsoShape(ctx, briefY0 - 3, briefY0 + 13, () => 0.80, colour, () => 0.56);
   // No band across the foot of the island. There was one, to guarantee the
-  // crotch was covered, and it was the thing making the brief read as shorts:
-  // this island runs on down the thighs, so a full ring at its bottom edge is
-  // not a gusset, it is a hem painted across both legs, and it closed the leg
-  // openings that the shaping above had just cut.
+  // crotch was covered, and it was what made the brief read as shorts: this
+  // island runs on down the thighs, so a full ring at its bottom edge is not a
+  // gusset, it is a hem painted across both legs.
   //
-  // Coverage is guaranteed by the panels instead. The front span always
-  // reaches out from the centre-line and the back span always reaches in from
-  // the spine, at every height -- so her front and her back are covered the
-  // whole way down and what is bare is the side of the hip, which is where a
-  // brief is cut away.
+  // Coverage comes from the panels instead. The front span always reaches out
+  // from the centre-line and the back span always reaches in from the spine,
+  // at every height, so her front and back are covered the whole way down and
+  // what is bare is the outside of the hip -- which is where a brief is cut
+  // away, and which is why the leg openings never showed in a front view.
 
   // Piping, which is what stops a solid colour reading as paint on skin.
   ctx.globalAlpha = 0.8;
