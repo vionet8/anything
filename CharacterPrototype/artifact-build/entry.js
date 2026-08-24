@@ -1363,6 +1363,13 @@ function beatHold(beat) {
   return randRange(range[0], range[1]);
 }
 
+// Set by a test that wants the exact sequence of beats. Recording them here,
+// as they happen, rather than polling from outside: the last beat of a story
+// is often the shortest, and a sampler taking a round trip per frame against a
+// renderer running at a few frames a second can step straight over it. That
+// showed up as a scenario that had apparently skipped its final beat.
+let beatTrace = null;
+
 function enterBeat(index) {
   beatIndex = index;
   const beat = currentScenario.beats[index];
@@ -1370,6 +1377,14 @@ function enterBeat(index) {
   heldExpression = beat.expression;
   beatTimer = beatHold(beat);
   applyCue(beat.cue);
+  if (beatTrace) {
+    beatTrace.push({
+      scenario: currentScenario.key,
+      beat: index,
+      pose: beat.pose,
+      expression: beat.expression,
+    });
+  }
 }
 
 // One episode at a time, and only while the story that is about it is
@@ -3608,6 +3623,16 @@ window.__char = {
   // beat zero forever.
   setCrouchArmOverrideForTest: (v) => { crouchArmOverride = v; },
   startScenarioForTest: (key) => { directorActive = true; return startScenario(key); },
+  // Records every beat as it is entered, so a test can read the sequence
+  // instead of sampling for it.
+  traceBeatsForTest: (key) => {
+    beatTrace = [];
+    directorActive = true;
+    startScenario(key);
+    return beatTrace.length;
+  },
+  readBeatTraceForTest: () => (beatTrace ? beatTrace.slice() : []),
+  stopBeatTraceForTest: () => { beatTrace = null; },
   scenarioPeaksForTest: () => scenarioPeaks(),
   getBirdStateForTest: () => ({
     state: birdState, visible: bird.visible, owner: birdOwner, anchor: birdAnchor,
