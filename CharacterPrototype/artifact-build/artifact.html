@@ -12981,7 +12981,7 @@
       if (transmissive.length > 1) transmissive.sort(customTransparentSort || reversePainterSortStable);
       if (transparent.length > 1) transparent.sort(customTransparentSort || reversePainterSortStable);
     }
-    function finish() {
+    function finish2() {
       for (let i = renderItemsIndex, il = renderItems.length; i < il; i++) {
         const renderItem = renderItems[i];
         if (renderItem.id === null) break;
@@ -12999,7 +12999,7 @@
       init,
       push,
       unshift,
-      finish,
+      finish: finish2,
       sort
     };
   }
@@ -20417,6 +20417,358 @@ void main() {
     QuadraticBezierCurve3,
     SplineCurve
   });
+  var CurvePath = class extends Curve {
+    constructor() {
+      super();
+      this.type = "CurvePath";
+      this.curves = [];
+      this.autoClose = false;
+    }
+    add(curve) {
+      this.curves.push(curve);
+    }
+    closePath() {
+      const startPoint = this.curves[0].getPoint(0);
+      const endPoint = this.curves[this.curves.length - 1].getPoint(1);
+      if (!startPoint.equals(endPoint)) {
+        const lineType = startPoint.isVector2 === true ? "LineCurve" : "LineCurve3";
+        this.curves.push(new Curves[lineType](endPoint, startPoint));
+      }
+      return this;
+    }
+    // To get accurate point with reference to
+    // entire path distance at time t,
+    // following has to be done:
+    // 1. Length of each sub path have to be known
+    // 2. Locate and identify type of curve
+    // 3. Get t for the curve
+    // 4. Return curve.getPointAt(t')
+    getPoint(t, optionalTarget) {
+      const d = t * this.getLength();
+      const curveLengths = this.getCurveLengths();
+      let i = 0;
+      while (i < curveLengths.length) {
+        if (curveLengths[i] >= d) {
+          const diff = curveLengths[i] - d;
+          const curve = this.curves[i];
+          const segmentLength = curve.getLength();
+          const u = segmentLength === 0 ? 0 : 1 - diff / segmentLength;
+          return curve.getPointAt(u, optionalTarget);
+        }
+        i++;
+      }
+      return null;
+    }
+    // We cannot use the default THREE.Curve getPoint() with getLength() because in
+    // THREE.Curve, getLength() depends on getPoint() but in THREE.CurvePath
+    // getPoint() depends on getLength
+    getLength() {
+      const lens = this.getCurveLengths();
+      return lens[lens.length - 1];
+    }
+    // cacheLengths must be recalculated.
+    updateArcLengths() {
+      this.needsUpdate = true;
+      this.cacheLengths = null;
+      this.getCurveLengths();
+    }
+    // Compute lengths and cache them
+    // We cannot overwrite getLengths() because UtoT mapping uses it.
+    getCurveLengths() {
+      if (this.cacheLengths && this.cacheLengths.length === this.curves.length) {
+        return this.cacheLengths;
+      }
+      const lengths = [];
+      let sums = 0;
+      for (let i = 0, l = this.curves.length; i < l; i++) {
+        sums += this.curves[i].getLength();
+        lengths.push(sums);
+      }
+      this.cacheLengths = lengths;
+      return lengths;
+    }
+    getSpacedPoints(divisions = 40) {
+      const points = [];
+      for (let i = 0; i <= divisions; i++) {
+        points.push(this.getPoint(i / divisions));
+      }
+      if (this.autoClose) {
+        points.push(points[0]);
+      }
+      return points;
+    }
+    getPoints(divisions = 12) {
+      const points = [];
+      let last;
+      for (let i = 0, curves = this.curves; i < curves.length; i++) {
+        const curve = curves[i];
+        const resolution = curve.isEllipseCurve ? divisions * 2 : curve.isLineCurve || curve.isLineCurve3 ? 1 : curve.isSplineCurve ? divisions * curve.points.length : divisions;
+        const pts = curve.getPoints(resolution);
+        for (let j = 0; j < pts.length; j++) {
+          const point = pts[j];
+          if (last && last.equals(point)) continue;
+          points.push(point);
+          last = point;
+        }
+      }
+      if (this.autoClose && points.length > 1 && !points[points.length - 1].equals(points[0])) {
+        points.push(points[0]);
+      }
+      return points;
+    }
+    copy(source) {
+      super.copy(source);
+      this.curves = [];
+      for (let i = 0, l = source.curves.length; i < l; i++) {
+        const curve = source.curves[i];
+        this.curves.push(curve.clone());
+      }
+      this.autoClose = source.autoClose;
+      return this;
+    }
+    toJSON() {
+      const data = super.toJSON();
+      data.autoClose = this.autoClose;
+      data.curves = [];
+      for (let i = 0, l = this.curves.length; i < l; i++) {
+        const curve = this.curves[i];
+        data.curves.push(curve.toJSON());
+      }
+      return data;
+    }
+    fromJSON(json) {
+      super.fromJSON(json);
+      this.autoClose = json.autoClose;
+      this.curves = [];
+      for (let i = 0, l = json.curves.length; i < l; i++) {
+        const curve = json.curves[i];
+        this.curves.push(new Curves[curve.type]().fromJSON(curve));
+      }
+      return this;
+    }
+  };
+  var Path = class extends CurvePath {
+    constructor(points) {
+      super();
+      this.type = "Path";
+      this.currentPoint = new Vector2();
+      if (points) {
+        this.setFromPoints(points);
+      }
+    }
+    setFromPoints(points) {
+      this.moveTo(points[0].x, points[0].y);
+      for (let i = 1, l = points.length; i < l; i++) {
+        this.lineTo(points[i].x, points[i].y);
+      }
+      return this;
+    }
+    moveTo(x, y) {
+      this.currentPoint.set(x, y);
+      return this;
+    }
+    lineTo(x, y) {
+      const curve = new LineCurve(this.currentPoint.clone(), new Vector2(x, y));
+      this.curves.push(curve);
+      this.currentPoint.set(x, y);
+      return this;
+    }
+    quadraticCurveTo(aCPx, aCPy, aX, aY) {
+      const curve = new QuadraticBezierCurve(
+        this.currentPoint.clone(),
+        new Vector2(aCPx, aCPy),
+        new Vector2(aX, aY)
+      );
+      this.curves.push(curve);
+      this.currentPoint.set(aX, aY);
+      return this;
+    }
+    bezierCurveTo(aCP1x, aCP1y, aCP2x, aCP2y, aX, aY) {
+      const curve = new CubicBezierCurve(
+        this.currentPoint.clone(),
+        new Vector2(aCP1x, aCP1y),
+        new Vector2(aCP2x, aCP2y),
+        new Vector2(aX, aY)
+      );
+      this.curves.push(curve);
+      this.currentPoint.set(aX, aY);
+      return this;
+    }
+    splineThru(pts) {
+      const npts = [this.currentPoint.clone()].concat(pts);
+      const curve = new SplineCurve(npts);
+      this.curves.push(curve);
+      this.currentPoint.copy(pts[pts.length - 1]);
+      return this;
+    }
+    arc(aX, aY, aRadius, aStartAngle, aEndAngle, aClockwise) {
+      const x0 = this.currentPoint.x;
+      const y0 = this.currentPoint.y;
+      this.absarc(
+        aX + x0,
+        aY + y0,
+        aRadius,
+        aStartAngle,
+        aEndAngle,
+        aClockwise
+      );
+      return this;
+    }
+    absarc(aX, aY, aRadius, aStartAngle, aEndAngle, aClockwise) {
+      this.absellipse(aX, aY, aRadius, aRadius, aStartAngle, aEndAngle, aClockwise);
+      return this;
+    }
+    ellipse(aX, aY, xRadius, yRadius, aStartAngle, aEndAngle, aClockwise, aRotation) {
+      const x0 = this.currentPoint.x;
+      const y0 = this.currentPoint.y;
+      this.absellipse(aX + x0, aY + y0, xRadius, yRadius, aStartAngle, aEndAngle, aClockwise, aRotation);
+      return this;
+    }
+    absellipse(aX, aY, xRadius, yRadius, aStartAngle, aEndAngle, aClockwise, aRotation) {
+      const curve = new EllipseCurve(aX, aY, xRadius, yRadius, aStartAngle, aEndAngle, aClockwise, aRotation);
+      if (this.curves.length > 0) {
+        const firstPoint = curve.getPoint(0);
+        if (!firstPoint.equals(this.currentPoint)) {
+          this.lineTo(firstPoint.x, firstPoint.y);
+        }
+      }
+      this.curves.push(curve);
+      const lastPoint = curve.getPoint(1);
+      this.currentPoint.copy(lastPoint);
+      return this;
+    }
+    copy(source) {
+      super.copy(source);
+      this.currentPoint.copy(source.currentPoint);
+      return this;
+    }
+    toJSON() {
+      const data = super.toJSON();
+      data.currentPoint = this.currentPoint.toArray();
+      return data;
+    }
+    fromJSON(json) {
+      super.fromJSON(json);
+      this.currentPoint.fromArray(json.currentPoint);
+      return this;
+    }
+  };
+  var LatheGeometry = class _LatheGeometry extends BufferGeometry {
+    constructor(points = [new Vector2(0, -0.5), new Vector2(0.5, 0), new Vector2(0, 0.5)], segments = 12, phiStart = 0, phiLength = Math.PI * 2) {
+      super();
+      this.type = "LatheGeometry";
+      this.parameters = {
+        points,
+        segments,
+        phiStart,
+        phiLength
+      };
+      segments = Math.floor(segments);
+      phiLength = clamp(phiLength, 0, Math.PI * 2);
+      const indices = [];
+      const vertices = [];
+      const uvs = [];
+      const initNormals = [];
+      const normals = [];
+      const inverseSegments = 1 / segments;
+      const vertex2 = new Vector3();
+      const uv = new Vector2();
+      const normal = new Vector3();
+      const curNormal = new Vector3();
+      const prevNormal = new Vector3();
+      let dx = 0;
+      let dy = 0;
+      for (let j = 0; j <= points.length - 1; j++) {
+        switch (j) {
+          case 0:
+            dx = points[j + 1].x - points[j].x;
+            dy = points[j + 1].y - points[j].y;
+            normal.x = dy * 1;
+            normal.y = -dx;
+            normal.z = dy * 0;
+            prevNormal.copy(normal);
+            normal.normalize();
+            initNormals.push(normal.x, normal.y, normal.z);
+            break;
+          case points.length - 1:
+            initNormals.push(prevNormal.x, prevNormal.y, prevNormal.z);
+            break;
+          default:
+            dx = points[j + 1].x - points[j].x;
+            dy = points[j + 1].y - points[j].y;
+            normal.x = dy * 1;
+            normal.y = -dx;
+            normal.z = dy * 0;
+            curNormal.copy(normal);
+            normal.x += prevNormal.x;
+            normal.y += prevNormal.y;
+            normal.z += prevNormal.z;
+            normal.normalize();
+            initNormals.push(normal.x, normal.y, normal.z);
+            prevNormal.copy(curNormal);
+        }
+      }
+      for (let i = 0; i <= segments; i++) {
+        const phi = phiStart + i * inverseSegments * phiLength;
+        const sin = Math.sin(phi);
+        const cos = Math.cos(phi);
+        for (let j = 0; j <= points.length - 1; j++) {
+          vertex2.x = points[j].x * sin;
+          vertex2.y = points[j].y;
+          vertex2.z = points[j].x * cos;
+          vertices.push(vertex2.x, vertex2.y, vertex2.z);
+          uv.x = i / segments;
+          uv.y = j / (points.length - 1);
+          uvs.push(uv.x, uv.y);
+          const x = initNormals[3 * j + 0] * sin;
+          const y = initNormals[3 * j + 1];
+          const z = initNormals[3 * j + 0] * cos;
+          normals.push(x, y, z);
+        }
+      }
+      for (let i = 0; i < segments; i++) {
+        for (let j = 0; j < points.length - 1; j++) {
+          const base = j + i * points.length;
+          const a = base;
+          const b = base + points.length;
+          const c = base + points.length + 1;
+          const d = base + 1;
+          indices.push(a, b, d);
+          indices.push(c, d, b);
+        }
+      }
+      this.setIndex(indices);
+      this.setAttribute("position", new Float32BufferAttribute(vertices, 3));
+      this.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
+      this.setAttribute("normal", new Float32BufferAttribute(normals, 3));
+    }
+    copy(source) {
+      super.copy(source);
+      this.parameters = Object.assign({}, source.parameters);
+      return this;
+    }
+    static fromJSON(data) {
+      return new _LatheGeometry(data.points, data.segments, data.phiStart, data.phiLength);
+    }
+  };
+  var CapsuleGeometry = class _CapsuleGeometry extends LatheGeometry {
+    constructor(radius = 1, length = 1, capSegments = 4, radialSegments = 8) {
+      const path = new Path();
+      path.absarc(0, -length / 2, radius, Math.PI * 1.5, 0);
+      path.absarc(0, length / 2, radius, 0, Math.PI * 0.5);
+      super(path.getPoints(capSegments), radialSegments);
+      this.type = "CapsuleGeometry";
+      this.parameters = {
+        radius,
+        length,
+        capSegments,
+        radialSegments
+      };
+    }
+    static fromJSON(data) {
+      return new _CapsuleGeometry(data.radius, data.length, data.capSegments, data.radialSegments);
+    }
+  };
   var CircleGeometry = class _CircleGeometry extends BufferGeometry {
     constructor(radius = 1, segments = 32, thetaStart = 0, thetaLength = Math.PI * 2) {
       super();
@@ -33945,6 +34297,13 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
 .pg-scenepick { flex-wrap: wrap; }
 .pg-scenepick .pg-burstpick-label { flex: 0 0 100%; margin-bottom: 2px; }
 .pg-scenepick .pg-pick { font-size: 12px; padding: 7px 2px; }
+/* Eight outfits do not fit on one row at a phone width, and squeezing them
+   makes every label wrap to two lines. Three across, which keeps the labels
+   whole. */
+.pg-fitpick .pg-pick { flex: 0 0 calc(33.33% - 4px); font-size: 11px; }
+/* Capped and scrollable. With a cast, a wardrobe, a place and an hour to pick
+   from, the setup panel grew tall enough to hide the subject it is dressing. */
+.pg-panel--setup { max-height: 54vh; overflow-y: auto; }
 .pg-pick { flex: 1; padding: 8px 0; font: inherit; font-size: 13px; font-weight: 600;
   color: #8b93a7; background: #0c0e14; border: 1px solid #2a3040; border-radius: 6px;
   cursor: pointer; }
@@ -34056,7 +34415,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       if (session.phase === "album") return renderAlbum();
     }
     function renderFree() {
-      const panel = el("div", "pg-panel");
+      const panel = el("div", "pg-panel pg-panel--setup");
       panel.append(
         el("p", "pg-label", "\u64AE\u5F71\u4F1A"),
         el(
@@ -34066,6 +34425,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
         )
       );
       panel.append(renderCastPicker());
+      panel.append(renderOutfitPicker());
       panel.append(renderScenePicker());
       panel.append(renderTimePicker());
       const start = el("button", "pg-button", "\u64AE\u5F71\u3092\u59CB\u3081\u308B");
@@ -34090,6 +34450,24 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
         button.dataset.on = String(member.key === current);
         button.addEventListener("click", () => {
           api.setCharacter(member.key);
+          render();
+        });
+        row.append(button);
+      }
+      return row;
+    }
+    function renderOutfitPicker() {
+      const outfits = api.listOutfits ? api.listOutfits() : [];
+      if (outfits.length < 2) return el("span");
+      const row = el("div", "pg-burstpick pg-scenepick pg-fitpick");
+      row.append(el("span", "pg-burstpick-label", "\u8863\u88C5"));
+      const current = api.getOutfit ? api.getOutfit() : null;
+      for (const option of outfits) {
+        const button = el("button", "pg-pick", option.label);
+        button.dataset.on = String(option.key === current);
+        button.addEventListener("click", () => {
+          api.setOutfit(option.key);
+          if (api.showOff) api.showOff();
           render();
         });
         row.append(button);
@@ -35761,6 +36139,1297 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     };
   }
 
+  // src/fauna.js
+  function smoothSpine(stations, per = 4) {
+    if (stations.length < 3) return stations;
+    const at = (i) => stations[Math.max(0, Math.min(stations.length - 1, i))];
+    const out = [];
+    const spline = (a, b, c, d, t) => {
+      const t2 = t * t;
+      const t3 = t2 * t;
+      return 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+    };
+    for (let i = 0; i < stations.length - 1; i++) {
+      const p0 = at(i - 1);
+      const p1 = at(i);
+      const p2 = at(i + 1);
+      const p3 = at(i + 2);
+      const steps = i === stations.length - 2 ? per + 1 : per;
+      for (let k = 0; k < steps; k++) {
+        const t = k / per;
+        out.push({
+          z: spline(p0.z, p1.z, p2.z, p3.z, t),
+          y: spline(p0.y, p1.y, p2.y, p3.y, t),
+          rx: Math.max(2e-4, spline(p0.rx, p1.rx, p2.rx, p3.rx, t)),
+          ry: Math.max(2e-4, spline(p0.ry, p1.ry, p2.ry, p3.ry, t))
+        });
+      }
+    }
+    return out;
+  }
+  function loft(stations, segments = 16, shade = null) {
+    const spine = smoothSpine(stations);
+    const positions = [];
+    const colors = [];
+    const indices = [];
+    const colour = new Color();
+    for (let i = 0; i < spine.length; i++) {
+      const station = spine[i];
+      const t = i / (spine.length - 1);
+      for (let s = 0; s < segments; s++) {
+        const angle = s / segments * Math.PI * 2;
+        const up = Math.sin(angle);
+        positions.push(Math.cos(angle) * station.rx, station.y + up * station.ry, station.z);
+        if (shade) {
+          colour.copy(shade(t, up));
+          colors.push(colour.r, colour.g, colour.b);
+        }
+      }
+    }
+    for (let i = 0; i < spine.length - 1; i++) {
+      for (let s = 0; s < segments; s++) {
+        const a = i * segments + s;
+        const b = i * segments + (s + 1) % segments;
+        const c = (i + 1) * segments + s;
+        const d = (i + 1) * segments + (s + 1) % segments;
+        indices.push(a, c, b, b, c, d);
+      }
+    }
+    const first = spine[0];
+    const last = spine[spine.length - 1];
+    const frontCap = positions.length / 3;
+    positions.push(0, first.y, first.z);
+    if (shade) {
+      colour.copy(shade(0, 0));
+      colors.push(colour.r, colour.g, colour.b);
+    }
+    const backCap = positions.length / 3;
+    positions.push(0, last.y, last.z);
+    if (shade) {
+      colour.copy(shade(1, 0));
+      colors.push(colour.r, colour.g, colour.b);
+    }
+    const base = (spine.length - 1) * segments;
+    for (let s = 0; s < segments; s++) {
+      indices.push(frontCap, (s + 1) % segments, s);
+      indices.push(backCap, base + s, base + (s + 1) % segments);
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+    if (shade) geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    return geometry;
+  }
+  function twoTone(back, belly, edge = -0.1, soft = 0.5) {
+    const a = new Color(back);
+    const b = new Color(belly);
+    const out = new Color();
+    return (t, up) => {
+      const k = MathUtils.clamp((up - edge) / soft + 0.5, 0, 1);
+      return out.copy(b).lerp(a, k * k * (3 - 2 * k));
+    };
+  }
+  function featherGeometry(length, width, tipWidth = width * 0.5) {
+    const SEGMENTS = 9;
+    const positions = [];
+    const indices = [];
+    for (let i = 0; i <= SEGMENTS; i++) {
+      const t = i / SEGMENTS;
+      const rise = Math.min(1, t / 0.3);
+      const fall = Math.max(0, (t - 0.3) / 0.7);
+      const round = 1 - fall * fall * fall * fall;
+      const halfWidth = 0.5 * round * (width * 0.62 + (width - width * 0.62) * rise - (width - tipWidth) * fall * 0.55);
+      const drop = -t * t * length * 0.14;
+      const cup = -halfWidth * 0.24;
+      positions.push(0, drop, -t * length);
+      positions.push(halfWidth, drop + cup, -t * length);
+      positions.push(-halfWidth, drop + cup, -t * length);
+    }
+    for (let i = 0; i < SEGMENTS; i++) {
+      const a = i * 3;
+      const b = (i + 1) * 3;
+      indices.push(a, b, a + 1, a + 1, b, b + 1);
+      indices.push(a, a + 2, b, a + 2, b + 2, b);
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    return geometry;
+  }
+  var standard = (color, roughness = 0.8, extra = {}) => new MeshStandardMaterial({ color, roughness, ...extra });
+  var paintedMat = (roughness) => new MeshStandardMaterial({ vertexColors: true, roughness });
+  function billPair(upper, lower, material, segments = 8) {
+    const group = new Group();
+    group.add(new Mesh(loft(upper, segments), material));
+    group.add(new Mesh(loft(lower, segments), material));
+    return group;
+  }
+  function eyes(group, { x, y, z, radius, color, ring, ringColor }) {
+    const eyeMat = standard(color, 0.2);
+    const shineMat = new MeshBasicMaterial({ color: 16777215 });
+    for (const side of [-1, 1]) {
+      if (ring) {
+        const rim = new Mesh(
+          new TorusGeometry(radius * 1.1, radius * 0.17, 6, 16),
+          standard(ringColor, 0.5)
+        );
+        rim.position.set(side * x * 1.02, y, z * 1.02);
+        rim.lookAt(side * x * 6, y, z * 6);
+        group.add(rim);
+      }
+      const eye = new Mesh(new SphereGeometry(radius, 12, 10), eyeMat);
+      eye.position.set(side * x, y, z);
+      group.add(eye);
+      const shine = new Mesh(new SphereGeometry(radius * 0.3, 6, 5), shineMat);
+      shine.position.set(side * x * 1.06, y + radius * 0.38, z + radius * 0.68);
+      group.add(shine);
+    }
+  }
+  function buildWing(side, spec, materials) {
+    const pivot = new Group();
+    pivot.position.set(side * spec.root[0], spec.root[1], spec.root[2]);
+    pivot.userData.side = side;
+    const spread = new Group();
+    pivot.add(spread);
+    pivot.userData.spread = spread;
+    const shell = new Group();
+    spread.add(shell);
+    const closed = new Mesh(loft(spec.shell, 12), materials.covert);
+    closed.scale.x = spec.shellFlat;
+    closed.castShadow = true;
+    shell.add(closed);
+    for (let i = 0; i < 3; i++) {
+      const t = i / 2;
+      const quill = new Mesh(
+        featherGeometry(spec.primary * (1 - t * 0.13), spec.primaryWidth * (1 - t * 0.12)),
+        i === 0 ? materials.tip : materials.flight
+      );
+      quill.position.set(
+        side * (spec.primaryAt[0] + t * 16e-4),
+        spec.primaryAt[1] - t * spec.primaryStack,
+        spec.primaryAt[2]
+      );
+      quill.rotation.set(spec.primaryTilt, side * (0.02 + t * 0.02), side * (0.05 - t * 0.02));
+      quill.castShadow = true;
+      shell.add(quill);
+    }
+    const fan = new Group();
+    fan.visible = false;
+    spread.add(fan);
+    pivot.userData.shell = shell;
+    pivot.userData.fan = fan;
+    for (let i = 0; i < spec.count; i++) {
+      const t = i / (spec.count - 1);
+      const feather = new Mesh(
+        featherGeometry(spec.inner + t * (spec.outer - spec.inner), spec.width * (1 - t * spec.narrow)),
+        t > spec.tipFrom ? materials.tip : materials.flight
+      );
+      feather.position.set(
+        side * (spec.lay[0] + t * spec.layStep[0]),
+        spec.lay[1] + t * spec.layStep[1],
+        spec.lay[2] + t * spec.layStep[2]
+      );
+      feather.rotation.set(
+        spec.tilt[0] + t * spec.tiltStep[0],
+        side * (spec.tilt[1] + t * spec.tiltStep[1]),
+        side * (spec.tilt[2] + t * spec.tiltStep[2])
+      );
+      feather.castShadow = true;
+      fan.add(feather);
+    }
+    return pivot;
+  }
+  function setWingSpread(pivot, amount) {
+    const folded = amount < 0.22;
+    pivot.userData.shell.visible = folded;
+    pivot.userData.fan.visible = !folded;
+    pivot.userData.spread.rotation.y = pivot.userData.side * amount * 1.15;
+  }
+  function buildTail(spec, materials) {
+    const tail = new Group();
+    tail.position.set(0, spec.at[0], spec.at[1]);
+    tail.rotation.x = spec.pitch;
+    const half = (spec.count - 1) / 2;
+    for (let i = 0; i < spec.count; i++) {
+      const spread = (i - half) / half;
+      const feather = new Mesh(
+        // A square tail (pigeon) keeps its length out to the edge; a notched or
+        // pointed one (flycatcher) loses it.
+        featherGeometry(spec.length - Math.abs(spread) * spec.shorten, spec.width),
+        Math.abs(spread) > 0.7 ? materials.tip : materials.flight
+      );
+      feather.rotation.set(0, spread * spec.fan, spread * spec.roll);
+      feather.position.set(spread * spec.step, -Math.abs(spread) * spec.droop, 0);
+      feather.castShadow = true;
+      tail.add(feather);
+    }
+    return tail;
+  }
+  function buildLegs(group, spec, material) {
+    const legs = [];
+    for (const side of [-1, 1]) {
+      const leg = new Group();
+      leg.position.set(side * spec.at[0], spec.at[1], spec.at[2]);
+      legs.push(leg);
+      const tarsus = new Mesh(
+        new CylinderGeometry(spec.thickness * 0.85, spec.thickness, spec.tarsus, 6),
+        material
+      );
+      tarsus.position.y = -spec.tarsus / 2;
+      leg.add(tarsus);
+      const foot = -spec.tarsus - spec.thickness * 0.4;
+      const toes = spec.webbed ? [[0, spec.toe], [0.62, spec.toe * 0.94], [-0.62, spec.toe * 0.94]] : [[0, spec.toe], [0.55, spec.toe * 0.9], [-0.55, spec.toe * 0.9], [Math.PI, spec.toe * 0.72]];
+      for (const [angle, length] of toes) {
+        const toe = new Mesh(
+          new CylinderGeometry(spec.thickness * 0.62, spec.thickness * 0.42, length, 5),
+          material
+        );
+        toe.position.set(Math.sin(angle) * length * 0.45, foot, Math.cos(angle) * length * 0.45);
+        toe.rotation.set(Math.cos(angle) * 1.45, 0, -Math.sin(angle) * 1.45);
+        leg.add(toe);
+      }
+      if (spec.webbed) {
+        for (const wedge of [1, -1]) {
+          const web = new Mesh(
+            new CircleGeometry(spec.toe * 0.86, 6, 0, Math.PI * 0.34),
+            new MeshStandardMaterial({ color: material.color, roughness: 0.7, side: DoubleSide })
+          );
+          web.rotation.x = -Math.PI / 2;
+          web.rotation.z = wedge * 0.34 - Math.PI * 0.17;
+          web.position.set(0, foot - spec.thickness * 0.3, spec.toe * 0.12);
+          leg.add(web);
+        }
+      }
+      group.add(leg);
+    }
+    return legs;
+  }
+  function finish(group, { wings, legs, perchOnHer, length, label }) {
+    group.updateWorldMatrix(true, true);
+    let toes = Infinity;
+    for (const leg of legs) toes = Math.min(toes, new Box3().setFromObject(leg).min.y);
+    const groundY = Number.isFinite(toes) ? -toes : 0;
+    group.userData.leftWing = wings[0];
+    group.userData.rightWing = wings[1];
+    group.userData.legs = legs;
+    group.userData.groundY = groundY;
+    group.userData.perchOnHer = perchOnHer;
+    group.userData.length = length;
+    group.userData.label = label;
+    group.visible = false;
+    return group;
+  }
+  function makeFlycatcher() {
+    const group = new Group();
+    const materials = {
+      back: standard(4026288, 0.78),
+      belly: standard(15921638, 0.85),
+      flight: standard(2376829, 0.7, { side: DoubleSide }),
+      tip: standard(1518418, 0.7, { side: DoubleSide }),
+      covert: standard(4026288, 0.78)
+    };
+    const painted = paintedMat(0.8);
+    const beakMat = standard(2830136, 0.45);
+    const legMat = standard(11565633, 0.65);
+    const BODY2 = [
+      { z: -0.034, y: 4e-3, rx: 6e-3, ry: 6e-3 },
+      { z: -0.025, y: 8e-3, rx: 0.014, ry: 0.015 },
+      { z: -0.013, y: 0.012, rx: 0.019, ry: 0.023 },
+      { z: -1e-3, y: 0.016, rx: 0.021, ry: 0.026 },
+      { z: 9e-3, y: 0.023, rx: 0.02, ry: 0.025 },
+      { z: 0.014, y: 0.034, rx: 0.016, ry: 0.018 },
+      { z: 0.017, y: 0.045, rx: 0.015, ry: 0.016 },
+      { z: 0.021, y: 0.055, rx: 0.017, ry: 0.017 },
+      { z: 0.03, y: 0.06, rx: 0.016, ry: 0.016 },
+      { z: 0.038, y: 0.059, rx: 0.011, ry: 0.011 },
+      { z: 0.042, y: 0.057, rx: 6e-3, ry: 6e-3 }
+    ];
+    const body = new Mesh(
+      loft(BODY2, 22, twoTone(4026288, 15921638, -0.15, 0.55)),
+      painted
+    );
+    body.castShadow = true;
+    group.add(body);
+    group.add(billPair([
+      { z: 0.0405, y: 0.0582, rx: 58e-4, ry: 46e-4 },
+      { z: 0.0465, y: 0.0578, rx: 38e-4, ry: 32e-4 },
+      { z: 0.0515, y: 0.0566, rx: 15e-4, ry: 15e-4 },
+      { z: 0.054, y: 0.0554, rx: 5e-4, ry: 5e-4 }
+    ], [
+      { z: 0.0405, y: 0.0546, rx: 5e-3, ry: 32e-4 },
+      { z: 0.046, y: 0.0546, rx: 3e-3, ry: 21e-4 },
+      { z: 0.0505, y: 0.0548, rx: 8e-4, ry: 8e-4 }
+    ], beakMat));
+    eyes(group, { x: 0.0132, y: 0.0632, z: 0.03, radius: 46e-4, color: 1316380 });
+    const wings = [];
+    for (const side of [-1, 1]) {
+      const wing = buildWing(side, {
+        root: [0.013, 0.034, 4e-3],
+        shell: [
+          { z: 0.01, y: 0, rx: 6e-3, ry: 5e-3 },
+          { z: -2e-3, y: -4e-3, rx: 0.011, ry: 0.013 },
+          { z: -0.018, y: -0.01, rx: 0.01, ry: 0.013 },
+          { z: -0.034, y: -0.016, rx: 6e-3, ry: 8e-3 },
+          { z: -0.046, y: -0.02, rx: 2e-3, ry: 3e-3 }
+        ],
+        shellFlat: 0.55,
+        primary: 0.03,
+        primaryWidth: 8e-3,
+        primaryAt: [2e-3, -0.016, -0.04],
+        primaryStack: 18e-4,
+        primaryTilt: -0.1,
+        count: 8,
+        inner: 0.028,
+        outer: 0.05,
+        width: 0.01,
+        narrow: 0.3,
+        tipFrom: 0.6,
+        lay: [1e-3, -3e-3, -4e-3],
+        layStep: [2e-3, -6e-3, -6e-3],
+        // Barely fanned. Splayed wide they stopped being a closed wing and
+        // became a handful of spikes coming out of its side.
+        tilt: [-0.03, 0.05, 0.16],
+        tiltStep: [-0.09, -0.07, -0.05]
+      }, materials);
+      group.add(wing);
+      wings.push(wing);
+    }
+    group.add(buildTail({
+      at: [4e-3, -0.032],
+      pitch: 0.13,
+      count: 6,
+      length: 0.045,
+      shorten: 4e-3,
+      width: 0.014,
+      fan: 0.12,
+      roll: 0.14,
+      step: 32e-4,
+      droop: 7e-4
+    }, materials));
+    const legs = buildLegs(group, {
+      at: [9e-3, -6e-3, 3e-3],
+      tarsus: 0.027,
+      toe: 0.012,
+      thickness: 24e-4
+    }, legMat);
+    return finish(group, {
+      wings,
+      legs,
+      perchOnHer: true,
+      length: 0.14,
+      label: "\u30AA\u30AA\u30EB\u30EA"
+    });
+  }
+  function makePigeon() {
+    const group = new Group();
+    const materials = {
+      back: standard(8226191, 0.82),
+      belly: standard(10068394, 0.85),
+      flight: standard(6252401, 0.74, { side: DoubleSide }),
+      tip: standard(3949131, 0.74, { side: DoubleSide }),
+      covert: standard(7765640, 0.82)
+    };
+    const neckMat = new MeshStandardMaterial({
+      color: 5144426,
+      roughness: 0.3,
+      metalness: 0.42,
+      emissive: 2760508,
+      emissiveIntensity: 0.35
+    });
+    const painted = paintedMat(0.82);
+    const beakMat = standard(3816772, 0.5);
+    const cereMat = standard(15263456, 0.9);
+    const legMat = standard(12870750, 0.6);
+    const BODY2 = [
+      { z: -0.085, y: 0.03, rx: 0.012, ry: 0.012 },
+      { z: -0.062, y: 0.028, rx: 0.03, ry: 0.031 },
+      { z: -0.035, y: 0.026, rx: 0.045, ry: 0.05 },
+      { z: -8e-3, y: 0.026, rx: 0.052, ry: 0.06 },
+      { z: 0.018, y: 0.031, rx: 0.051, ry: 0.061 },
+      { z: 0.04, y: 0.043, rx: 0.043, ry: 0.052 },
+      // The neck: short and thick, and it barely narrows. A waisted neck here
+      // was the single thing that kept the model reading as a songbird.
+      { z: 0.052, y: 0.066, rx: 0.03, ry: 0.032 },
+      { z: 0.057, y: 0.086, rx: 0.026, ry: 0.027 },
+      { z: 0.062, y: 0.103, rx: 0.026, ry: 0.026 },
+      // The head: small, round, with a steep forehead over the bill.
+      { z: 0.074, y: 0.115, rx: 0.025, ry: 0.025 },
+      { z: 0.088, y: 0.118, rx: 0.022, ry: 0.022 },
+      { z: 0.099, y: 0.114, rx: 0.014, ry: 0.014 },
+      { z: 0.104, y: 0.108, rx: 6e-3, ry: 6e-3 }
+    ];
+    const body = new Mesh(
+      loft(BODY2, 24, twoTone(8226191, 11055031, -0.25, 0.75)),
+      painted
+    );
+    body.castShadow = true;
+    group.add(body);
+    const collar = BODY2.slice(6, 10).map((st) => ({
+      z: st.z,
+      y: st.y,
+      rx: st.rx * 1.03,
+      ry: st.ry * 1.03
+    }));
+    group.add(new Mesh(loft(collar, 20), neckMat));
+    group.add(billPair([
+      { z: 0.1015, y: 0.1106, rx: 6e-3, ry: 52e-4 },
+      { z: 0.112, y: 0.1094, rx: 44e-4, ry: 4e-3 },
+      { z: 0.1215, y: 0.1068, rx: 26e-4, ry: 26e-4 },
+      { z: 0.1265, y: 0.1044, rx: 8e-4, ry: 8e-4 }
+    ], [
+      { z: 0.1015, y: 0.1042, rx: 52e-4, ry: 34e-4 },
+      { z: 0.112, y: 0.1042, rx: 34e-4, ry: 24e-4 },
+      { z: 0.1205, y: 0.1046, rx: 12e-4, ry: 12e-4 }
+    ], beakMat, 10));
+    const cere = new Mesh(loft([
+      { z: 0.0975, y: 0.1128, rx: 68e-4, ry: 5e-3 },
+      { z: 0.103, y: 0.1136, rx: 8e-3, ry: 62e-4 },
+      { z: 0.1085, y: 0.1126, rx: 52e-4, ry: 4e-3 }
+    ], 10), cereMat);
+    group.add(cere);
+    eyes(group, {
+      x: 0.0208,
+      y: 0.1192,
+      z: 0.0868,
+      radius: 4e-3,
+      color: 1776672,
+      ring: true,
+      ringColor: 12221491
+    });
+    const wings = [];
+    for (const side of [-1, 1]) {
+      const wing = buildWing(side, {
+        root: [0.033, 0.062, 8e-3],
+        shell: [
+          { z: 0.026, y: 0, rx: 0.014, ry: 0.012 },
+          { z: 4e-3, y: -8e-3, rx: 0.028, ry: 0.032 },
+          { z: -0.03, y: -0.02, rx: 0.028, ry: 0.034 },
+          { z: -0.066, y: -0.032, rx: 0.018, ry: 0.024 },
+          { z: -0.092, y: -0.04, rx: 7e-3, ry: 0.01 }
+        ],
+        shellFlat: 0.5,
+        // Folded, a pigeon's wingtips reach about the end of the tail.
+        primary: 0.095,
+        primaryWidth: 0.021,
+        primaryAt: [4e-3, -0.038, -0.086],
+        primaryStack: 35e-4,
+        primaryTilt: -0.09,
+        // Broad, blunt-tipped wings: a pigeon's are built for a fast clattering
+        // take-off, not for gliding, so they are much wider than a gull's.
+        count: 10,
+        inner: 0.062,
+        outer: 0.118,
+        width: 0.026,
+        narrow: 0.34,
+        tipFrom: 0.62,
+        lay: [2e-3, -6e-3, -0.01],
+        layStep: [5e-3, -0.014, -0.014],
+        tilt: [-0.02, 0.04, 0.13],
+        tiltStep: [-0.07, -0.06, -0.04]
+      }, materials);
+      group.add(wing);
+      wings.push(wing);
+    }
+    group.add(buildTail({
+      at: [0.03, -0.082],
+      pitch: 0.1,
+      count: 8,
+      // Square-ended: the outer feathers keep almost all their length, which is
+      // what gives a walking pigeon its blunt back end.
+      length: 0.108,
+      shorten: 4e-3,
+      width: 0.034,
+      fan: 0.13,
+      roll: 0.08,
+      step: 8e-3,
+      droop: 1e-3
+    }, materials));
+    const legs = buildLegs(group, {
+      at: [0.021, 2e-3, 4e-3],
+      tarsus: 0.03,
+      toe: 0.026,
+      thickness: 6e-3
+    }, legMat);
+    return finish(group, {
+      wings,
+      legs,
+      perchOnHer: false,
+      length: 0.33,
+      label: "\u30C9\u30D0\u30C8"
+    });
+  }
+  function makeGull() {
+    const group = new Group();
+    const materials = {
+      back: standard(5464171, 0.76),
+      belly: standard(16251128, 0.84),
+      flight: standard(4608604, 0.72, { side: DoubleSide }),
+      tip: standard(2369839, 0.72, { side: DoubleSide }),
+      covert: standard(5464171, 0.76)
+    };
+    const painted = paintedMat(0.8);
+    const whiteMat = standard(16251128, 0.84);
+    const billMat = standard(15251772, 0.45);
+    const bandMat = standard(2763566, 0.5);
+    const redMat = standard(13384492, 0.45);
+    const legMat = standard(14727232, 0.6);
+    const BODY2 = [
+      { z: -0.13, y: 0.062, rx: 0.014, ry: 0.014 },
+      { z: -0.1, y: 0.06, rx: 0.034, ry: 0.036 },
+      { z: -0.062, y: 0.058, rx: 0.05, ry: 0.056 },
+      { z: -0.024, y: 0.058, rx: 0.056, ry: 0.064 },
+      { z: 0.012, y: 0.062, rx: 0.054, ry: 0.062 },
+      { z: 0.044, y: 0.072, rx: 0.044, ry: 0.05 },
+      { z: 0.068, y: 0.092, rx: 0.031, ry: 0.033 },
+      { z: 0.082, y: 0.114, rx: 0.027, ry: 0.028 },
+      { z: 0.094, y: 0.134, rx: 0.028, ry: 0.028 },
+      // A flat-crowned head, not a ball. A gull's skull is long front to back.
+      { z: 0.114, y: 0.146, rx: 0.027, ry: 0.026 },
+      { z: 0.136, y: 0.148, rx: 0.024, ry: 0.023 },
+      { z: 0.152, y: 0.143, rx: 0.015, ry: 0.015 },
+      { z: 0.158, y: 0.137, rx: 7e-3, ry: 7e-3 }
+    ];
+    const slate = new Color(5464171);
+    const white = new Color(16251128);
+    const mix = new Color();
+    const gullShade = (t, up) => {
+      const high = MathUtils.clamp((up + 0.05) / 0.6 + 0.5, 0, 1);
+      const behind = MathUtils.clamp((0.62 - t) / 0.16, 0, 1);
+      const k = high * high * (3 - 2 * high) * behind;
+      return mix.copy(white).lerp(slate, k);
+    };
+    const body = new Mesh(loft(BODY2, 24, gullShade), painted);
+    body.castShadow = true;
+    group.add(body);
+    group.add(billPair([
+      { z: 0.1545, y: 0.1408, rx: 9e-3, ry: 82e-4 },
+      { z: 0.17, y: 0.14, rx: 78e-4, ry: 72e-4 },
+      { z: 0.185, y: 0.1388, rx: 68e-4, ry: 64e-4 }
+    ], [
+      { z: 0.1545, y: 0.133, rx: 82e-4, ry: 56e-4 },
+      { z: 0.17, y: 0.133, rx: 7e-3, ry: 5e-3 },
+      { z: 0.184, y: 0.1332, rx: 58e-4, ry: 44e-4 }
+    ], billMat, 10));
+    const band = new Mesh(loft([
+      { z: 0.185, y: 0.137, rx: 72e-4, ry: 98e-4 },
+      { z: 0.193, y: 0.1368, rx: 7e-3, ry: 96e-4 }
+    ], 10), bandMat);
+    group.add(band);
+    const tip = new Mesh(loft([
+      { z: 0.193, y: 0.1368, rx: 68e-4, ry: 94e-4 },
+      { z: 0.201, y: 0.136, rx: 56e-4, ry: 72e-4 },
+      // The hook: the very tip drops below the line of the bill.
+      { z: 0.2065, y: 0.133, rx: 28e-4, ry: 34e-4 }
+    ], 10), redMat);
+    group.add(tip);
+    eyes(group, {
+      x: 0.0232,
+      y: 0.1512,
+      z: 0.1305,
+      radius: 56e-4,
+      color: 14208890,
+      ring: true,
+      ringColor: 11027770
+    });
+    const wings = [];
+    for (const side of [-1, 1]) {
+      const wing = buildWing(side, {
+        root: [0.036, 0.098, 0.01],
+        shell: [
+          { z: 0.03, y: 0, rx: 0.016, ry: 0.012 },
+          { z: 2e-3, y: -8e-3, rx: 0.03, ry: 0.032 },
+          { z: -0.04, y: -0.02, rx: 0.03, ry: 0.034 },
+          { z: -0.086, y: -0.032, rx: 0.019, ry: 0.024 },
+          { z: -0.12, y: -0.04, rx: 7e-3, ry: 9e-3 }
+        ],
+        shellFlat: 0.48,
+        // A gull's folded wingtips cross past the end of the tail, which is
+        // most of what tells its silhouette from a duck's at rest.
+        primary: 0.145,
+        primaryWidth: 0.022,
+        primaryAt: [4e-3, -0.038, -0.112],
+        primaryStack: 4e-3,
+        primaryTilt: -0.07,
+        // 120cm across the wings on a 47cm bird: long and narrow, and the
+        // outermost primaries far longer than the innermost secondaries. Folded
+        // they cross well past the tail, which is the gull at rest.
+        count: 11,
+        inner: 0.075,
+        outer: 0.235,
+        width: 0.028,
+        narrow: 0.52,
+        tipFrom: 0.66,
+        lay: [2e-3, -6e-3, -0.012],
+        layStep: [6e-3, -0.016, -0.018],
+        tilt: [-0.02, 0.03, 0.1],
+        tiltStep: [-0.05, -0.05, -0.03]
+      }, materials);
+      group.add(wing);
+      wings.push(wing);
+    }
+    const tailMat = standard(15001836, 0.82, { side: DoubleSide });
+    const tail = buildTail({
+      at: [0.062, -0.126],
+      pitch: 0.08,
+      count: 8,
+      length: 0.112,
+      shorten: 6e-3,
+      width: 0.034,
+      fan: 0.14,
+      roll: 0.08,
+      step: 9e-3,
+      droop: 1e-3
+    }, { flight: tailMat, tip: tailMat });
+    const bar = new Mesh(new BoxGeometry(0.052, 3e-3, 0.02), bandMat);
+    bar.position.set(0, -0.0125, -0.076);
+    tail.add(bar);
+    group.add(tail);
+    const legs = buildLegs(group, {
+      at: [0.02, 0.03, -0.01],
+      tarsus: 0.05,
+      toe: 0.032,
+      thickness: 68e-4,
+      webbed: true
+    }, legMat);
+    return finish(group, {
+      wings,
+      legs,
+      perchOnHer: false,
+      length: 0.47,
+      label: "\u30A6\u30DF\u30CD\u30B3"
+    });
+  }
+  var BIRDS = {
+    flycatcher: makeFlycatcher,
+    pigeon: makePigeon,
+    gull: makeGull
+  };
+  var SCENE_BIRD = { park: "flycatcher", street: "pigeon", beach: "gull" };
+  function makeCrab() {
+    const group = new Group();
+    const shellMat = standard(14271386, 0.72);
+    const paleMat = standard(15392708, 0.75);
+    const jointMat = standard(13349255, 0.7);
+    const eyeMat = standard(1710622, 0.25);
+    const WIDTH = 0.029;
+    const LENGTH = 0.024;
+    const HEIGHT = 0.011;
+    const shellGeo = new SphereGeometry(0.5, 28, 16);
+    {
+      const p = shellGeo.attributes.position;
+      const v = new Vector3();
+      for (let i = 0; i < p.count; i++) {
+        v.fromBufferAttribute(p, i);
+        const r = Math.hypot(v.x, v.z);
+        if (r > 1e-6) {
+          const cx = v.x / r;
+          const cz = v.z / r;
+          const k = 1 / Math.pow(Math.pow(Math.abs(cx), 4) + Math.pow(Math.abs(cz), 4), 0.25);
+          v.x *= k;
+          v.z *= k;
+        }
+        v.x *= WIDTH;
+        v.z *= LENGTH;
+        v.y = v.y > 0 ? v.y * HEIGHT * 2 * (1 - Math.max(0, -v.z / LENGTH) * 0.22) : v.y * HEIGHT * 0.5;
+        p.setXYZ(i, v.x, v.y, v.z);
+      }
+      p.needsUpdate = true;
+      shellGeo.computeVertexNormals();
+    }
+    const shell = new Mesh(shellGeo, shellMat);
+    shell.position.y = 0.0115;
+    shell.castShadow = true;
+    group.add(shell);
+    const brow = new Mesh(new BoxGeometry(WIDTH * 0.4, 18e-4, 22e-4), shellMat);
+    brow.position.set(0, 0.0136, LENGTH * 0.42);
+    group.add(brow);
+    const apron = new Mesh(new BoxGeometry(WIDTH * 0.52, 35e-4, LENGTH * 0.5), paleMat);
+    apron.position.set(0, 68e-4, -15e-4);
+    group.add(apron);
+    for (const side of [-1, 1]) {
+      const stalk = new Mesh(new CylinderGeometry(12e-4, 15e-4, 92e-4, 7), paleMat);
+      stalk.position.set(side * 68e-4, 0.0198, 92e-4);
+      group.add(stalk);
+      const eye = new Mesh(new CapsuleGeometry(18e-4, 24e-4, 4, 10), eyeMat);
+      eye.position.set(side * 68e-4, 0.0258, 92e-4);
+      group.add(eye);
+    }
+    const claws = [];
+    for (const [side, size] of [[-1, 1], [1, 0.7]]) {
+      const arm = new Group();
+      arm.position.set(side * WIDTH * 0.42, 0.0102, LENGTH * 0.3);
+      arm.rotation.y = -side * 0.55;
+      const upper = new Mesh(
+        new CylinderGeometry(21e-4 * size, 27e-4 * size, 0.0105, 7),
+        jointMat
+      );
+      upper.rotation.z = -Math.PI / 2;
+      upper.position.x = side * 52e-4;
+      arm.add(upper);
+      const fore = new Group();
+      fore.position.x = side * 0.0104;
+      fore.rotation.y = -side * 1.05;
+      arm.add(fore);
+      const wrist = new Mesh(
+        new CylinderGeometry(26e-4 * size, 21e-4 * size, 72e-4, 7),
+        jointMat
+      );
+      wrist.rotation.z = -Math.PI / 2;
+      wrist.position.x = side * 36e-4;
+      fore.add(wrist);
+      const hand = new Group();
+      hand.position.x = side * 72e-4;
+      fore.add(hand);
+      const palm = new Mesh(new SphereGeometry(4e-3 * size, 10, 8), paleMat);
+      palm.scale.set(1.5, 0.78, 1);
+      hand.add(palm);
+      for (const [lift, tilt] of [[18e-4, -0.13], [-16e-4, 0.11]]) {
+        const digit = new Mesh(new ConeGeometry(14e-4 * size, 8e-3 * size, 7), paleMat);
+        digit.rotation.z = -side * (Math.PI / 2) + tilt;
+        digit.position.set(side * 56e-4 * size, lift * size, 0);
+        hand.add(digit);
+      }
+      arm.castShadow = true;
+      group.add(arm);
+      claws.push(arm);
+    }
+    const legs = [];
+    for (const side of [-1, 1]) {
+      for (let i = 0; i < 4; i++) {
+        const t = i / 3;
+        const leg = new Group();
+        leg.position.set(side * WIDTH * 0.44, 98e-4, LENGTH * (0.24 - t * 0.62));
+        leg.rotation.y = -side * (0.62 - t * 1.34);
+        const reach = 0.0125 - Math.abs(t - 0.4) * 32e-4;
+        const merus = new Group();
+        merus.rotation.z = side * 0.62;
+        leg.add(merus);
+        const m = new Mesh(new CylinderGeometry(16e-4, 13e-4, reach, 6), jointMat);
+        m.rotation.z = -Math.PI / 2;
+        m.position.x = side * reach * 0.5;
+        merus.add(m);
+        const carpus = new Group();
+        carpus.position.x = side * reach;
+        carpus.rotation.z = -side * 1.42;
+        merus.add(carpus);
+        const c = new Mesh(
+          new CylinderGeometry(12e-4, 9e-4, reach * 0.92, 6),
+          jointMat
+        );
+        c.rotation.z = -Math.PI / 2;
+        c.position.x = side * reach * 0.46;
+        carpus.add(c);
+        const d = new Mesh(new ConeGeometry(9e-4, reach * 0.7, 6), paleMat);
+        d.rotation.z = -side * (Math.PI / 2) - side * 0.22;
+        d.position.x = side * (reach * 0.92 + reach * 0.3);
+        carpus.add(d);
+        leg.castShadow = true;
+        group.add(leg);
+        legs.push(leg);
+      }
+    }
+    group.userData.legs = legs;
+    group.userData.claws = claws;
+    group.userData.groundY = 0;
+    group.userData.length = 0.03;
+    group.userData.label = "\u30B9\u30CA\u30AC\u30CB";
+    group.visible = false;
+    return group;
+  }
+
+  // src/wardrobe.js
+  var SIZE = 768;
+  var BODY = {
+    torso: { x0: 185, x1: 582, front: 384 },
+    neck: { y0: 0, y1: 95 },
+    chest: { y0: 95, y1: 245 },
+    hips: { y0: 245, y1: 400 },
+    arms: [{ x0: 0, x1: 178 }, { x0: 590, x1: 768 }],
+    armsY: { y0: 0, y1: 370 },
+    legs: [{ x0: 0, x1: 178 }, { x0: 590, x1: 768 }],
+    thigh: { y0: 375, y1: 540 },
+    shin: { y0: 540, y1: 768 }
+  };
+  function canvasOf(image) {
+    const canvas2 = document.createElement("canvas");
+    canvas2.width = SIZE;
+    canvas2.height = SIZE;
+    const ctx = canvas2.getContext("2d");
+    if (image) ctx.drawImage(image, 0, 0, SIZE, SIZE);
+    return { canvas: canvas2, ctx };
+  }
+  function tintTexture(ctx, target, { gamma = 1, lift = 1 } = {}) {
+    const t = new Color(target);
+    const image = ctx.getImageData(0, 0, SIZE, SIZE);
+    const d = image.data;
+    let sum = 0;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 8) continue;
+      sum += (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) / 255;
+      n++;
+    }
+    const mean = n ? Math.max(0.06, sum / n) : 0.5;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 8) continue;
+      const l = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) / 255;
+      let k = Math.pow(l / mean, gamma);
+      k = 1 + (k - 1) * 0.75;
+      k *= lift;
+      d[i] = Math.min(255, t.r * k * 255);
+      d[i + 1] = Math.min(255, t.g * k * 255);
+      d[i + 2] = Math.min(255, t.b * k * 255);
+    }
+    ctx.putImageData(image, 0, 0);
+  }
+  function averageAt(ctx, x, y, w, h) {
+    const d = ctx.getImageData(x, y, w, h).data;
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 8) continue;
+      r += d[i];
+      g += d[i + 1];
+      b += d[i + 2];
+      n++;
+    }
+    return n ? `rgb(${Math.round(r / n)},${Math.round(g / n)},${Math.round(b / n)})` : "#e8c0a0";
+  }
+  function skinOver(ctx, skin, rect) {
+    ctx.fillStyle = skin;
+    ctx.fillRect(rect.x0, rect.y0, rect.x1 - rect.x0, rect.y1 - rect.y0);
+  }
+  function stripToSkin(ctx) {
+    const skin = averageAt(ctx, 55, 110, 70, 70);
+    for (const block of BODY.legs) {
+      skinOver(ctx, skin, { x0: block.x0, y0: BODY.thigh.y0, x1: block.x1, y1: BODY.shin.y1 });
+      const grad = ctx.createLinearGradient(block.x0, 0, block.x1, 0);
+      grad.addColorStop(0, "rgba(120,78,58,0.16)");
+      grad.addColorStop(0.35, "rgba(120,78,58,0)");
+      grad.addColorStop(0.65, "rgba(120,78,58,0)");
+      grad.addColorStop(1, "rgba(120,78,58,0.16)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(block.x0, BODY.thigh.y0, block.x1 - block.x0, BODY.shin.y1 - BODY.thigh.y0);
+    }
+    for (const block of BODY.arms) {
+      skinOver(ctx, skin, { x0: block.x0, y0: 300, x1: block.x1, y1: BODY.armsY.y1 });
+      skinOver(ctx, skin, { x0: block.x0, y0: 0, x1: block.x1, y1: 62 });
+    }
+    skinOver(ctx, skin, {
+      x0: BODY.torso.x0,
+      y0: BODY.neck.y0,
+      x1: BODY.torso.x1,
+      y1: BODY.hips.y1 + 30
+    });
+    return skin;
+  }
+  function torsoShape(ctx, y0, y1, reachAt, fill) {
+    const { front, x0, x1 } = BODY.torso;
+    const half = Math.min(front - x0, x1 - front);
+    ctx.fillStyle = fill;
+    for (const dir of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(front, y0);
+      for (let y = y0; y <= y1; y++) {
+        const t = (y - y0) / Math.max(1, y1 - y0);
+        ctx.lineTo(front + dir * half * Math.max(0, reachAt(t)), y);
+      }
+      ctx.lineTo(front, y1);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  function hemShadow(ctx, y, height, reach) {
+    const { front, x0, x1 } = BODY.torso;
+    const half = Math.min(front - x0, x1 - front);
+    const grad = ctx.createLinearGradient(0, y, 0, y + height);
+    grad.addColorStop(0, "rgba(84,52,40,0.30)");
+    grad.addColorStop(1, "rgba(84,52,40,0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(front - half * reach, y, half * reach * 2, height);
+  }
+  function paintBikini(ctx, colour, accent) {
+    stripToSkin(ctx);
+    const chest = BODY.chest;
+    const hips = BODY.hips;
+    const topY0 = chest.y0 + 44;
+    const topY1 = chest.y0 + 124;
+    torsoShape(ctx, topY0, topY1, (t) => {
+      const cup = Math.sin(Math.min(1, t * 1.25) * Math.PI);
+      return 0.3 + cup * 0.42;
+    }, colour);
+    torsoShape(ctx, chest.y0 + 78, chest.y0 + 96, () => 1, colour);
+    hemShadow(ctx, topY1, 18, 0.72);
+    torsoShape(ctx, BODY.neck.y1 - 18, topY0 + 10, (t) => 0.085 + t * 0.045, colour);
+    const briefY0 = hips.y0 + 40;
+    const briefY1 = hips.y0 + 132;
+    torsoShape(ctx, briefY0, briefY1, (t) => {
+      const rise = 1 - Math.pow(1 - t, 2);
+      return 0.34 + rise * 0.52;
+    }, colour);
+    torsoShape(ctx, briefY0 + 6, briefY0 + 30, () => 1, colour);
+    hemShadow(ctx, briefY1, 16, 0.86);
+    ctx.globalAlpha = 0.85;
+    torsoShape(ctx, topY1 - 7, topY1, () => 0.72, accent);
+    torsoShape(ctx, briefY1 - 7, briefY1, () => 0.86, accent);
+    ctx.globalAlpha = 1;
+  }
+  function paintFrillSwimsuit(ctx, colour, accent) {
+    stripToSkin(ctx);
+    const chest = BODY.chest;
+    const hips = BODY.hips;
+    const bodyY0 = chest.y0 + 40;
+    const bodyY1 = hips.y0 + 118;
+    torsoShape(ctx, bodyY0, bodyY1, (t) => {
+      const waist = 0.78 - Math.sin(Math.max(0, Math.min(1, (t - 0.28) / 0.42)) * Math.PI) * 0.16;
+      return t < 0.16 ? 0.34 + t * 2.9 : waist;
+    }, colour);
+    torsoShape(ctx, chest.y0 + 80, hips.y0 + 40, () => 1, colour);
+    torsoShape(ctx, BODY.neck.y1 - 18, bodyY0 + 10, (t) => 0.1 + t * 0.05, colour);
+    const { front, x0, x1 } = BODY.torso;
+    const half = Math.min(front - x0, x1 - front);
+    const frillTop = hips.y0 + 26;
+    ctx.fillStyle = accent;
+    for (const dir of [-1, 1]) {
+      for (let i = 0; i < 11; i++) {
+        const w = half * 0.9 / 11;
+        ctx.beginPath();
+        ctx.ellipse(front + dir * (i + 0.5) * w, frillTop + 44, w * 0.72, 46, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    torsoShape(ctx, bodyY0, frillTop + 10, (t) => {
+      const waist = 0.78 - Math.sin(Math.max(0, Math.min(1, (t - 0.4) / 0.6)) * Math.PI) * 0.14;
+      return t < 0.22 ? 0.34 + t * 2.1 : waist;
+    }, colour);
+    hemShadow(ctx, frillTop + 88, 16, 0.9);
+  }
+  var BODY_PAINTERS = {
+    bikini: (ctx) => paintBikini(ctx, "#2f5f96", "#f2f4f6"),
+    frill: (ctx) => paintFrillSwimsuit(ctx, "#e2718f", "#fdf2f5")
+  };
+  var OUTFITS = [
+    {
+      key: "original",
+      label: "\u305D\u306E\u307E\u307E",
+      show: { Tops: true, Bottoms: true }
+    },
+    {
+      key: "blazer",
+      label: "\u5236\u670D\uFF08\u30D6\u30EC\u30B6\u30FC\uFF09",
+      show: { Tops: true, Bottoms: false },
+      tops: { colour: "#2b3350", gamma: 0.86 },
+      pieces: [{ kind: "skirt", cloth: 3752028 }]
+    },
+    {
+      key: "sailor",
+      label: "\u5236\u670D\uFF08\u30BB\u30FC\u30E9\u30FC\uFF09",
+      show: { Tops: true, Bottoms: false },
+      tops: { colour: "#f3f4f6", gamma: 1.15 },
+      pieces: [
+        { kind: "collar", cloth: 16185337, stripe: 2568527 },
+        { kind: "skirt", cloth: 2568527 }
+      ]
+    },
+    {
+      key: "street",
+      label: "\u8857\u89D2",
+      show: { Tops: true, Bottoms: true },
+      tops: { colour: "#c8503f", gamma: 0.95 },
+      bottoms: { colour: "#33507a" }
+    },
+    {
+      key: "date",
+      label: "\u30C7\u30FC\u30C8",
+      show: { Tops: true, Bottoms: false },
+      tops: { colour: "#f0dfe4", gamma: 1.1 },
+      pieces: [{ kind: "skirt", cloth: 9396088, flare: 0.1, hemY: 0.7 }]
+    },
+    {
+      key: "idol",
+      label: "\u30A2\u30A4\u30C9\u30EB",
+      show: { Tops: true, Bottoms: false },
+      tops: { colour: "#f7f2ff", gamma: 1.15 },
+      pieces: [
+        { kind: "skirt", cloth: 8146872, flare: 0.11, pleats: 28 },
+        { kind: "frill", cloth: 16642805, drop: 0.044, scallops: 26 },
+        { kind: "collar", cloth: 16642805, stripe: 8146872 }
+      ]
+    },
+    {
+      key: "bikini",
+      label: "\u6C34\u7740\uFF08\u30D3\u30AD\u30CB\uFF09",
+      show: { Tops: false, Bottoms: false, Shoes: false },
+      body: "bikini"
+    },
+    {
+      key: "frill",
+      label: "\u6C34\u7740\uFF08\u30D5\u30EA\u30EB\uFF09",
+      show: { Tops: false, Bottoms: false, Shoes: false },
+      body: "frill"
+    }
+  ];
+  var outfitByKey = (key) => OUTFITS.find((o) => o.key === key) || OUTFITS[0];
+  function buildOutfit(outfit, originals) {
+    const out = {};
+    if (outfit.tops && originals.Tops) {
+      const { canvas: canvas2, ctx } = canvasOf(originals.Tops);
+      tintTexture(ctx, outfit.tops.colour, { gamma: outfit.tops.gamma || 1 });
+      out.Tops = canvas2;
+    }
+    if (outfit.bottoms && originals.Bottoms) {
+      const { canvas: canvas2, ctx } = canvasOf(originals.Bottoms);
+      tintTexture(ctx, outfit.bottoms.colour, { gamma: outfit.bottoms.gamma || 1 });
+      out.Bottoms = canvas2;
+    }
+    const painter = outfit.body && BODY_PAINTERS[outfit.body];
+    if (painter && originals.Body) {
+      const { canvas: canvas2, ctx } = canvasOf(originals.Body);
+      painter(ctx);
+      out.Body = canvas2;
+    }
+    return out;
+  }
+  function outfitIsDressed(outfit) {
+    const bare = outfit.show && outfit.show.Tops === false && outfit.show.Bottoms === false;
+    return !bare || !!(outfit.body && BODY_PAINTERS[outfit.body]);
+  }
+
+  // src/garments.js
+  function torsoAt(y, scale = 1) {
+    const t = MathUtils.clamp((y - 0.95) / 0.33, 0, 1);
+    const rx = (0.108 - t * 0.036) * scale;
+    const rz = (0.076 - t * 0.026) * scale;
+    return { rx, rz };
+  }
+  function attachToBone(bone, group, { position, rotation, scale = 1 }) {
+    bone.updateWorldMatrix(true, false);
+    const target = new Matrix4().compose(
+      new Vector3(position.x, position.y, position.z),
+      new Quaternion().setFromEuler(rotation || new Euler()),
+      new Vector3(scale, scale, scale)
+    );
+    const local = new Matrix4().copy(bone.matrixWorld).invert().multiply(target);
+    group.matrix.copy(local);
+    group.matrix.decompose(group.position, group.quaternion, group.scale);
+    group.matrixAutoUpdate = true;
+    bone.add(group);
+    return group;
+  }
+  function makeSailorCollar({
+    cloth = 16777215,
+    stripe = 2898526,
+    scale = 1
+  } = {}) {
+    const group = new Group();
+    const clothMat = new MeshStandardMaterial({
+      color: cloth,
+      roughness: 0.86,
+      side: DoubleSide
+    });
+    const stripeMat = new MeshStandardMaterial({
+      color: stripe,
+      roughness: 0.84,
+      side: DoubleSide
+    });
+    const NECK_Y = 1.272;
+    const BACK_HEM = 1.098;
+    const LIFT = 0.044 * scale;
+    const COLS = 15;
+    const ROWS = 9;
+    const build = (material, uFrom, uTo, topY, bottomY, widen, lift = LIFT) => {
+      const positions = [];
+      const indices = [];
+      for (let r = 0; r <= ROWS; r++) {
+        const v = r / ROWS;
+        const y = topY + (bottomY - topY) * v;
+        const body = torsoAt(y, scale);
+        const grow = 1 + widen * v;
+        for (let c = 0; c <= COLS; c++) {
+          const u = uFrom + (uTo - uFrom) * (c / COLS);
+          const angle = u * Math.PI * 2;
+          positions.push(
+            Math.sin(angle) * (body.rx * grow + lift),
+            y,
+            Math.cos(angle) * (body.rz * grow + lift)
+          );
+        }
+      }
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const a = r * (COLS + 1) + c;
+          const b = a + 1;
+          const d = a + COLS + 1;
+          const e = d + 1;
+          indices.push(a, d, b, b, d, e);
+        }
+      }
+      const geometry = new BufferGeometry();
+      geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      const mesh = new Mesh(geometry, material);
+      mesh.castShadow = true;
+      return mesh;
+    };
+    group.add(build(stripeMat, 0.235, 0.765, NECK_Y, BACK_HEM, 0.3));
+    const trim = build(clothMat, 0.255, 0.745, NECK_Y + 2e-3, BACK_HEM - 0.026, 0.26);
+    trim.scale.multiplyScalar(1);
+    group.add(trim);
+    group.add(build(stripeMat, 0.272, 0.728, NECK_Y + 4e-3, BACK_HEM - 0.044, 0.22));
+    const FRONT_LIFT = LIFT * 1.9;
+    for (const [from, to] of [[0.938, 0.972], [0.028, 0.062]]) {
+      group.add(build(stripeMat, from, to, NECK_Y, 1.132, 0, FRONT_LIFT));
+    }
+    const scarf = new Mesh(new BufferGeometry(), stripeMat);
+    {
+      const body = torsoAt(1.17, scale);
+      const w = 0.032 * scale;
+      const positions = [
+        -w,
+        1.196,
+        body.rz + FRONT_LIFT + 6e-3,
+        w,
+        1.196,
+        body.rz + FRONT_LIFT + 6e-3,
+        0,
+        1.108,
+        body.rz + FRONT_LIFT + 0.016
+      ];
+      scarf.geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+      scarf.geometry.computeVertexNormals();
+    }
+    scarf.castShadow = true;
+    group.add(scarf);
+    const knot = new Mesh(
+      new SphereGeometry(0.017 * scale, 10, 8),
+      new MeshStandardMaterial({ color: stripe, roughness: 0.8 })
+    );
+    const at = torsoAt(1.192, scale);
+    knot.position.set(0, 1.192, at.rz + FRONT_LIFT + 0.01);
+    knot.scale.set(1.5, 0.85, 0.7);
+    group.add(knot);
+    group.userData.garment = "collar";
+    return group;
+  }
+  function makePleatedSkirt({
+    cloth = 2898526,
+    pleats = 24,
+    waistY = 0.965,
+    hemY = 0.735,
+    waist = 0.118,
+    flare = 0.086,
+    depth = 0.028,
+    scale = 1
+  } = {}) {
+    const group = new Group();
+    const material = new MeshStandardMaterial({
+      color: cloth,
+      roughness: 0.88,
+      side: DoubleSide
+    });
+    const ROWS = 6;
+    const positions = [];
+    const indices = [];
+    const cols = pleats * 2;
+    for (let r = 0; r <= ROWS; r++) {
+      const v = r / ROWS;
+      const y = (waistY + (hemY - waistY) * v) * scale;
+      const open = v * v * (3 - 2 * v);
+      for (let c = 0; c <= cols; c++) {
+        const angle = c / cols * Math.PI * 2;
+        const outer = c % 2 === 0;
+        const radius = (waist + flare * open + (outer ? 0 : -depth * open)) * scale;
+        const skew = outer ? 0 : Math.PI / cols * 0.55 * open;
+        positions.push(
+          Math.sin(angle + skew) * radius,
+          y,
+          Math.cos(angle + skew) * radius
+        );
+      }
+    }
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < cols; c++) {
+        const a = r * (cols + 1) + c;
+        const b = a + 1;
+        const d = a + cols + 1;
+        const e = d + 1;
+        indices.push(a, d, b, b, d, e);
+      }
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const skirt = new Mesh(geometry, material);
+    skirt.castShadow = true;
+    skirt.receiveShadow = true;
+    group.add(skirt);
+    const band = new Mesh(
+      new CylinderGeometry(waist * scale * 1.02, waist * scale * 1.02, 0.036 * scale, 28, 1, true),
+      new MeshStandardMaterial({ color: cloth, roughness: 0.8, side: DoubleSide })
+    );
+    band.position.y = (waistY + 0.014) * scale;
+    band.castShadow = true;
+    group.add(band);
+    group.userData.garment = "skirt";
+    group.userData.hemY = hemY * scale;
+    group.userData.hemRadius = (waist + flare) * scale;
+    return group;
+  }
+  function makeFrillRing({
+    cloth = 16642805,
+    radius = 0.2,
+    y = 0.735,
+    drop = 0.05,
+    scallops = 22,
+    amplitude = 0.012,
+    scale = 1
+  } = {}) {
+    const group = new Group();
+    const material = new MeshStandardMaterial({
+      color: cloth,
+      roughness: 0.9,
+      side: DoubleSide
+    });
+    const ROWS = 5;
+    const COLS = scallops * 6;
+    const positions = [];
+    const indices = [];
+    for (let r = 0; r <= ROWS; r++) {
+      const v = r / ROWS;
+      const yy = (y - drop * v) * scale;
+      for (let c = 0; c <= COLS; c++) {
+        const angle = c / COLS * Math.PI * 2;
+        const wave = Math.sin(angle * scallops) * amplitude * v * scale;
+        const rr = radius * scale + wave + drop * v * 0.35 * scale;
+        positions.push(Math.sin(angle) * rr, yy, Math.cos(angle) * rr);
+      }
+    }
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const a = r * (COLS + 1) + c;
+        const b = a + 1;
+        const d = a + COLS + 1;
+        const e = d + 1;
+        indices.push(a, d, b, b, d, e);
+      }
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const band = new Mesh(geometry, material);
+    band.castShadow = true;
+    group.add(band);
+    group.userData.garment = "frill";
+    return group;
+  }
+
   // artifact-build/entry.js
   var canvas = document.getElementById("scene");
   var scene = new Scene();
@@ -35902,13 +37571,45 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     sunDisc.scale.setScalar(night ? 0.42 : 1);
     sunGlow.visible = !night;
   }
+  var birdsBySpecies = {};
+  for (const [key, make] of Object.entries(BIRDS)) {
+    birdsBySpecies[key] = make();
+    scene.add(birdsBySpecies[key]);
+  }
+  var crab = makeCrab();
+  scene.add(crab);
+  var crabActive = false;
+  var crabState = "away";
+  var crabTimer = 0;
+  var crabFacing = 0;
+  var crabRunFrom = 0;
+  var crabRunTo = 0;
+  var crabRunT = 0;
+  var crabScuttle = 0;
+  var bird = birdsBySpecies[SCENE_BIRD.park];
+  var birdSpecies = SCENE_BIRD.park;
+  function setBirdSpecies(key) {
+    const wanted = key && birdsBySpecies[key] ? key : SCENE_BIRD.park;
+    if (wanted === birdSpecies) return;
+    const wasVisible = bird.visible;
+    bird.visible = false;
+    birdSpecies = wanted;
+    bird = birdsBySpecies[wanted];
+    bird.visible = wasVisible;
+  }
   function applyScene(sceneKey, timeKey) {
     const nextScene = sceneKey ? sceneByKey(sceneKey) : activeScene || SCENES[0];
     const nextTime = timeKey ? timeByKey(timeKey) : activeTime || TIMES[1];
     const sceneChanged = !activeScene || activeScene.key !== nextScene.key;
     const timeChanged = !activeTime || activeTime.key !== nextTime.key;
     if (!sceneChanged && !timeChanged) return { scene: activeScene, time: activeTime };
-    if (sceneChanged) buildScenery(nextScene);
+    if (sceneChanged) {
+      buildScenery(nextScene);
+      setBirdSpecies(SCENE_BIRD[nextScene.key]);
+      crabActive = nextScene.key === "beach";
+      crab.visible = false;
+      crabState = "away";
+    }
     activeScene = nextScene;
     activeTime = nextTime;
     activeEnv = resolveEnv(nextScene, nextTime);
@@ -35990,204 +37691,69 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       foam.material.opacity = 0.35 + (t * 0.5 + 0.5) * 0.45;
     }
   }
-  function loft(stations, segments = 16) {
-    const positions = [];
-    const indices = [];
-    for (const station of stations) {
-      for (let s = 0; s < segments; s++) {
-        const angle = s / segments * Math.PI * 2;
-        positions.push(
-          Math.cos(angle) * station.rx,
-          station.y + Math.sin(angle) * station.ry,
-          station.z
-        );
-      }
-    }
-    for (let i = 0; i < stations.length - 1; i++) {
-      for (let s = 0; s < segments; s++) {
-        const a = i * segments + s;
-        const b = i * segments + (s + 1) % segments;
-        const c = (i + 1) * segments + s;
-        const d = (i + 1) * segments + (s + 1) % segments;
-        indices.push(a, c, b, b, c, d);
-      }
-    }
-    const first = stations[0];
-    const last = stations[stations.length - 1];
-    const frontCap = positions.length / 3;
-    positions.push(0, first.y, first.z);
-    const backCap = positions.length / 3;
-    positions.push(0, last.y, last.z);
-    const base = (stations.length - 1) * segments;
-    for (let s = 0; s < segments; s++) {
-      indices.push(frontCap, (s + 1) % segments, s);
-      indices.push(backCap, base + s, base + (s + 1) % segments);
-    }
-    const geometry = new BufferGeometry();
-    geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-    geometry.setIndex(indices);
-    geometry.computeVertexNormals();
-    return geometry;
+  var CRAB_SHORE_Z = 10.5;
+  var CRAB_SHY = 1.5;
+  function crabPlace() {
+    const near = vrm ? vrm.scene.position : new Vector3();
+    const side = Math.random() < 0.5 ? -1 : 1;
+    crab.position.set(
+      near.x + side * (1.6 + Math.random() * 2.2),
+      0,
+      CRAB_SHORE_Z - 1.2 - Math.random() * 2.4
+    );
+    crabFacing = Math.random() * Math.PI * 2;
+    crab.rotation.y = crabFacing;
   }
-  function featherGeometry(length, width, tipWidth = width * 0.28) {
-    const SEGMENTS = 7;
-    const positions = [];
-    const indices = [];
-    for (let i = 0; i <= SEGMENTS; i++) {
-      const t = i / SEGMENTS;
-      const shape = Math.sin(Math.min(1, t * 1.6) * Math.PI * 0.5);
-      const halfWidth = (width * shape * (1 - t) + tipWidth * t) * 0.5;
-      const drop = -t * t * length * 0.16;
-      const cup = -halfWidth * 0.22;
-      positions.push(0, drop, -t * length);
-      positions.push(halfWidth, drop + cup, -t * length);
-      positions.push(-halfWidth, drop + cup, -t * length);
+  function updateCrab(dt) {
+    if (!crabActive) {
+      crab.visible = false;
+      return;
     }
-    for (let i = 0; i < SEGMENTS; i++) {
-      const a = i * 3;
-      const b = (i + 1) * 3;
-      indices.push(a, b, a + 1, a + 1, b, b + 1);
-      indices.push(a, a + 2, b, a + 2, b + 2, b);
+    crabTimer -= dt;
+    if (crabState === "away") {
+      if (crabTimer > 0) return;
+      crabPlace();
+      crab.visible = true;
+      crabState = "still";
+      crabTimer = 1.2 + Math.random() * 2.6;
+      return;
     }
-    const geometry = new BufferGeometry();
-    geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-    geometry.setIndex(indices);
-    geometry.computeVertexNormals();
-    return geometry;
-  }
-  function makeBird() {
-    const group = new Group();
-    const backMat = new MeshStandardMaterial({ color: 4026288, roughness: 0.78 });
-    const bellyMat = new MeshStandardMaterial({ color: 15921638, roughness: 0.85 });
-    const flightMat = new MeshStandardMaterial({
-      color: 2376829,
-      roughness: 0.7,
-      side: DoubleSide
+    const near = vrm ? vrm.scene.position : new Vector3();
+    const crowded = crab.position.distanceTo(near) < CRAB_SHY;
+    if (crabState === "still") {
+      crabScuttle += dt * 2.2;
+      crab.position.y = Math.sin(crabScuttle) * 8e-4;
+      if (crowded || crabTimer <= 0) {
+        const away = crowded ? Math.atan2(crab.position.x - near.x, crab.position.z - near.z) : crabFacing + (Math.random() < 0.5 ? Math.PI / 2 : -Math.PI / 2);
+        crabRunFrom = crab.position.x;
+        crabRunTo = crab.position.x + Math.sin(away) * (0.35 + Math.random() * 0.7);
+        crabRunT = 0;
+        crabState = "running";
+        crabTimer = crowded ? 0.55 : 0.4 + Math.random() * 0.3;
+      }
+      return;
+    }
+    crabRunT += dt / 0.5;
+    if (crabRunT >= 1) {
+      crab.position.x = crabRunTo;
+      crabState = "still";
+      crabTimer = 1.4 + Math.random() * 3;
+      if (Math.random() < 0.22) {
+        crab.visible = false;
+        crabState = "away";
+        crabTimer = 4 + Math.random() * 7;
+      }
+      return;
+    }
+    const ease = crabRunT * crabRunT * (3 - 2 * crabRunT);
+    crab.position.x = crabRunFrom + (crabRunTo - crabRunFrom) * ease;
+    crabScuttle += dt * 26;
+    const stride = Math.sin(crabScuttle);
+    crab.userData.legs.forEach((leg, i) => {
+      leg.rotation.x = Math.sin(crabScuttle + i * 1.1) * 0.22;
     });
-    const tipMat = new MeshStandardMaterial({
-      color: 1518418,
-      roughness: 0.7,
-      side: DoubleSide
-    });
-    const beakMat = new MeshStandardMaterial({ color: 2830136, roughness: 0.45 });
-    const legMat = new MeshStandardMaterial({ color: 11565633, roughness: 0.65 });
-    const eyeMat = new MeshStandardMaterial({ color: 1316380, roughness: 0.2 });
-    const shineMat = new MeshBasicMaterial({ color: 16777215 });
-    const BODY = [
-      { z: -0.034, y: 4e-3, rx: 6e-3, ry: 6e-3 },
-      { z: -0.025, y: 8e-3, rx: 0.014, ry: 0.015 },
-      { z: -0.013, y: 0.012, rx: 0.019, ry: 0.023 },
-      { z: -1e-3, y: 0.016, rx: 0.021, ry: 0.026 },
-      { z: 9e-3, y: 0.023, rx: 0.02, ry: 0.025 },
-      { z: 0.014, y: 0.034, rx: 0.016, ry: 0.018 },
-      { z: 0.017, y: 0.045, rx: 0.015, ry: 0.016 },
-      { z: 0.021, y: 0.055, rx: 0.017, ry: 0.017 },
-      { z: 0.03, y: 0.06, rx: 0.016, ry: 0.016 },
-      { z: 0.038, y: 0.059, rx: 0.011, ry: 0.011 },
-      { z: 0.042, y: 0.057, rx: 6e-3, ry: 6e-3 }
-    ];
-    const body = new Mesh(loft(BODY, 18), backMat);
-    body.castShadow = true;
-    group.add(body);
-    const UNDER = BODY.slice(1, 9).map((station) => ({
-      z: station.z,
-      y: station.y - station.ry * 0.46,
-      rx: station.rx * 0.8,
-      ry: station.ry * 0.62
-    }));
-    const belly = new Mesh(loft(UNDER, 16), bellyMat);
-    group.add(belly);
-    const upperBill = new Mesh(loft([
-      { z: 0.0405, y: 0.0582, rx: 58e-4, ry: 46e-4 },
-      { z: 0.0465, y: 0.0578, rx: 38e-4, ry: 32e-4 },
-      { z: 0.0515, y: 0.0566, rx: 15e-4, ry: 15e-4 },
-      { z: 0.054, y: 0.0554, rx: 5e-4, ry: 5e-4 }
-    ], 8), beakMat);
-    group.add(upperBill);
-    const lowerBill = new Mesh(loft([
-      { z: 0.0405, y: 0.0546, rx: 5e-3, ry: 32e-4 },
-      { z: 0.046, y: 0.0546, rx: 3e-3, ry: 21e-4 },
-      { z: 0.0505, y: 0.0548, rx: 8e-4, ry: 8e-4 }
-    ], 8), beakMat);
-    group.add(lowerBill);
-    for (const side of [-1, 1]) {
-      const eye = new Mesh(new SphereGeometry(46e-4, 12, 10), eyeMat);
-      eye.position.set(side * 0.0132, 0.0632, 0.03);
-      group.add(eye);
-      const shine = new Mesh(new SphereGeometry(14e-4, 6, 5), shineMat);
-      shine.position.set(side * 0.0146, 0.065, 0.0332);
-      group.add(shine);
-    }
-    const wings = [];
-    for (const side of [-1, 1]) {
-      const pivot = new Group();
-      pivot.position.set(side * 0.017, 0.03, 4e-3);
-      pivot.userData.side = side;
-      const spread = new Group();
-      pivot.add(spread);
-      pivot.userData.spread = spread;
-      const covert = new Mesh(loft([
-        { z: 6e-3, y: 0, rx: 5e-3, ry: 4e-3 },
-        { z: -7e-3, y: -5e-3, rx: 0.01, ry: 0.01 },
-        { z: -0.02, y: -0.012, rx: 8e-3, ry: 7e-3 },
-        { z: -0.03, y: -0.018, rx: 3e-3, ry: 3e-3 }
-      ], 10), backMat);
-      covert.castShadow = true;
-      spread.add(covert);
-      const FEATHERS = 8;
-      for (let i = 0; i < FEATHERS; i++) {
-        const t = i / (FEATHERS - 1);
-        const feather = new Mesh(
-          featherGeometry(0.028 + t * 0.022, 0.01 - t * 3e-3),
-          t > 0.6 ? tipMat : flightMat
-        );
-        feather.position.set(side * (1e-3 + t * 2e-3), -3e-3 - t * 6e-3, -4e-3 - t * 6e-3);
-        feather.rotation.set(-0.03 - t * 0.09, side * (0.05 - t * 0.07), side * (0.16 - t * 0.05));
-        feather.castShadow = true;
-        spread.add(feather);
-      }
-      group.add(pivot);
-      wings.push(pivot);
-    }
-    const tail = new Group();
-    tail.position.set(0, 4e-3, -0.032);
-    tail.rotation.x = 0.13;
-    for (let i = 0; i < 6; i++) {
-      const spread = (i - 2.5) / 2.5;
-      const feather = new Mesh(
-        featherGeometry(0.045 - Math.abs(spread) * 4e-3, 0.01),
-        Math.abs(spread) > 0.7 ? tipMat : flightMat
-      );
-      feather.rotation.set(0, spread * 0.11, spread * 0.16);
-      feather.position.set(spread * 35e-4, -Math.abs(spread) * 8e-4, 0);
-      feather.castShadow = true;
-      tail.add(feather);
-    }
-    group.add(tail);
-    const legs = [];
-    for (const side of [-1, 1]) {
-      const leg = new Group();
-      leg.position.set(side * 9e-3, -8e-3, 4e-3);
-      legs.push(leg);
-      const tarsus = new Mesh(new CylinderGeometry(2e-3, 24e-4, 0.021, 6), legMat);
-      tarsus.position.y = -0.0105;
-      leg.add(tarsus);
-      for (const [angle, length] of [[0, 0.011], [0.55, 0.01], [-0.55, 0.01], [Math.PI, 8e-3]]) {
-        const toe = new Mesh(new CylinderGeometry(13e-4, 9e-4, length, 5), legMat);
-        toe.position.set(Math.sin(angle) * length * 0.45, -0.0215, Math.cos(angle) * length * 0.45);
-        toe.rotation.set(Math.cos(angle) * 1.45, 0, -Math.sin(angle) * 1.45);
-        leg.add(toe);
-      }
-      group.add(leg);
-    }
-    group.userData.leftWing = wings[0];
-    group.userData.rightWing = wings[1];
-    group.userData.legs = legs;
-    group.visible = false;
-    return group;
+    crab.position.y = Math.abs(stride) * 16e-4;
   }
-  var bird = makeBird();
-  scene.add(bird);
   function makeUmbrella() {
     const group = new Group();
     const canopyMat = new MeshStandardMaterial({
@@ -36426,6 +37992,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     {
       key: "bird-to-hand",
       episode: "bird",
+      needsPerch: true,
       beats: [
         { pose: "look-up", expression: "Surprised", hold: [1.9, 2.5], cue: { bird: "sky", travel: 1.8 } },
         { pose: "reach-out", expression: "relaxed", hold: [2.7, 3.3], cue: { bird: "hand", travel: 2.8 } },
@@ -36438,6 +38005,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     {
       key: "bird-to-shoulder",
       episode: "bird",
+      needsPerch: true,
       beats: [
         { pose: "idle", expression: "relaxed", hold: [2.8, 3.4], cue: { bird: "shoulder", travel: 2.9 } },
         { pose: "idle", expression: "Surprised", hold: [2.4, 3], peak: true, story: "\u80A9\u306B\u9CE5\u304C\u3068\u307E\u3063\u3066\u3001\u3073\u3063\u304F\u308A\u3057\u305F\u9854" },
@@ -36619,7 +38187,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     return base.addScaledVector(side, outward).add(new Vector3(0, lift, 0)).addScaledVector(bodyForward, forward);
   }
   var bodyForward = new Vector3();
-  var BIRD_GROUND_Y = 0.031;
+  var birdGroundY = () => bird.userData.groundY;
   var BIRD_ANCHORS = {
     // On the point of the shoulder, not in it. The shoulder *joint* is at the
     // base of the neck and buried under her hair; the deltoid it has to stand on
@@ -36633,7 +38201,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     ground: () => {
       if (!vrm) return null;
       const forward = new Vector3(0, 0, 1).applyAxisAngle(new Vector3(0, 1, 0), facing);
-      return vrm.scene.position.clone().addScaledVector(forward, 0.55).setY(BIRD_GROUND_Y);
+      return vrm.scene.position.clone().addScaledVector(forward, 0.55).setY(birdGroundY());
     },
     // Not a perch: somewhere above and to one side, for the beat where she has
     // noticed it but it has not come down yet. Held as an offset from her so it
@@ -36677,7 +38245,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     const radius = minRadius + Math.random() * (maxRadius - minRadius);
     return new Vector3(
       base.x + Math.sin(angle) * radius,
-      BIRD_GROUND_Y,
+      birdGroundY(),
       base.z + Math.cos(angle) * radius
     );
   }
@@ -36767,7 +38335,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       const from = bird.position;
       const angle = Math.random() * Math.PI * 2;
       const distance = randRange(0.1, 0.3);
-      birdSpot.set(from.x + Math.sin(angle) * distance, BIRD_GROUND_Y, from.z + Math.cos(angle) * distance);
+      birdSpot.set(from.x + Math.sin(angle) * distance, birdGroundY(), from.z + Math.cos(angle) * distance);
       birdGoTo("spot", randRange(0.28, 0.42), 0.06);
       birdSettleTime = birdHopsLeft > 0 ? randRange(0.1, 0.28) : randRange(0.9, 2.2);
       return;
@@ -36788,7 +38356,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     const shiver = Math.sin(birdFlap * 0.18) * 0.03 * birdWingFold;
     for (const pivot of [bird.userData.leftWing, bird.userData.rightWing]) {
       const side = pivot.userData.side;
-      pivot.userData.spread.rotation.y = -side * (Math.PI / 2) * open;
+      setWingSpread(pivot, open);
       pivot.rotation.z = side * (beat + shiver + birdWingFold * 0.06);
     }
     for (const leg of bird.userData.legs) leg.rotation.x = open * 1.25;
@@ -36862,9 +38430,17 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     if (kind !== "wind") weather.setWind(0);
     if (kind !== "rain") weather.setRain(0);
   }
+  function eligibleScenarioKeys() {
+    return SCENARIOS.filter((entry) => !entry.needsPerch || bird.userData.perchOnHer).map((entry) => entry.key);
+  }
   function startScenario(key) {
-    if (!scenarioBag) scenarioBag = makeShuffleBag(SCENARIOS.map((entry) => entry.key));
-    const chosen = key && scenarioByKey(key) || scenarioByKey(scenarioBag.next());
+    if (!scenarioBag) scenarioBag = makeShuffleBag(eligibleScenarioKeys());
+    let chosen = key && scenarioByKey(key);
+    for (let i = 0; !chosen && i < 12; i++) {
+      const drawn = scenarioByKey(scenarioBag.next());
+      if (drawn && (!drawn.needsPerch || bird.userData.perchOnHer)) chosen = drawn;
+    }
+    if (!chosen) chosen = scenarioByKey(eligibleScenarioKeys()[0]);
     if (key) scenarioBag.note(chosen.key);
     currentScenario = chosen;
     beginEpisode(chosen.episode);
@@ -36874,7 +38450,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   }
   function startDirector() {
     directorActive = true;
-    scenarioBag = makeShuffleBag(SCENARIOS.map((entry) => entry.key));
+    scenarioBag = makeShuffleBag(eligibleScenarioKeys());
     startScenario();
   }
   function stopDirector() {
@@ -37004,15 +38580,140 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       );
     });
   }
+  var originalMaps = /* @__PURE__ */ new Map();
+  var outfitKey = "original";
+  var SLOT_MATCH = { Body: "Body_00_SKIN", Tops: "Tops", Bottoms: "Bottoms", Shoes: "Shoes" };
+  function eachSlotMaterial(target, slot, fn) {
+    const match = SLOT_MATCH[slot];
+    target.scene.traverse((object) => {
+      if (!object.isMesh && !object.isSkinnedMesh) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      let touched = false;
+      for (const m of materials) {
+        if (!m.name || !m.name.includes(match)) continue;
+        fn(m, object);
+        touched = true;
+      }
+      if (touched) fn.mesh && fn.mesh(object);
+    });
+  }
+  function captureOriginalMaps(loaded) {
+    if (originalMaps.has(loaded.key)) return;
+    const maps = {};
+    for (const slot of Object.keys(SLOT_MATCH)) {
+      eachSlotMaterial(loaded.vrm, slot, (m) => {
+        if (!maps[slot] && m.map && m.map.image) maps[slot] = m.map.image;
+      });
+    }
+    originalMaps.set(loaded.key, maps);
+  }
+  function wearCanvas(slot, canvas2) {
+    const texture = new CanvasTexture(canvas2);
+    texture.flipY = false;
+    texture.colorSpace = SRGBColorSpace;
+    texture.needsUpdate = true;
+    eachSlotMaterial(vrm, slot, (m) => {
+      m.map = texture;
+      if ("shadeMultiplyTexture" in m) m.shadeMultiplyTexture = texture;
+      m.needsUpdate = true;
+    });
+  }
+  function restoreSlot(slot, image) {
+    if (!image) return;
+    const texture = new Texture(image);
+    texture.flipY = false;
+    texture.colorSpace = SRGBColorSpace;
+    texture.needsUpdate = true;
+    eachSlotMaterial(vrm, slot, (m) => {
+      m.map = texture;
+      if ("shadeMultiplyTexture" in m) m.shadeMultiplyTexture = texture;
+      m.needsUpdate = true;
+    });
+  }
+  function setSlotVisible(slot, visible) {
+    const match = SLOT_MATCH[slot];
+    vrm.scene.traverse((object) => {
+      if (!object.isMesh && !object.isSkinnedMesh) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      if (materials.some((m) => m.name && m.name.includes(match))) object.visible = visible;
+    });
+  }
+  var wornPieces = [];
+  function clearWornPieces() {
+    for (const piece of wornPieces) {
+      if (piece.parent) piece.parent.remove(piece);
+      piece.traverse((object) => {
+        if (!object.isMesh) return;
+        object.geometry.dispose();
+        if (object.material.dispose) object.material.dispose();
+      });
+    }
+    wornPieces = [];
+  }
+  var PIECE_BONE = { collar: "upperChest", skirt: "hips", frill: "hips" };
+  function wearPieces(outfit) {
+    clearWornPieces();
+    if (!outfit.pieces || !vrm || !vrm.humanoid) return;
+    const size = new Box3().setFromObject(vrm.scene).getSize(new Vector3());
+    const scale = size.y / 1.756;
+    for (const spec of outfit.pieces) {
+      const boneName = PIECE_BONE[spec.kind];
+      const bone = vrm.humanoid.getRawBoneNode(boneName);
+      if (!bone) continue;
+      let group = null;
+      if (spec.kind === "collar") group = makeSailorCollar({ ...spec, scale });
+      else if (spec.kind === "skirt") group = makePleatedSkirt({ ...spec, scale });
+      else if (spec.kind === "frill") {
+        const base = outfit.pieces.find((p) => p.kind === "skirt");
+        group = makeFrillRing({
+          radius: spec.radius !== void 0 ? spec.radius : (base && base.waist !== void 0 ? base.waist : 0.118) + (base && base.flare !== void 0 ? base.flare : 0.086),
+          y: spec.y !== void 0 ? spec.y : base && base.hemY !== void 0 ? base.hemY : 0.735,
+          ...spec,
+          scale
+        });
+      }
+      if (!group) continue;
+      attachToBone(bone, group, {
+        position: vrm.scene.position,
+        rotation: new Euler(0, facing, 0),
+        scale: 1
+      });
+      wornPieces.push(group);
+    }
+  }
+  function applyOutfit(key) {
+    if (!vrm || !activeCharacter) return outfitKey;
+    const outfit = outfitByKey(key);
+    if (!outfitIsDressed(outfit)) return outfitKey;
+    const originals = originalMaps.get(activeCharacter.key) || {};
+    const built = buildOutfit(outfit, originals);
+    for (const slot of ["Body", "Tops", "Bottoms", "Shoes"]) {
+      if (built[slot]) wearCanvas(slot, built[slot]);
+      else restoreSlot(slot, originals[slot]);
+      const show = outfit.show ? outfit.show[slot] : void 0;
+      if (show !== void 0) setSlotVisible(slot, show);
+      else if (slot !== "Body") setSlotVisible(slot, true);
+    }
+    wearPieces(outfit);
+    outfitKey = outfit.key;
+    return outfitKey;
+  }
   var SHADE_DARKEN = 0.62;
   var SHADE_SHIFT = -0.32;
   var SHADE_TOONY = 0.3;
+  var toonMaterials = [];
   function deepenToonShading(material) {
     if (!material || !material.isMToonMaterial) return;
-    if (material.shadeColorFactor) material.shadeColorFactor.multiplyScalar(SHADE_DARKEN);
+    if (material.shadeColorFactor) {
+      if (!material.userData.stockShade) {
+        material.userData.stockShade = material.shadeColorFactor.clone();
+      }
+      material.shadeColorFactor.copy(material.userData.stockShade).multiplyScalar(SHADE_DARKEN);
+    }
     material.shadingShiftFactor = SHADE_SHIFT;
     material.shadingToonyFactor = SHADE_TOONY;
     material.needsUpdate = true;
+    if (!toonMaterials.includes(material)) toonMaterials.push(material);
   }
   function setUpCharacter(gltf, source) {
     const loaded = { key: source.key, label: source.label, bones: {} };
@@ -37108,11 +38809,13 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     vrm.scene.position.copy(state.position);
     vrm.scene.rotation.y = facing + modelYaw;
     if (vrm.lookAt) vrm.lookAt.target = gazeTarget;
+    applyOutfit(outfitKey);
   }
   CHARACTER_SOURCES.forEach((source, index) => {
     loadCharacter(source).then((loaded) => {
       cast.push(loaded);
       cast.sort((a, b) => CHARACTER_SOURCES.findIndex((s) => s.key === a.key) - CHARACTER_SOURCES.findIndex((s) => s.key === b.key));
+      captureOriginalMaps(loaded);
       if (activeCharacter) {
         if (photoGame) photoGame.castChanged();
         return;
@@ -37130,6 +38833,22 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
           getCharacter: () => activeCharacter ? activeCharacter.key : null,
           setCharacter: setActiveCharacter,
           setSun,
+          listOutfits: () => OUTFITS.map((entry) => ({ key: entry.key, label: entry.label })),
+          // Frames her full length in the top part of the screen. The setup
+          // panel is tall enough on a phone to cover everything below her chin,
+          // which is a poor way to present a costume picker. Aiming below her
+          // centre is what lifts her up the frame -- the camera does not move up,
+          // the subject does.
+          showOff: () => {
+            const base = vrm ? vrm.scene.position : new Vector3();
+            const forward = new Vector3(0, 0, 1).applyAxisAngle(new Vector3(0, 1, 0), facing);
+            lookHeight = 0.1;
+            camera.position.set(base.x + forward.x * 4, 0.95, base.z + forward.z * 4);
+            controls.target.set(base.x, lookHeight, base.z);
+            controls.update();
+          },
+          setOutfit: (key) => applyOutfit(key),
+          getOutfit: () => outfitKey,
           listScenes: () => SCENES.map((entry) => ({ key: entry.key, label: entry.label })),
           setScene: (key) => applyScene(key, null).scene.key,
           getScene: () => activeScene ? activeScene.key : null,
@@ -37159,6 +38878,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
           burstFrameCount,
           encodeFrame,
           setDirectorActive: (on) => {
+            if (on) lookHeight = LOOK_HEIGHT;
             if (on) startDirector();
             else stopDirector();
           },
@@ -37182,8 +38902,9 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.update();
+  var lookHeight = LOOK_HEIGHT;
   function updateCamera() {
-    controls.target.lerp(state.position.clone().add(new Vector3(0, LOOK_HEIGHT, 0)), 0.15);
+    controls.target.lerp(state.position.clone().add(new Vector3(0, lookHeight, 0)), 0.15);
     controls.update();
   }
   var ARM_DOWN_Z = -1.3;
@@ -37603,6 +39324,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     applyWeatherToWorld();
     applyWindToScenery();
     applyWindToSpringBones();
+    updateCrab(dt);
     animateSurf();
     animateWater(dt);
     updateUmbrella(dt);
@@ -38106,6 +39828,19 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     setExposureCeilingForTest: (value) => {
       exposureCeiling = value;
     },
+    // Re-applies the toon shade term from the stock colour, so how dark her
+    // shadow side goes can be swept without a reload.
+    setShadeForTest: (darken, shift, toony) => {
+      for (const material of toonMaterials) {
+        if (material.shadeColorFactor && material.userData.stockShade) {
+          material.shadeColorFactor.copy(material.userData.stockShade).multiplyScalar(darken);
+        }
+        if (shift !== void 0) material.shadingShiftFactor = shift;
+        if (toony !== void 0) material.shadingToonyFactor = toony;
+        material.needsUpdate = true;
+      }
+      return toonMaterials.length;
+    },
     placeForTest: (x, z) => {
       state.position.set(x, 0, z);
       vrm.scene.position.copy(state.position);
@@ -38179,7 +39914,22 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       anchor: birdAnchor,
       episode: birdEpisode,
       wingOpen: 1 - birdWingFold,
+      species: birdSpecies,
       position: { x: bird.position.x, y: bird.position.y, z: bird.position.z }
+    }),
+    // Park the bird on a spot and hold it there, so a screenshot can find it.
+    birdToForTest: (anchor) => {
+      beginEpisode("bird");
+      birdOwner = "story";
+      if (anchor === "spot") birdSpot.copy(birdGroundSpot(0.7, 1));
+      birdGoTo(anchor, 1.4);
+      return birdSpecies;
+    },
+    getCrabStateForTest: () => ({
+      active: crabActive,
+      state: crabState,
+      visible: crab.visible,
+      position: { x: crab.position.x, y: crab.position.y, z: crab.position.z }
     }),
     // Lets a test hold her heading still. Only the gaze tests want this: they
     // put the camera at a known angle off her facing, which she would otherwise
@@ -38210,6 +39960,170 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       );
       return { x: offset.x, y: offset.y, z: offset.z };
     },
+    // What she is actually wearing, as the renderer sees it: every mesh, the
+    // materials on it, and the size and slot of each texture. Any costume change
+    // has to work with this, so it is worth being able to look at it.
+    wardrobeForTest: () => {
+      if (!vrm) return [];
+      const out = [];
+      vrm.scene.traverse((object) => {
+        if (!object.isMesh && !object.isSkinnedMesh) return;
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        out.push({
+          mesh: object.name,
+          skinned: !!object.isSkinnedMesh,
+          groups: object.geometry.groups.length,
+          vertices: object.geometry.attributes.position.count,
+          materials: materials.map((m) => ({
+            name: m.name,
+            type: m.type,
+            transparent: !!m.transparent,
+            map: m.map ? `${m.map.image ? m.map.image.width : "?"}x${m.map.image ? m.map.image.height : "?"}` : null,
+            mapName: m.map && m.map.name ? m.map.name : null,
+            color: m.color ? `#${m.color.getHexString()}` : null
+          }))
+        });
+      });
+      return out;
+    },
+    // Show or hide one of the body mesh's material slots, so a costume change
+    // can take a garment off before putting another on.
+    setGarmentVisibleForTest: (match, visible) => {
+      if (!vrm) return 0;
+      let hit = 0;
+      vrm.scene.traverse((object) => {
+        if (!object.isMesh && !object.isSkinnedMesh) return;
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        if (!materials.some((m) => m.name && m.name.includes(match))) return;
+        object.visible = visible;
+        hit++;
+      });
+      return hit;
+    },
+    // Rasterises a garment's UV triangles, colour-coded by the bone that drives
+    // them, and hands back a data URL. Painting a costume means knowing which
+    // patch of a 768-square texture is the torso and which is a shin, and the
+    // only place that is actually written down is the model.
+    uvAtlasForTest: (match, size = 768) => {
+      if (!vrm) return null;
+      let target = null;
+      vrm.scene.traverse((object) => {
+        if (target || !(object.isMesh || object.isSkinnedMesh)) return;
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        if (materials.some((m) => m.name && m.name.includes(match))) target = object;
+      });
+      if (!target) return null;
+      const canvas2 = document.createElement("canvas");
+      canvas2.width = size;
+      canvas2.height = size;
+      const ctx = canvas2.getContext("2d");
+      ctx.fillStyle = "#101014";
+      ctx.fillRect(0, 0, size, size);
+      const uv = target.geometry.attributes.uv;
+      const skinIndex = target.geometry.attributes.skinIndex;
+      const skinWeight = target.geometry.attributes.skinWeight;
+      const index = target.geometry.index;
+      const bones2 = target.skeleton ? target.skeleton.bones : [];
+      const REGION = [
+        [/Hips|Spine/i, "#e0552e", "hips"],
+        [/Chest|Bust/i, "#e8a33a", "chest"],
+        [/Neck|Head/i, "#f2e05c", "head"],
+        [/Shoulder/i, "#7ad46a", "shoulder"],
+        [/UpperArm/i, "#3fb6a8", "upper arm"],
+        [/LowerArm/i, "#3f86d0", "lower arm"],
+        [/Hand|Thumb|Index|Middle|Ring|Little/i, "#8f6ce0", "hand"],
+        [/UpperLeg/i, "#e05a9a", "thigh"],
+        [/LowerLeg/i, "#c04040", "shin"],
+        [/Foot|Toe/i, "#a0a8b4", "foot"]
+      ];
+      const colourFor = (name) => {
+        for (const [re, colour] of REGION) if (re.test(name)) return colour;
+        return "#4a4a52";
+      };
+      const count = index ? index.count : uv.count;
+      for (let i = 0; i < count; i += 3) {
+        const tri = [0, 1, 2].map((k) => index ? index.getX(i + k) : i + k);
+        const tally = {};
+        for (const v of tri) {
+          for (let k = 0; k < 4; k++) {
+            const w = skinWeight.getComponent(v, k);
+            if (w <= 1e-3) continue;
+            const bone = bones2[skinIndex.getComponent(v, k)];
+            if (!bone) continue;
+            tally[bone.name] = (tally[bone.name] || 0) + w;
+          }
+        }
+        let best = null;
+        for (const [name, w] of Object.entries(tally)) if (!best || w > best[1]) best = [name, w];
+        ctx.fillStyle = best ? colourFor(best[0]) : "#4a4a52";
+        ctx.beginPath();
+        tri.forEach((v, k) => {
+          const x = uv.getX(v) * size;
+          const y = uv.getY(v) * size;
+          if (k === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        ctx.fill();
+      }
+      return { url: canvas2.toDataURL("image/png"), legend: REGION.map(([, c, n]) => `${n}=${c}`) };
+    },
+    // Puts a data-URL image onto a garment's colour map. Used to check that a
+    // painted texture lands where it was meant to: UV orientation is the kind of
+    // thing that is either obviously right or obviously wrong on the model, and
+    // arguing about flipY from first principles is how you get a shin on a face.
+    wearTextureForTest: (match, url) => new Promise((resolve) => {
+      if (!vrm) {
+        resolve(0);
+        return;
+      }
+      const image = new Image();
+      image.onload = () => {
+        const texture = new Texture(image);
+        texture.flipY = false;
+        texture.colorSpace = SRGBColorSpace;
+        texture.needsUpdate = true;
+        let hit = 0;
+        vrm.scene.traverse((object) => {
+          if (!object.isMesh && !object.isSkinnedMesh) return;
+          const materials = Array.isArray(object.material) ? object.material : [object.material];
+          for (const m of materials) {
+            if (!m.name || !m.name.includes(match)) continue;
+            m.map = texture;
+            if ("shadeMultiplyTexture" in m) m.shadeMultiplyTexture = texture;
+            m.needsUpdate = true;
+            hit++;
+          }
+        });
+        resolve(hit);
+      };
+      image.onerror = () => resolve(-1);
+      image.src = url;
+    }),
+    setOutfitForTest: (key) => applyOutfit(key),
+    // What she is actually wearing right now, as the renderer sees it, rather
+    // than what the outfit table says she should be. The invariant worth
+    // checking is that the outer layers are never both off without the layer
+    // underneath having been repainted.
+    wardrobeStateForTest: () => {
+      const originals = originalMaps.get(activeCharacter ? activeCharacter.key : "") || {};
+      const visible = {};
+      let bodyPainted = false;
+      for (const slot of Object.keys(SLOT_MATCH)) {
+        eachSlotMaterial(vrm, slot, (m, object) => {
+          if (visible[slot] === void 0) visible[slot] = object.visible;
+          if (slot === "Body" && m.map && m.map.image !== originals.Body) bodyPainted = true;
+        });
+      }
+      return {
+        outfit: outfitKey,
+        visible,
+        bodyPainted,
+        pieces: wornPieces.map((piece) => piece.userData.garment)
+      };
+    },
+    getOutfitForTest: () => outfitKey,
+    listOutfitsForTest: () => OUTFITS.map((o) => ({ key: o.key, label: o.label })),
     getSpringSettings: () => {
       if (!vrm || !vrm.springBoneManager) return [];
       return [...vrm.springBoneManager.joints].map((joint) => ({

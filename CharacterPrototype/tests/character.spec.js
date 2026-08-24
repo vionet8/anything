@@ -1164,6 +1164,71 @@ test('retaking a burst discards it without spending a shot', async ({ page }) =>
   expect(await page.evaluate(() => window.__game.getShots())).toHaveLength(1);
 });
 
+test.describe('wardrobe', () => {
+  test('every outfit goes on, and none of them undresses her', async ({ page }) => {
+    test.setTimeout(60000);
+    const outfits = await page.evaluate(() => window.__char.listOutfitsForTest());
+    expect(outfits.length).toBeGreaterThan(4);
+
+    for (const outfit of outfits) {
+      const state = await page.evaluate((key) => {
+        window.__char.setOutfitForTest(key);
+        return window.__char.wardrobeStateForTest();
+      }, outfit.key);
+      expect(state.outfit, `${outfit.label} goes on`).toBe(outfit.key);
+
+      // The one that matters. Taking the outer garments off is how a swimsuit
+      // is done -- the swimsuit is painted into the body texture, where the
+      // camisole was -- so an outfit that hides both without having repainted
+      // that texture would leave her in whatever the body happens to carry.
+      // This is not a wrong colour; it is the failure that must not happen.
+      const bare = state.visible.Tops === false && state.visible.Bottoms === false;
+      expect(bare && !state.bodyPainted, `${outfit.label} hides both layers unpainted`)
+        .toBe(false);
+    }
+  });
+
+  test('the garments that are shapes are built, not painted', async ({ page }) => {
+    test.setTimeout(45000);
+    // A pleated skirt and a sailor collar cannot be produced by recolouring a
+    // cardigan, so the outfits that call for them have to be carrying real
+    // geometry. Checking the pieces are there is what stops the wardrobe
+    // quietly regressing to a set of colourways.
+    const sailor = await page.evaluate(() => {
+      window.__char.setOutfitForTest('sailor');
+      return window.__char.wardrobeStateForTest();
+    });
+    expect(sailor.pieces).toContain('collar');
+    expect(sailor.pieces).toContain('skirt');
+    // And the model's own shorts are off, or she is wearing both.
+    expect(sailor.visible.Bottoms).toBe(false);
+
+    const plain = await page.evaluate(() => {
+      window.__char.setOutfitForTest('original');
+      return window.__char.wardrobeStateForTest();
+    });
+    expect(plain.pieces).toEqual([]);
+    expect(plain.visible.Tops).toBe(true);
+    expect(plain.visible.Bottoms).toBe(true);
+  });
+
+  test('changing who is on stage keeps the costume', async ({ page }) => {
+    test.setTimeout(60000);
+    // The three of them start in different clothes, so an outfit cannot be
+    // carried across as pixels -- it has to be rebuilt against the new model's
+    // own textures. Easy to get wrong in a way that only shows on the swap.
+    await page.evaluate(() => window.__char.setOutfitForTest('bikini'));
+    for (const who of ['b', 'c', 'a']) {
+      const state = await page.evaluate(async (key) => {
+        window.__game.setCharacterForTest(key);
+        return window.__char.wardrobeStateForTest();
+      }, who);
+      expect(state.outfit, `still in the bikini as ${who}`).toBe('bikini');
+      expect(state.bodyPainted, `body repainted for ${who}`).toBe(true);
+    }
+  });
+});
+
 test.describe('places and weather', () => {
   test('every place builds, and swapping leaves one of them behind', async ({ page }) => {
     const scenes = await page.evaluate(() => window.__char.listScenesForTest());

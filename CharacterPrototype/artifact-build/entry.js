@@ -7,6 +7,9 @@ import {
   SCENES, TIMES, sceneByKey, timeByKey, resolveEnv, disposeScenery,
 } from '../src/scenes.js';
 import { createWeather } from '../src/weather.js';
+import { BIRDS, SCENE_BIRD, makeCrab, setWingSpread } from '../src/fauna.js';
+import { OUTFITS, outfitByKey, buildOutfit, outfitIsDressed } from '../src/wardrobe.js';
+import { attachToBone, makeSailorCollar, makePleatedSkirt, makeFrillRing } from '../src/garments.js';
 
 const canvas = document.getElementById('scene');
 const scene = new THREE.Scene();
@@ -213,6 +216,51 @@ function applyDayNight(night) {
   sunGlow.visible = !night;
 }
 
+// ---- Animals ----
+// One set per place: オオルリ in the park, ドバト on the street, ウミネコ and a
+// スナガニ on the beach. Built in src/fauna.js, which is also where the note on
+// why they are not one bird with three palettes lives.
+//
+// All of them are built once at startup and kept hidden; changing scene shows
+// the one that belongs there. They are small and there are four, so building
+// them up front costs less than rebuilding on every scene change would.
+const birdsBySpecies = {};
+for (const [key, make] of Object.entries(BIRDS)) {
+  birdsBySpecies[key] = make();
+  scene.add(birdsBySpecies[key]);
+}
+const crab = makeCrab();
+scene.add(crab);
+
+// Declared up here with the crab rather than down with updateCrab, because
+// applyScene resets them and applyScene runs once while this module is still
+// evaluating.
+let crabActive = false;
+let crabState = 'away';       // 'away' | 'still' | 'running'
+let crabTimer = 0;
+let crabFacing = 0;
+let crabRunFrom = 0;
+let crabRunTo = 0;
+let crabRunT = 0;
+let crabScuttle = 0;
+
+let bird = birdsBySpecies[SCENE_BIRD.park];
+let birdSpecies = SCENE_BIRD.park;
+
+// Swaps in the bird that belongs in this place. The old one goes off stage
+// rather than being left standing in the new one.
+function setBirdSpecies(key) {
+  const wanted = key && birdsBySpecies[key] ? key : SCENE_BIRD.park;
+  if (wanted === birdSpecies) return;
+  const wasVisible = bird.visible;
+  bird.visible = false;
+  birdSpecies = wanted;
+  bird = birdsBySpecies[wanted];
+  bird.visible = wasVisible;
+}
+
+
+
 function applyScene(sceneKey, timeKey) {
   const nextScene = sceneKey ? sceneByKey(sceneKey) : (activeScene || SCENES[0]);
   const nextTime = timeKey ? timeByKey(timeKey) : (activeTime || TIMES[1]);
@@ -220,7 +268,15 @@ function applyScene(sceneKey, timeKey) {
   const timeChanged = !activeTime || activeTime.key !== nextTime.key;
   if (!sceneChanged && !timeChanged) return { scene: activeScene, time: activeTime };
 
-  if (sceneChanged) buildScenery(nextScene);
+  if (sceneChanged) {
+    buildScenery(nextScene);
+    // The place decides the animals: a gull inland or a flycatcher on a
+    // shopping street would be wrong in the way a wrongly-sized bench is.
+    setBirdSpecies(SCENE_BIRD[nextScene.key]);
+    crabActive = nextScene.key === 'beach';
+    crab.visible = false;
+    crabState = 'away';
+  }
 
   activeScene = nextScene;
   activeTime = nextTime;
@@ -340,286 +396,89 @@ function animateSurf() {
   }
 }
 
-// ---- Bird ----
-// A visiting bird, built once and re-used for every visit. What it does and
-// why is down with the scenarios that send it -- see birdCue / updateBird.
+// ---- スナガニ ----
+// The beach's second animal. A ghost crab does not wander: it sits still with
+// its eye stalks up, bolts sideways for half a metre, and stops dead. That
+// stop-start is the whole character of the thing, and a crab that glides
+// around like a bird would be worse than no crab.
 //
-// Built from a lofted body and individual feathers rather than from a stack of
-// spheres. Two earlier attempts were spheres: the first had a real bird's
-// proportions and read as a dart with a beak, and the second answered that by
-// going chibi -- a big round head on a round body -- which was not what was
-// wrong with it. What was wrong was that it was crude. A bird is a tapered
-// body with a real neck, layered flight feathers, a fanned tail and a
-// two-part bill, and none of those are spheres.
-//
-// Everything is procedural because the published artifact is one HTML file
-// with a VRM already inlined and no room for a model download. Procedural does
-// not have to mean primitives.
+// It lives on the wet sand near the waterline, keeps its distance, and picks a
+// new spot when she comes too close -- which is what actually happens when you
+// walk down a beach.
+const CRAB_SHORE_Z = 10.5;    // where the waterline is in the beach scene
+const CRAB_SHY = 1.5;         // how close she can get before it bolts
 
-// Sweeps an ellipse along a spine, one ring of vertices per station, and
-// stitches the rings into a hull. This is what gives the body an actual bird
-// silhouette: chest deepest just behind the shoulder, a waisted neck, a
-// rounded skull, tapering to the tail. Radii are per station and per axis, so
-// the body can be broader than it is deep where a bird's is.
-function loft(stations, segments = 16) {
-  const positions = [];
-  const indices = [];
-  for (const station of stations) {
-    for (let s = 0; s < segments; s++) {
-      const angle = (s / segments) * Math.PI * 2;
-      positions.push(
-        Math.cos(angle) * station.rx,
-        station.y + Math.sin(angle) * station.ry,
-        station.z
-      );
-    }
-  }
-  for (let i = 0; i < stations.length - 1; i++) {
-    for (let s = 0; s < segments; s++) {
-      const a = i * segments + s;
-      const b = i * segments + ((s + 1) % segments);
-      const c = (i + 1) * segments + s;
-      const d = (i + 1) * segments + ((s + 1) % segments);
-      indices.push(a, c, b, b, c, d);
-    }
-  }
-  // Caps, so the ends are closed rather than open pipes.
-  const first = stations[0];
-  const last = stations[stations.length - 1];
-  const frontCap = positions.length / 3;
-  positions.push(0, first.y, first.z);
-  const backCap = positions.length / 3;
-  positions.push(0, last.y, last.z);
-  const base = (stations.length - 1) * segments;
-  for (let s = 0; s < segments; s++) {
-    indices.push(frontCap, (s + 1) % segments, s);
-    indices.push(backCap, base + s, base + ((s + 1) % segments));
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  return geometry;
+function crabPlace() {
+  const near = vrm ? vrm.scene.position : new THREE.Vector3();
+  // On the damp strip, a couple of metres to one side of her.
+  const side = Math.random() < 0.5 ? -1 : 1;
+  crab.position.set(
+    near.x + side * (1.6 + Math.random() * 2.2),
+    0,
+    CRAB_SHORE_Z - 1.2 - Math.random() * 2.4
+  );
+  crabFacing = Math.random() * Math.PI * 2;
+  crab.rotation.y = crabFacing;
 }
 
-// One flight feather: a long tapered blade running out along -Z from its root,
-// cambered along its length and cupped across it. Feathers are what make a
-// wing read as a wing rather than as a fin, and they have to be separate
-// objects so a folded wing can stack them and an open one can spread them.
-function featherGeometry(length, width, tipWidth = width * 0.28) {
-  const SEGMENTS = 7;
-  const positions = [];
-  const indices = [];
-  for (let i = 0; i <= SEGMENTS; i++) {
-    const t = i / SEGMENTS;
-    // Widest a third of the way out, then tapering to a rounded point.
-    const shape = Math.sin(Math.min(1, t * 1.6) * Math.PI * 0.5);
-    const halfWidth = (width * shape * (1 - t) + tipWidth * t) * 0.5;
-    const drop = -t * t * length * 0.16;
-    const cup = -halfWidth * 0.22;
-    positions.push(0, drop, -t * length);
-    positions.push(halfWidth, drop + cup, -t * length);
-    positions.push(-halfWidth, drop + cup, -t * length);
-  }
-  for (let i = 0; i < SEGMENTS; i++) {
-    const a = i * 3;
-    const b = (i + 1) * 3;
-    indices.push(a, b, a + 1, a + 1, b, b + 1);
-    indices.push(a, a + 2, b, a + 2, b + 2, b);
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  return geometry;
-}
+function updateCrab(dt) {
+  if (!crabActive) { crab.visible = false; return; }
+  crabTimer -= dt;
 
-function makeBird() {
-  const group = new THREE.Group();
+  if (crabState === 'away') {
+    if (crabTimer > 0) return;
+    crabPlace();
+    crab.visible = true;
+    crabState = 'still';
+    crabTimer = 1.2 + Math.random() * 2.6;
+    return;
+  }
 
-  // A blue-and-white flycatcher, roughly: deep blue above, pale below, darker
-  // flight feathers. Chosen because the bird has to read at three metres in a
-  // frame that is about somebody else, and blue over white is the strongest
-  // small-bird pattern there is.
-  const backMat = new THREE.MeshStandardMaterial({ color: 0x3d6fb0, roughness: 0.78 });
-  const bellyMat = new THREE.MeshStandardMaterial({ color: 0xf2f1e6, roughness: 0.85 });
-  const flightMat = new THREE.MeshStandardMaterial({
-    color: 0x24447d, roughness: 0.7, side: THREE.DoubleSide,
+  const near = vrm ? vrm.scene.position : new THREE.Vector3();
+  const crowded = crab.position.distanceTo(near) < CRAB_SHY;
+
+  if (crabState === 'still') {
+    // Eye stalks and a bit of a sway: even stopped, it is not a rock.
+    crabScuttle += dt * 2.2;
+    crab.position.y = Math.sin(crabScuttle) * 0.0008;
+    if (crowded || crabTimer <= 0) {
+      // Sideways, always: a crab runs across its own body axis.
+      const away = crowded
+        ? Math.atan2(crab.position.x - near.x, crab.position.z - near.z)
+        : crabFacing + (Math.random() < 0.5 ? Math.PI / 2 : -Math.PI / 2);
+      crabRunFrom = crab.position.x;
+      crabRunTo = crab.position.x + Math.sin(away) * (0.35 + Math.random() * 0.7);
+      crabRunT = 0;
+      crabState = 'running';
+      crabTimer = crowded ? 0.55 : 0.4 + Math.random() * 0.3;
+    }
+    return;
+  }
+
+  // Running: fast, flat, and over quickly.
+  crabRunT += dt / 0.5;
+  if (crabRunT >= 1) {
+    crab.position.x = crabRunTo;
+    crabState = 'still';
+    crabTimer = 1.4 + Math.random() * 3.0;
+    // Now and then it just goes down a hole and is gone for a while.
+    if (Math.random() < 0.22) {
+      crab.visible = false;
+      crabState = 'away';
+      crabTimer = 4 + Math.random() * 7;
+    }
+    return;
+  }
+  const ease = crabRunT * crabRunT * (3 - 2 * crabRunT);
+  crab.position.x = crabRunFrom + (crabRunTo - crabRunFrom) * ease;
+  // The legs work while it runs and are still when it is.
+  crabScuttle += dt * 26;
+  const stride = Math.sin(crabScuttle);
+  crab.userData.legs.forEach((leg, i) => {
+    leg.rotation.x = Math.sin(crabScuttle + i * 1.1) * 0.22;
   });
-  const tipMat = new THREE.MeshStandardMaterial({
-    color: 0x172b52, roughness: 0.7, side: THREE.DoubleSide,
-  });
-  const beakMat = new THREE.MeshStandardMaterial({ color: 0x2b2f38, roughness: 0.45 });
-  const legMat = new THREE.MeshStandardMaterial({ color: 0xb07a41, roughness: 0.65 });
-  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 0.2 });
-  const shineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-
-  // The spine, tail-base to bill-base, in metres and at life size for a
-  // sparrow: about 13cm bill tip to tail tip, a body 4cm across and 5cm deep,
-  // a head under 3cm, a bill barely over 1cm.
-  //
-  // Authored perched rather than flying -- tail low and back, chest carried
-  // forward, head well above the shoulders on a short neck. Two things went
-  // wrong before this: running the spine nearly level made it lie on the grass
-  // like something dropped, and making the body as wide as it is deep turned a
-  // songbird into a wader. A small bird is narrow across and deep through.
-  const BODY = [
-    { z: -0.034, y: 0.004, rx: 0.006, ry: 0.006 },
-    { z: -0.025, y: 0.008, rx: 0.014, ry: 0.015 },
-    { z: -0.013, y: 0.012, rx: 0.019, ry: 0.023 },
-    { z: -0.001, y: 0.016, rx: 0.021, ry: 0.026 },
-    { z: 0.009, y: 0.023, rx: 0.020, ry: 0.025 },
-    { z: 0.014, y: 0.034, rx: 0.016, ry: 0.018 },
-    { z: 0.017, y: 0.045, rx: 0.015, ry: 0.016 },
-    { z: 0.021, y: 0.055, rx: 0.017, ry: 0.017 },
-    { z: 0.030, y: 0.060, rx: 0.016, ry: 0.016 },
-    { z: 0.038, y: 0.059, rx: 0.011, ry: 0.011 },
-    { z: 0.042, y: 0.057, rx: 0.006, ry: 0.006 },
-  ];
-  const body = new THREE.Mesh(loft(BODY, 18), backMat);
-  body.castShadow = true;
-  group.add(body);
-
-  // The pale underside, as a second thinner loft tucked inside the first and
-  // showing through below. Cheaper and better behaved than trying to paint a
-  // two-tone bird with vertex colours across a hull this soft.
-  const UNDER = BODY.slice(1, 9).map((station) => ({
-    z: station.z,
-    y: station.y - station.ry * 0.46,
-    rx: station.rx * 0.80,
-    ry: station.ry * 0.62,
-  }));
-  const belly = new THREE.Mesh(loft(UNDER, 16), bellyMat);
-  group.add(belly);
-
-  // Two mandibles, the upper a little longer and dropping to the tip. A single
-  // cone for a bill is the giveaway that nobody looked at a bird.
-  // Carried level, not drooping. The bill following the head's own downward
-  // taper made it point at the ground, which reads as a wagtail probing for
-  // insects rather than as a bird sitting still.
-  const upperBill = new THREE.Mesh(loft([
-    { z: 0.0405, y: 0.0582, rx: 0.0058, ry: 0.0046 },
-    { z: 0.0465, y: 0.0578, rx: 0.0038, ry: 0.0032 },
-    { z: 0.0515, y: 0.0566, rx: 0.0015, ry: 0.0015 },
-    { z: 0.0540, y: 0.0554, rx: 0.0005, ry: 0.0005 },
-  ], 8), beakMat);
-  group.add(upperBill);
-  const lowerBill = new THREE.Mesh(loft([
-    { z: 0.0405, y: 0.0546, rx: 0.0050, ry: 0.0032 },
-    { z: 0.0460, y: 0.0546, rx: 0.0030, ry: 0.0021 },
-    { z: 0.0505, y: 0.0548, rx: 0.0008, ry: 0.0008 },
-  ], 8), beakMat);
-  group.add(lowerBill);
-
-  for (const side of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.0046, 12, 10), eyeMat);
-    eye.position.set(side * 0.0132, 0.0632, 0.0300);
-    group.add(eye);
-    const shine = new THREE.Mesh(new THREE.SphereGeometry(0.0014, 6, 5), shineMat);
-    shine.position.set(side * 0.0146, 0.0650, 0.0332);
-    group.add(shine);
-  }
-
-  // Wings. Each is a pivot at the shoulder holding a fan of flight feathers
-  // plus a covert over their roots; folded, they stack along the flank and
-  // reach past the tail base, which is what a perched small bird looks like.
-  //
-  // Two nested groups per wing, because the two motions are about different
-  // axes and composing them in one Euler is how the umbrella's ribs ended up
-  // pointing in eight directions. The outer pivot beats up and down about the
-  // fore-aft axis; the inner one swings the feathers from lying along the body
-  // (folded) round to sticking out sideways (spread).
-  const wings = [];
-  for (const side of [-1, 1]) {
-    const pivot = new THREE.Group();
-    pivot.position.set(side * 0.017, 0.030, 0.004);
-    pivot.userData.side = side;
-    const spread = new THREE.Group();
-    pivot.add(spread);
-    pivot.userData.spread = spread;
-
-    const covert = new THREE.Mesh(loft([
-      { z: 0.006, y: 0, rx: 0.005, ry: 0.004 },
-      { z: -0.007, y: -0.005, rx: 0.010, ry: 0.010 },
-      { z: -0.020, y: -0.012, rx: 0.008, ry: 0.007 },
-      { z: -0.030, y: -0.018, rx: 0.003, ry: 0.003 },
-    ], 10), backMat);
-    covert.castShadow = true;
-    spread.add(covert);
-
-    const FEATHERS = 8;
-    for (let i = 0; i < FEATHERS; i++) {
-      const t = i / (FEATHERS - 1);
-      // Innermost short and broad, outermost long and narrow -- the difference
-      // between secondaries and primaries, and the reason a folded wing tapers
-      // to a point rather than ending square.
-      const feather = new THREE.Mesh(
-        featherGeometry(0.028 + t * 0.022, 0.010 - t * 0.003),
-        t > 0.6 ? tipMat : flightMat
-      );
-      feather.position.set(side * (0.001 + t * 0.002), -0.003 - t * 0.006, -0.004 - t * 0.006);
-      // Barely fanned. Splayed wide they stopped being a closed wing and
-      // became a handful of spikes coming out of its side.
-      feather.rotation.set(-0.03 - t * 0.09, side * (0.05 - t * 0.07), side * (0.16 - t * 0.05));
-      feather.castShadow = true;
-      spread.add(feather);
-    }
-    group.add(pivot);
-    wings.push(pivot);
-  }
-
-  // Tail: six feathers fanned from the rump, the outer ones longer and swept
-  // wider, the whole fan angled slightly down.
-  const tail = new THREE.Group();
-  tail.position.set(0, 0.004, -0.032);
-  tail.rotation.x = 0.13;
-  for (let i = 0; i < 6; i++) {
-    const spread = (i - 2.5) / 2.5;
-    const feather = new THREE.Mesh(
-      featherGeometry(0.045 - Math.abs(spread) * 0.004, 0.010),
-      Math.abs(spread) > 0.7 ? tipMat : flightMat
-    );
-    feather.rotation.set(0, spread * 0.11, spread * 0.16);
-    feather.position.set(spread * 0.0035, -Math.abs(spread) * 0.0008, 0);
-    feather.castShadow = true;
-    tail.add(feather);
-  }
-  group.add(tail);
-
-  // Legs: a tarsus and four toes, three forward and one back, which is what a
-  // perching bird has and what makes it look gripped to a surface rather than
-  // balanced on pegs.
-  const legs = [];
-  for (const side of [-1, 1]) {
-    const leg = new THREE.Group();
-    leg.position.set(side * 0.009, -0.008, 0.004);
-    legs.push(leg);
-
-    const tarsus = new THREE.Mesh(new THREE.CylinderGeometry(0.0020, 0.0024, 0.021, 6), legMat);
-    tarsus.position.y = -0.0105;
-    leg.add(tarsus);
-
-    for (const [angle, length] of [[0, 0.011], [0.55, 0.010], [-0.55, 0.010], [Math.PI, 0.008]]) {
-      const toe = new THREE.Mesh(new THREE.CylinderGeometry(0.0013, 0.0009, length, 5), legMat);
-      toe.position.set(Math.sin(angle) * length * 0.45, -0.0215, Math.cos(angle) * length * 0.45);
-      toe.rotation.set(Math.cos(angle) * 1.45, 0, -Math.sin(angle) * 1.45);
-      leg.add(toe);
-    }
-    group.add(leg);
-  }
-
-  group.userData.leftWing = wings[0];
-  group.userData.rightWing = wings[1];
-  group.userData.legs = legs;
-  // Built at life size for a small passerine: about 14cm bill to tail tip,
-  // which is a real bird and also big enough to find on screen at the two or
-  // three metres the ambient layer keeps it at.
-  group.visible = false;
-  return group;
+  crab.position.y = Math.abs(stride) * 0.0016;
 }
-
-const bird = makeBird();
-scene.add(bird);
 
 // ---- Umbrella ----
 // Held in her right hand when it rains. It lives in world space and is placed
@@ -948,6 +807,7 @@ const SCENARIOS = [
   {
     key: 'bird-to-hand',
     episode: 'bird',
+    needsPerch: true,
     beats: [
       { pose: 'look-up', expression: 'Surprised', hold: [1.9, 2.5], cue: { bird: 'sky', travel: 1.8 } },
       { pose: 'reach-out', expression: 'relaxed', hold: [2.7, 3.3], cue: { bird: 'hand', travel: 2.8 } },
@@ -960,6 +820,7 @@ const SCENARIOS = [
   {
     key: 'bird-to-shoulder',
     episode: 'bird',
+    needsPerch: true,
     beats: [
       { pose: 'idle', expression: 'relaxed', hold: [2.8, 3.4], cue: { bird: 'shoulder', travel: 2.9 } },
       { pose: 'idle', expression: 'Surprised', hold: [2.4, 3.0], peak: true, story: '肩に鳥がとまって、びっくりした顔' },
@@ -1191,7 +1052,11 @@ const bodyForward = new THREE.Vector3();
 // The group origin, set so the toes land on the ground rather than the belly.
 // It is the model's foot offset, and it has to move whenever the model does --
 // this was 0.132 when the bird was a stack of spheres scaled to 1.9.
-const BIRD_GROUND_Y = 0.031;
+// How far the group origin sits above the toes. It is a property of the model,
+// so it comes from the model: a gull's belly is three times higher off the sand
+// than a flycatcher's is off the grass, and a single constant put one of them
+// underground.
+const birdGroundY = () => bird.userData.groundY;
 
 const BIRD_ANCHORS = {
   // On the point of the shoulder, not in it. The shoulder *joint* is at the
@@ -1206,7 +1071,7 @@ const BIRD_ANCHORS = {
   ground: () => {
     if (!vrm) return null;
     const forward = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), facing);
-    return vrm.scene.position.clone().addScaledVector(forward, 0.55).setY(BIRD_GROUND_Y);
+    return vrm.scene.position.clone().addScaledVector(forward, 0.55).setY(birdGroundY());
   },
   // Not a perch: somewhere above and to one side, for the beat where she has
   // noticed it but it has not come down yet. Held as an offset from her so it
@@ -1272,7 +1137,7 @@ function birdGroundSpot(minRadius, maxRadius) {
   const radius = minRadius + Math.random() * (maxRadius - minRadius);
   return new THREE.Vector3(
     base.x + Math.sin(angle) * radius,
-    BIRD_GROUND_Y,
+    birdGroundY(),
     base.z + Math.cos(angle) * radius
   );
 }
@@ -1391,7 +1256,7 @@ function updateBirdAmbient(dt) {
     const from = bird.position;
     const angle = Math.random() * Math.PI * 2;
     const distance = randRange(0.1, 0.3);
-    birdSpot.set(from.x + Math.sin(angle) * distance, BIRD_GROUND_Y, from.z + Math.cos(angle) * distance);
+    birdSpot.set(from.x + Math.sin(angle) * distance, birdGroundY(), from.z + Math.cos(angle) * distance);
     birdGoTo('spot', randRange(0.28, 0.42), 0.06);
     // Mid-streak the next hop follows almost at once; the pause comes after.
     birdSettleTime = birdHopsLeft > 0 ? randRange(0.1, 0.28) : randRange(0.9, 2.2);
@@ -1427,7 +1292,10 @@ function updateBird(dt) {
   const shiver = Math.sin(birdFlap * 0.18) * 0.03 * birdWingFold;
   for (const pivot of [bird.userData.leftWing, bird.userData.rightWing]) {
     const side = pivot.userData.side;
-    pivot.userData.spread.rotation.y = -side * (Math.PI / 2) * open;
+    // Folded and open are different geometry, not the same feathers at a
+    // different angle -- a closed wing is a smooth shell and an open one is a
+    // fan, and setWingSpread crosses between them.
+    setWingSpread(pivot, open);
     pivot.rotation.z = side * (beat + shiver + birdWingFold * 0.06);
   }
   // Legs tuck back under the tail in the air. Left dangling they read as a
@@ -1524,9 +1392,30 @@ function beginEpisode(kind) {
 // produce -- which is what stops a brief asking for a double peace sign with
 // a sad face, and what makes firing a burst on a hunch a real skill rather
 // than a bet against a random number.
+// A pigeon does not land on your hand and a gull certainly does not, so the
+// two stories that put the bird on her are only in the bag when the bird of
+// the place is the little one. Filtering here rather than substituting a
+// different anchor at the last moment: the beat text says 手にとまった, and a
+// story whose words do not match what happened is worse than one that never
+// ran.
+function eligibleScenarioKeys() {
+  return SCENARIOS
+    .filter((entry) => !entry.needsPerch || bird.userData.perchOnHer)
+    .map((entry) => entry.key);
+}
+
 function startScenario(key) {
-  if (!scenarioBag) scenarioBag = makeShuffleBag(SCENARIOS.map((entry) => entry.key));
-  const chosen = (key && scenarioByKey(key)) || scenarioByKey(scenarioBag.next());
+  if (!scenarioBag) scenarioBag = makeShuffleBag(eligibleScenarioKeys());
+  let chosen = key && scenarioByKey(key);
+  // The bag may have been filled for the bird of the last place, so a draw can
+  // still come back with a story this one cannot act out. Draw again rather
+  // than rebuilding the bag: rebuilding loses its memory of what has just been
+  // seen, which is the only reason it is a bag and not a coin.
+  for (let i = 0; !chosen && i < 12; i++) {
+    const drawn = scenarioByKey(scenarioBag.next());
+    if (drawn && (!drawn.needsPerch || bird.userData.perchOnHer)) chosen = drawn;
+  }
+  if (!chosen) chosen = scenarioByKey(eligibleScenarioKeys()[0]);
   if (key) scenarioBag.note(chosen.key);
   currentScenario = chosen;
   beginEpisode(chosen.episode);
@@ -1537,7 +1426,7 @@ function startScenario(key) {
 
 function startDirector() {
   directorActive = true;
-  scenarioBag = makeShuffleBag(SCENARIOS.map((entry) => entry.key));
+  scenarioBag = makeShuffleBag(eligibleScenarioKeys());
   startScenario();
 }
 
@@ -1737,6 +1626,159 @@ function loadCharacter(source) {
   });
 }
 
+// ---- Wardrobe ----
+// The model's own garment textures, kept so an outfit can be built from them
+// and so 'そのまま' can put them back. Captured per character at load, because
+// the three of them do not wear the same clothes.
+const originalMaps = new Map();     // character key -> { Body, Tops, Bottoms }
+let outfitKey = 'original';
+
+const SLOT_MATCH = { Body: 'Body_00_SKIN', Tops: 'Tops', Bottoms: 'Bottoms', Shoes: 'Shoes' };
+
+function eachSlotMaterial(target, slot, fn) {
+  const match = SLOT_MATCH[slot];
+  target.scene.traverse((object) => {
+    if (!object.isMesh && !object.isSkinnedMesh) return;
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    let touched = false;
+    for (const m of materials) {
+      if (!m.name || !m.name.includes(match)) continue;
+      fn(m, object);
+      touched = true;
+    }
+    if (touched) fn.mesh && fn.mesh(object);
+  });
+}
+
+function captureOriginalMaps(loaded) {
+  if (originalMaps.has(loaded.key)) return;
+  const maps = {};
+  for (const slot of Object.keys(SLOT_MATCH)) {
+    eachSlotMaterial(loaded.vrm, slot, (m) => {
+      if (!maps[slot] && m.map && m.map.image) maps[slot] = m.map.image;
+    });
+  }
+  originalMaps.set(loaded.key, maps);
+}
+
+// Puts a canvas onto a slot's colour map. Both MToon maps, because the shader
+// draws the lit side from one and the shadow side from the other: setting only
+// the first leaves her wearing the old clothes wherever the sun is not on her.
+function wearCanvas(slot, canvas) {
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.flipY = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  eachSlotMaterial(vrm, slot, (m) => {
+    m.map = texture;
+    if ('shadeMultiplyTexture' in m) m.shadeMultiplyTexture = texture;
+    m.needsUpdate = true;
+  });
+}
+
+function restoreSlot(slot, image) {
+  if (!image) return;
+  const texture = new THREE.Texture(image);
+  texture.flipY = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  eachSlotMaterial(vrm, slot, (m) => {
+    m.map = texture;
+    if ('shadeMultiplyTexture' in m) m.shadeMultiplyTexture = texture;
+    m.needsUpdate = true;
+  });
+}
+
+function setSlotVisible(slot, visible) {
+  const match = SLOT_MATCH[slot];
+  vrm.scene.traverse((object) => {
+    if (!object.isMesh && !object.isSkinnedMesh) return;
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    if (materials.some((m) => m.name && m.name.includes(match))) object.visible = visible;
+  });
+}
+
+// Garment geometry currently hung on the skeleton, so the next outfit can take
+// it off again. Keyed by nothing -- there is only ever one costume on.
+let wornPieces = [];
+
+function clearWornPieces() {
+  for (const piece of wornPieces) {
+    if (piece.parent) piece.parent.remove(piece);
+    piece.traverse((object) => {
+      if (!object.isMesh) return;
+      object.geometry.dispose();
+      if (object.material.dispose) object.material.dispose();
+    });
+  }
+  wornPieces = [];
+}
+
+// Where each kind of garment hangs. A collar rides the upper chest and a skirt
+// the hips, which is what makes them follow her when she moves rather than
+// staying behind in the world like the umbrella does.
+const PIECE_BONE = { collar: 'upperChest', skirt: 'hips', frill: 'hips' };
+
+function wearPieces(outfit) {
+  clearWornPieces();
+  if (!outfit.pieces || !vrm || !vrm.humanoid) return;
+  // Authored against a 1.76m figure; the cast is not all the same height, so
+  // everything scales off whoever is standing there.
+  const size = new THREE.Box3().setFromObject(vrm.scene).getSize(new THREE.Vector3());
+  const scale = size.y / 1.756;
+  for (const spec of outfit.pieces) {
+    const boneName = PIECE_BONE[spec.kind];
+    const bone = vrm.humanoid.getRawBoneNode(boneName);
+    if (!bone) continue;
+    let group = null;
+    if (spec.kind === 'collar') group = makeSailorCollar({ ...spec, scale });
+    else if (spec.kind === 'skirt') group = makePleatedSkirt({ ...spec, scale });
+    else if (spec.kind === 'frill') {
+      const base = outfit.pieces.find((p) => p.kind === 'skirt');
+      group = makeFrillRing({
+        radius: spec.radius !== undefined ? spec.radius
+          : ((base && base.waist !== undefined ? base.waist : 0.118)
+            + (base && base.flare !== undefined ? base.flare : 0.086)),
+        y: spec.y !== undefined ? spec.y : (base && base.hemY !== undefined ? base.hemY : 0.735),
+        ...spec, scale,
+      });
+    }
+    if (!group) continue;
+    // Authored in world metres against her standing upright, so the attach
+    // point is the world origin of the model, not an offset in a bone frame.
+    // Her facing, not the scene node's rotation. The scene node carries the
+    // VRM0 half-turn on top of the facing, so using it put the sailor collar's
+    // back flap across her chest -- which is invisible on a symmetrical skirt
+    // and extremely visible on a collar.
+    attachToBone(bone, group, {
+      position: vrm.scene.position,
+      rotation: new THREE.Euler(0, facing, 0),
+      scale: 1,
+    });
+    wornPieces.push(group);
+  }
+}
+
+function applyOutfit(key) {
+  if (!vrm || !activeCharacter) return outfitKey;
+  const outfit = outfitByKey(key);
+  // An outfit that takes the outer layers off has to bring its own. This is
+  // the one check in here whose failure mode is not a wrong colour.
+  if (!outfitIsDressed(outfit)) return outfitKey;
+  const originals = originalMaps.get(activeCharacter.key) || {};
+  const built = buildOutfit(outfit, originals);
+  for (const slot of ['Body', 'Tops', 'Bottoms', 'Shoes']) {
+    if (built[slot]) wearCanvas(slot, built[slot]);
+    else restoreSlot(slot, originals[slot]);
+    const show = outfit.show ? outfit.show[slot] : undefined;
+    if (show !== undefined) setSlotVisible(slot, show);
+    else if (slot !== 'Body') setSlotVisible(slot, true);
+  }
+  wearPieces(outfit);
+  outfitKey = outfit.key;
+  return outfitKey;
+}
+
 // How dark her shadow side is allowed to go, and how sharply it arrives.
 // VRoid ships MToon set for even, flattering light from any direction: with the
 // stock values her face measures the same brightness whether the sun is behind
@@ -1747,12 +1789,23 @@ const SHADE_DARKEN = 0.62;      // multiplier on the shade colour
 const SHADE_SHIFT = -0.32;      // where the lit/shade boundary sits, -1..1
 const SHADE_TOONY = 0.3;        // how hard the boundary is, 0..1
 
+// Kept so the shade term can be re-applied from the stock colour rather than
+// compounded onto an already-darkened one. Without this, sweeping the value to
+// find it costs a page reload per step.
+const toonMaterials = [];
+
 function deepenToonShading(material) {
   if (!material || !material.isMToonMaterial) return;
-  if (material.shadeColorFactor) material.shadeColorFactor.multiplyScalar(SHADE_DARKEN);
+  if (material.shadeColorFactor) {
+    if (!material.userData.stockShade) {
+      material.userData.stockShade = material.shadeColorFactor.clone();
+    }
+    material.shadeColorFactor.copy(material.userData.stockShade).multiplyScalar(SHADE_DARKEN);
+  }
   material.shadingShiftFactor = SHADE_SHIFT;
   material.shadingToonyFactor = SHADE_TOONY;
   material.needsUpdate = true;
+  if (!toonMaterials.includes(material)) toonMaterials.push(material);
 }
 
 function setUpCharacter(gltf, source) {
@@ -1837,6 +1890,10 @@ function setActiveCharacter(key) {
   vrm.scene.position.copy(state.position);
   vrm.scene.rotation.y = facing + modelYaw;
   if (vrm.lookAt) vrm.lookAt.target = gazeTarget;
+  // She keeps what she was wearing when you swap who is on stage; the three of
+  // them start in different clothes, so the outfit has to be re-applied to the
+  // new model's own textures rather than carried across as pixels.
+  applyOutfit(outfitKey);
 }
 
 // The first character to arrive goes on stage and starts the page; the rest
@@ -1847,6 +1904,7 @@ CHARACTER_SOURCES.forEach((source, index) => {
     cast.push(loaded);
     cast.sort((a, b) => CHARACTER_SOURCES.findIndex((s) => s.key === a.key)
       - CHARACTER_SOURCES.findIndex((s) => s.key === b.key));
+    captureOriginalMaps(loaded);
     if (activeCharacter) {
       if (photoGame) photoGame.castChanged();
       return;
@@ -1865,6 +1923,23 @@ CHARACTER_SOURCES.forEach((source, index) => {
         getCharacter: () => (activeCharacter ? activeCharacter.key : null),
         setCharacter: setActiveCharacter,
         setSun,
+        listOutfits: () => OUTFITS.map((entry) => ({ key: entry.key, label: entry.label })),
+        // Frames her full length in the top part of the screen. The setup
+        // panel is tall enough on a phone to cover everything below her chin,
+        // which is a poor way to present a costume picker. Aiming below her
+        // centre is what lifts her up the frame -- the camera does not move up,
+        // the subject does.
+        showOff: () => {
+          const base = vrm ? vrm.scene.position : new THREE.Vector3();
+          const forward = new THREE.Vector3(0, 0, 1)
+            .applyAxisAngle(new THREE.Vector3(0, 1, 0), facing);
+          lookHeight = 0.10;
+          camera.position.set(base.x + forward.x * 4.0, 0.95, base.z + forward.z * 4.0);
+          controls.target.set(base.x, lookHeight, base.z);
+          controls.update();
+        },
+        setOutfit: (key) => applyOutfit(key),
+        getOutfit: () => outfitKey,
         listScenes: () => SCENES.map((entry) => ({ key: entry.key, label: entry.label })),
         setScene: (key) => applyScene(key, null).scene.key,
         getScene: () => (activeScene ? activeScene.key : null),
@@ -1889,7 +1964,12 @@ CHARACTER_SOURCES.forEach((source, index) => {
         stopBurst,
         burstFrameCount,
         encodeFrame,
-        setDirectorActive: (on) => { if (on) startDirector(); else stopDirector(); },
+        setDirectorActive: (on) => {
+          // Back to eye level for the shoot. The wardrobe framing is a mirror,
+          // not a photograph, and it is the one place a downward tilt is fine.
+          if (on) lookHeight = LOOK_HEIGHT;
+          if (on) startDirector(); else stopDirector();
+        },
         startScenario,
         scenarioPeaks,
       });
@@ -1930,8 +2010,13 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.update();
 
+// What height the follow camera aims at. Normally her chest; the wardrobe
+// view drops it to her feet so she stands full length above the setup panel.
+// Without this, showOff moved the camera and the next frame put it back.
+let lookHeight = LOOK_HEIGHT;
+
 function updateCamera() {
-  controls.target.lerp(state.position.clone().add(new THREE.Vector3(0, LOOK_HEIGHT, 0)), 0.15);
+  controls.target.lerp(state.position.clone().add(new THREE.Vector3(0, lookHeight, 0)), 0.15);
   controls.update();
 }
 
@@ -2729,6 +2814,7 @@ function step(dt) {
   applyWeatherToWorld();
   applyWindToScenery();
   applyWindToSpringBones();
+  updateCrab(dt);
   animateSurf();
   animateWater(dt);
   updateUmbrella(dt);
@@ -3412,6 +3498,19 @@ window.__char = {
     return out;
   },
   setExposureCeilingForTest: (value) => { exposureCeiling = value; },
+  // Re-applies the toon shade term from the stock colour, so how dark her
+  // shadow side goes can be swept without a reload.
+  setShadeForTest: (darken, shift, toony) => {
+    for (const material of toonMaterials) {
+      if (material.shadeColorFactor && material.userData.stockShade) {
+        material.shadeColorFactor.copy(material.userData.stockShade).multiplyScalar(darken);
+      }
+      if (shift !== undefined) material.shadingShiftFactor = shift;
+      if (toony !== undefined) material.shadingToonyFactor = toony;
+      material.needsUpdate = true;
+    }
+    return toonMaterials.length;
+  },
   placeForTest: (x, z) => {
     state.position.set(x, 0, z);
     vrm.scene.position.copy(state.position);
@@ -3467,8 +3566,22 @@ window.__char = {
   scenarioPeaksForTest: () => scenarioPeaks(),
   getBirdStateForTest: () => ({
     state: birdState, visible: bird.visible, owner: birdOwner, anchor: birdAnchor,
-    episode: birdEpisode, wingOpen: 1 - birdWingFold,
+    episode: birdEpisode, wingOpen: 1 - birdWingFold, species: birdSpecies,
     position: { x: bird.position.x, y: bird.position.y, z: bird.position.z },
+  }),
+  // Park the bird on a spot and hold it there, so a screenshot can find it.
+  birdToForTest: (anchor) => {
+    beginEpisode('bird');
+    birdOwner = 'story';
+    // 'spot' is a world point the ambient layer picks; a test asking for it
+    // has to say where, or the bird flies at wherever it was last time.
+    if (anchor === 'spot') birdSpot.copy(birdGroundSpot(0.7, 1.0));
+    birdGoTo(anchor, 1.4);
+    return birdSpecies;
+  },
+  getCrabStateForTest: () => ({
+    active: crabActive, state: crabState, visible: crab.visible,
+    position: { x: crab.position.x, y: crab.position.y, z: crab.position.z },
   }),
   // Lets a test hold her heading still. Only the gaze tests want this: they
   // put the camera at a known angle off her facing, which she would otherwise
@@ -3499,6 +3612,175 @@ window.__char = {
       );
     return { x: offset.x, y: offset.y, z: offset.z };
   },
+  // What she is actually wearing, as the renderer sees it: every mesh, the
+  // materials on it, and the size and slot of each texture. Any costume change
+  // has to work with this, so it is worth being able to look at it.
+  wardrobeForTest: () => {
+    if (!vrm) return [];
+    const out = [];
+    vrm.scene.traverse((object) => {
+      if (!object.isMesh && !object.isSkinnedMesh) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      out.push({
+        mesh: object.name,
+        skinned: !!object.isSkinnedMesh,
+        groups: object.geometry.groups.length,
+        vertices: object.geometry.attributes.position.count,
+        materials: materials.map((m) => ({
+          name: m.name,
+          type: m.type,
+          transparent: !!m.transparent,
+          map: m.map ? `${m.map.image ? m.map.image.width : '?'}x${m.map.image ? m.map.image.height : '?'}` : null,
+          mapName: m.map && m.map.name ? m.map.name : null,
+          color: m.color ? `#${m.color.getHexString()}` : null,
+        })),
+      });
+    });
+    return out;
+  },
+  // Show or hide one of the body mesh's material slots, so a costume change
+  // can take a garment off before putting another on.
+  setGarmentVisibleForTest: (match, visible) => {
+    if (!vrm) return 0;
+    let hit = 0;
+    vrm.scene.traverse((object) => {
+      if (!object.isMesh && !object.isSkinnedMesh) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      if (!materials.some((m) => m.name && m.name.includes(match))) return;
+      object.visible = visible;
+      hit++;
+    });
+    return hit;
+  },
+  // Rasterises a garment's UV triangles, colour-coded by the bone that drives
+  // them, and hands back a data URL. Painting a costume means knowing which
+  // patch of a 768-square texture is the torso and which is a shin, and the
+  // only place that is actually written down is the model.
+  uvAtlasForTest: (match, size = 768) => {
+    if (!vrm) return null;
+    let target = null;
+    vrm.scene.traverse((object) => {
+      if (target || !(object.isMesh || object.isSkinnedMesh)) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      if (materials.some((m) => m.name && m.name.includes(match))) target = object;
+    });
+    if (!target) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#101014'; ctx.fillRect(0, 0, size, size);
+
+    const uv = target.geometry.attributes.uv;
+    const skinIndex = target.geometry.attributes.skinIndex;
+    const skinWeight = target.geometry.attributes.skinWeight;
+    const index = target.geometry.index;
+    const bones = target.skeleton ? target.skeleton.bones : [];
+    // A colour per body region, so the atlas can be read at a glance.
+    const REGION = [
+      [/Hips|Spine/i, '#e0552e', 'hips'],
+      [/Chest|Bust/i, '#e8a33a', 'chest'],
+      [/Neck|Head/i, '#f2e05c', 'head'],
+      [/Shoulder/i, '#7ad46a', 'shoulder'],
+      [/UpperArm/i, '#3fb6a8', 'upper arm'],
+      [/LowerArm/i, '#3f86d0', 'lower arm'],
+      [/Hand|Thumb|Index|Middle|Ring|Little/i, '#8f6ce0', 'hand'],
+      [/UpperLeg/i, '#e05a9a', 'thigh'],
+      [/LowerLeg/i, '#c04040', 'shin'],
+      [/Foot|Toe/i, '#a0a8b4', 'foot'],
+    ];
+    const colourFor = (name) => {
+      for (const [re, colour] of REGION) if (re.test(name)) return colour;
+      return '#4a4a52';
+    };
+    const count = index ? index.count : uv.count;
+    for (let i = 0; i < count; i += 3) {
+      const tri = [0, 1, 2].map((k) => (index ? index.getX(i + k) : i + k));
+      // The bone with the most weight over the triangle names the region.
+      const tally = {};
+      for (const v of tri) {
+        for (let k = 0; k < 4; k++) {
+          const w = skinWeight.getComponent(v, k);
+          if (w <= 0.001) continue;
+          const bone = bones[skinIndex.getComponent(v, k)];
+          if (!bone) continue;
+          tally[bone.name] = (tally[bone.name] || 0) + w;
+        }
+      }
+      let best = null;
+      for (const [name, w] of Object.entries(tally)) if (!best || w > best[1]) best = [name, w];
+      ctx.fillStyle = best ? colourFor(best[0]) : '#4a4a52';
+      ctx.beginPath();
+      tri.forEach((v, k) => {
+        const x = uv.getX(v) * size;
+        // glTF puts v=0 at the top of the image and the loader leaves flipY
+        // off to match, so this is `v * size`, not `(1 - v) * size`. Getting it
+        // the other way round paints the leg texture onto the arms, which is
+        // exactly what it did.
+        const y = uv.getY(v) * size;
+        if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.closePath();
+      ctx.fill();
+    }
+    return { url: canvas.toDataURL('image/png'), legend: REGION.map(([, c, n]) => `${n}=${c}`) };
+  },
+  // Puts a data-URL image onto a garment's colour map. Used to check that a
+  // painted texture lands where it was meant to: UV orientation is the kind of
+  // thing that is either obviously right or obviously wrong on the model, and
+  // arguing about flipY from first principles is how you get a shin on a face.
+  wearTextureForTest: (match, url) => new Promise((resolve) => {
+    if (!vrm) { resolve(0); return; }
+    const image = new Image();
+    image.onload = () => {
+      const texture = new THREE.Texture(image);
+      texture.flipY = false;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.needsUpdate = true;
+      let hit = 0;
+      vrm.scene.traverse((object) => {
+        if (!object.isMesh && !object.isSkinnedMesh) return;
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const m of materials) {
+          if (!m.name || !m.name.includes(match)) continue;
+          // Both maps. MToon draws the lit side from `map` and the shadow side
+          // from `shadeMultiplyTexture`; setting only the first repaints a
+          // figure that goes back to its old clothes wherever the sun is not
+          // on it.
+          m.map = texture;
+          if ('shadeMultiplyTexture' in m) m.shadeMultiplyTexture = texture;
+          m.needsUpdate = true;
+          hit++;
+        }
+      });
+      resolve(hit);
+    };
+    image.onerror = () => resolve(-1);
+    image.src = url;
+  }),
+  setOutfitForTest: (key) => applyOutfit(key),
+  // What she is actually wearing right now, as the renderer sees it, rather
+  // than what the outfit table says she should be. The invariant worth
+  // checking is that the outer layers are never both off without the layer
+  // underneath having been repainted.
+  wardrobeStateForTest: () => {
+    const originals = originalMaps.get(activeCharacter ? activeCharacter.key : '') || {};
+    const visible = {};
+    let bodyPainted = false;
+    for (const slot of Object.keys(SLOT_MATCH)) {
+      eachSlotMaterial(vrm, slot, (m, object) => {
+        if (visible[slot] === undefined) visible[slot] = object.visible;
+        if (slot === 'Body' && m.map && m.map.image !== originals.Body) bodyPainted = true;
+      });
+    }
+    return {
+      outfit: outfitKey,
+      visible,
+      bodyPainted,
+      pieces: wornPieces.map((piece) => piece.userData.garment),
+    };
+  },
+  getOutfitForTest: () => outfitKey,
+  listOutfitsForTest: () => OUTFITS.map((o) => ({ key: o.key, label: o.label })),
   getSpringSettings: () => {
     if (!vrm || !vrm.springBoneManager) return [];
     return [...vrm.springBoneManager.joints].map((joint) => ({

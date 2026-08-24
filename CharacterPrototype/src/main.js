@@ -1915,6 +1915,23 @@ CHARACTER_SOURCES.forEach((source, index) => {
         getCharacter: () => (activeCharacter ? activeCharacter.key : null),
         setCharacter: setActiveCharacter,
         setSun,
+        listOutfits: () => OUTFITS.map((entry) => ({ key: entry.key, label: entry.label })),
+        // Frames her full length in the top part of the screen. The setup
+        // panel is tall enough on a phone to cover everything below her chin,
+        // which is a poor way to present a costume picker. Aiming below her
+        // centre is what lifts her up the frame -- the camera does not move up,
+        // the subject does.
+        showOff: () => {
+          const base = vrm ? vrm.scene.position : new THREE.Vector3();
+          const forward = new THREE.Vector3(0, 0, 1)
+            .applyAxisAngle(new THREE.Vector3(0, 1, 0), facing);
+          lookHeight = 0.10;
+          camera.position.set(base.x + forward.x * 4.0, 0.95, base.z + forward.z * 4.0);
+          controls.target.set(base.x, lookHeight, base.z);
+          controls.update();
+        },
+        setOutfit: (key) => applyOutfit(key),
+        getOutfit: () => outfitKey,
         listScenes: () => SCENES.map((entry) => ({ key: entry.key, label: entry.label })),
         setScene: (key) => applyScene(key, null).scene.key,
         getScene: () => (activeScene ? activeScene.key : null),
@@ -1939,7 +1956,12 @@ CHARACTER_SOURCES.forEach((source, index) => {
         stopBurst,
         burstFrameCount,
         encodeFrame,
-        setDirectorActive: (on) => { if (on) startDirector(); else stopDirector(); },
+        setDirectorActive: (on) => {
+          // Back to eye level for the shoot. The wardrobe framing is a mirror,
+          // not a photograph, and it is the one place a downward tilt is fine.
+          if (on) lookHeight = LOOK_HEIGHT;
+          if (on) startDirector(); else stopDirector();
+        },
         startScenario,
         scenarioPeaks,
       });
@@ -1979,8 +2001,13 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.update();
 
+// What height the follow camera aims at. Normally her chest; the wardrobe
+// view drops it to her feet so she stands full length above the setup panel.
+// Without this, showOff moved the camera and the next frame put it back.
+let lookHeight = LOOK_HEIGHT;
+
 function updateCamera() {
-  controls.target.lerp(state.position.clone().add(new THREE.Vector3(0, LOOK_HEIGHT, 0)), 0.15);
+  controls.target.lerp(state.position.clone().add(new THREE.Vector3(0, lookHeight, 0)), 0.15);
   controls.update();
 }
 
@@ -3722,6 +3749,27 @@ window.__char = {
     image.src = url;
   }),
   setOutfitForTest: (key) => applyOutfit(key),
+  // What she is actually wearing right now, as the renderer sees it, rather
+  // than what the outfit table says she should be. The invariant worth
+  // checking is that the outer layers are never both off without the layer
+  // underneath having been repainted.
+  wardrobeStateForTest: () => {
+    const originals = originalMaps.get(activeCharacter ? activeCharacter.key : '') || {};
+    const visible = {};
+    let bodyPainted = false;
+    for (const slot of Object.keys(SLOT_MATCH)) {
+      eachSlotMaterial(vrm, slot, (m, object) => {
+        if (visible[slot] === undefined) visible[slot] = object.visible;
+        if (slot === 'Body' && m.map && m.map.image !== originals.Body) bodyPainted = true;
+      });
+    }
+    return {
+      outfit: outfitKey,
+      visible,
+      bodyPainted,
+      pieces: wornPieces.map((piece) => piece.userData.garment),
+    };
+  },
   getOutfitForTest: () => outfitKey,
   listOutfitsForTest: () => OUTFITS.map((o) => ({ key: o.key, label: o.label })),
   getSpringSettings: () => {

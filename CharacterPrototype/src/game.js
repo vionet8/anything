@@ -306,6 +306,13 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
 .pg-scenepick { flex-wrap: wrap; }
 .pg-scenepick .pg-burstpick-label { flex: 0 0 100%; margin-bottom: 2px; }
 .pg-scenepick .pg-pick { font-size: 12px; padding: 7px 2px; }
+/* Eight outfits do not fit on one row at a phone width, and squeezing them
+   makes every label wrap to two lines. Three across, which keeps the labels
+   whole. */
+.pg-fitpick .pg-pick { flex: 0 0 calc(33.33% - 4px); font-size: 11px; }
+/* Capped and scrollable. With a cast, a wardrobe, a place and an hour to pick
+   from, the setup panel grew tall enough to hide the subject it is dressing. */
+.pg-panel--setup { max-height: 54vh; overflow-y: auto; }
 .pg-pick { flex: 1; padding: 8px 0; font: inherit; font-size: 13px; font-weight: 600;
   color: #8b93a7; background: #0c0e14; border: 1px solid #2a3040; border-radius: 6px;
   cursor: pointer; }
@@ -421,7 +428,7 @@ export function initPhotoGame(api) {
   }
 
   function renderFree() {
-    const panel = el('div', 'pg-panel');
+    const panel = el('div', 'pg-panel pg-panel--setup');
     panel.append(
       el('p', 'pg-label', '撮影会'),
       el('p', 'pg-count',
@@ -429,6 +436,7 @@ export function initPhotoGame(api) {
         + `前ぶれを見て身構えて、${SHOTS_PER_SESSION}枚撮ってください。`),
     );
     panel.append(renderCastPicker());
+    panel.append(renderOutfitPicker());
     panel.append(renderScenePicker());
     panel.append(renderTimePicker());
     const start = el('button', 'pg-button', '撮影を始める');
@@ -454,6 +462,29 @@ export function initPhotoGame(api) {
       button.dataset.on = String(member.key === current);
       button.addEventListener('click', () => {
         api.setCharacter(member.key);
+        render();
+      });
+      row.append(button);
+    }
+    return row;
+  }
+
+  // What she is wearing. Unlike place and hour there is no 「おまかせ」 here:
+  // a photographer does not turn up and find out what their subject has on,
+  // they agree it beforehand, and a costume changing between shots of the same
+  // session would make the album incoherent.
+  function renderOutfitPicker() {
+    const outfits = api.listOutfits ? api.listOutfits() : [];
+    if (outfits.length < 2) return el('span');
+    const row = el('div', 'pg-burstpick pg-scenepick pg-fitpick');
+    row.append(el('span', 'pg-burstpick-label', '衣装'));
+    const current = api.getOutfit ? api.getOutfit() : null;
+    for (const option of outfits) {
+      const button = el('button', 'pg-pick', option.label);
+      button.dataset.on = String(option.key === current);
+      button.addEventListener('click', () => {
+        api.setOutfit(option.key);
+        if (api.showOff) api.showOff();
         render();
       });
       row.append(button);

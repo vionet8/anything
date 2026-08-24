@@ -99,6 +99,21 @@ const loader = new GLTFLoader();`,
     "from '../src/weather.js'",
   ],
   [
+    'the generated entry sits beside the bundle, not beside its source (fauna)',
+    "from './fauna.js'",
+    "from '../src/fauna.js'",
+  ],
+  [
+    'the generated entry sits beside the bundle, not beside its source (wardrobe)',
+    "from './wardrobe.js'",
+    "from '../src/wardrobe.js'",
+  ],
+  [
+    'the generated entry sits beside the bundle, not beside its source (garments)',
+    "from './garments.js'",
+    "from '../src/garments.js'",
+  ],
+  [
     'clear the loading overlay on success',
     "    window.__char.ready = true;\n",
     "    window.__char.ready = true;\n    if (loadingEl) loadingEl.style.display = 'none';\n",
