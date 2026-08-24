@@ -14,31 +14,38 @@
 // offsets in some bone's rotated local frame that mean nothing on their own.
 import * as THREE from 'three';
 
-// The torso, as an ellipse per height, measured off the avatar's skin mesh
-// with window.__char.bodyProfileForTest rather than guessed. One profile,
-// shared by everything that lies on the body: the collar used to carry its own
-// and it was far too small -- half-depth 56mm at the chest against the shirt's
-// 104mm -- so the collar's front bands were built three centimetres inside the
-// blouse they were meant to sit on, and only the top of them poked out, which
-// read as a bow tie stuck to her collarbone.
+// The torso, as an ellipse per height.
 //
-// She is markedly wider than she is deep, so this cannot collapse to a radius.
+// Measured off the avatar's skin mesh with window.__char.bodyProfileForTest,
+// which picks torso vertices by the bone that drives them -- taking every skin
+// vertex at a height sweeps in the arms and hands and gives you her whole
+// silhouette instead of her ribcage.
+//
+// THE TRAP, and it cost several rounds: these numbers are in the *reference*
+// frame of a 1.756m figure, and the measurements come out in the frame of
+// whoever is standing there. attachToBone scales the finished garment by
+// height/1.756, so a measurement taken on a 1.613m character has to be divided
+// by 0.9185 before it goes in this table. Putting the raw measurement in mixes
+// the two frames, and everything lands about eight per cent low and eight per
+// cent small: the shirt's neckline sat at her chest with the camisole showing
+// above it, the collar hung eleven centimetres below her neck, and the bust
+// poked through the front. One conversion explains all three.
 const TORSO = [
-  { y: 0.945, rx: 0.118, rz: 0.096 },   // hip, where a tucked-in shirt ends
-  { y: 1.005, rx: 0.114, rz: 0.092 },
-  { y: 1.070, rx: 0.110, rz: 0.090 },   // waist
-  { y: 1.130, rx: 0.113, rz: 0.098 },
-  { y: 1.190, rx: 0.117, rz: 0.104 },   // chest
-  { y: 1.240, rx: 0.124, rz: 0.100 },   // shoulders, the widest point
-  { y: 1.272, rx: 0.108, rz: 0.086 },
-  { y: 1.286, rx: 0.050, rz: 0.048 },   // neck hole
+  { y: 1.023, rx: 0.123, rz: 0.113 },   // hip, where a tucked-in shirt ends
+  { y: 1.089, rx: 0.103, rz: 0.109 },   // waist, the narrowest
+  { y: 1.154, rx: 0.102, rz: 0.110 },
+  { y: 1.219, rx: 0.114, rz: 0.123 },
+  { y: 1.252, rx: 0.126, rz: 0.145 },   // bust -- deeper than she is wide here
+  { y: 1.300, rx: 0.112, rz: 0.118 },
+  { y: 1.340, rx: 0.078, rz: 0.082 },   // coming in towards the shoulders
+  { y: 1.378, rx: 0.050, rz: 0.056 },   // neck hole
 ];
 
 // How far a shirt hangs off the body: closer at the shoulders, where it is
 // held up, further below. A constant offset reads as shrink-wrap.
 function shirtLift(y) {
   const t = THREE.MathUtils.clamp((y - TORSO[0].y) / (TORSO[TORSO.length - 1].y - TORSO[0].y), 0, 1);
-  return 0.013 + (1 - t) * 0.009;
+  return 0.010 + (1 - t) * 0.006;
 }
 
 // The torso surface at any height, with `extra` added for a layer that goes
@@ -94,7 +101,7 @@ export function attachToBone(bone, group, { position, rotation, scale = 1 }) {
 // height, and these stations come from it. A shirt is not a cylinder: she is
 // nearly twice as wide as she is deep at the waist and squarer at the chest.
 export function makeBlouse({
-  cloth = 0xf6f7f9, hemY = 0.945, neckY = 1.286, sleeve = 0.15, sleeveCloth = null,
+  cloth = 0xf6f7f9, hemY = 1.023, neckY = 1.378, sleeve = 0.15, sleeveCloth = null,
 } = {}) {
   const group = new THREE.Group();
   const material = new THREE.MeshStandardMaterial({
@@ -179,8 +186,8 @@ export function makeSailorCollar({
     color: stripe, roughness: 0.84, side: THREE.DoubleSide,
   });
 
-  const NECK_Y = 1.272;
-  const BACK_HEM = 1.058;
+  const NECK_Y = 1.372;
+  const BACK_HEM = 1.190;
   // Clear of the *outer* garment, not the skin. The first value here was 12mm,
   // measured off the torso, and the collar came out entirely inside a chunky
   // cardigan -- visible in the render as nothing at all.
@@ -254,7 +261,7 @@ export function makeSailorCollar({
   // thin edges it reads as the collar's trim wherever it lands. The real fix is
   // for a sailor uniform to replace the top rather than lie over it, which
   // means building the shirt as well.
-  const V_Y = 1.104;
+  const V_Y = 1.235;
   for (const [from, to] of [[0.952, 0.982], [0.018, 0.048]]) {
     group.add(build(stripeMat, from, to, NECK_Y, V_Y, 0.0, FRONT_LIFT));
   }
@@ -262,13 +269,13 @@ export function makeSailorCollar({
   // The neckerchief: a small triangle hanging at the base of the V.
   const scarf = new THREE.Mesh(new THREE.BufferGeometry(), stripeMat);
   {
-    const body = torsoAt(1.12, FRONT_LIFT);
+    const body = torsoAt(1.24, FRONT_LIFT);
     const w = 0.026 * scale;
     const front = body.rz + 0.004;
     const positions = [
-      -w, 1.110, front,
-      w, 1.110, front,
-      0, 1.012, front + 0.012 * scale,
+      -w, 1.240, front,
+      w, 1.240, front,
+      0, 1.130, front + 0.012 * scale,
     ];
     scarf.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     scarf.geometry.computeVertexNormals();
@@ -281,8 +288,8 @@ export function makeSailorCollar({
     new THREE.SphereGeometry(0.011 * scale, 10, 8),
     new THREE.MeshStandardMaterial({ color: stripe, roughness: 0.8 })
   );
-  const at = torsoAt(1.112, FRONT_LIFT);
-  knot.position.set(0, 1.112, at.rz + 0.006);
+  const at = torsoAt(1.243, FRONT_LIFT);
+  knot.position.set(0, 1.243, at.rz + 0.006);
   knot.scale.set(1.4, 0.8, 0.6);
   group.add(knot);
 

@@ -310,6 +310,15 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
    makes every label wrap to two lines. Three across, which keeps the labels
    whole. */
 .pg-fitpick .pg-pick { flex: 0 0 calc(33.33% - 4px); font-size: 11px; }
+.pg-briefhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pg-briefhead .pg-label { margin: 0; }
+.pg-fold {
+  font: inherit; font-size: 11px; letter-spacing: 0.04em;
+  color: var(--pg-dim, #8b93a7); background: transparent;
+  border: 1px solid currentColor; border-radius: 999px;
+  padding: 3px 12px; cursor: pointer; flex: 0 0 auto;
+}
+.pg-fold:hover { color: var(--pg-text, #e8ebf2); }
 /* Capped and scrollable. With a cast, a wardrobe, a place and an hour to pick
    from, the setup panel grew tall enough to hide the subject it is dressing. */
 .pg-panel--setup { max-height: 54vh; overflow-y: auto; }
@@ -544,22 +553,39 @@ export function initPhotoGame(api) {
   function renderShooting() {
     const panel = el('div', 'pg-panel');
     const described = describeRequest(session.request);
-    panel.append(el('p', 'pg-label', 'お題'));
 
-    // The story line, above the chips. The chips say what has to be true of
-    // the photograph; this says what is about to happen, which is the part
-    // you watch for.
-    if (described.story) panel.append(el('p', 'pg-story', described.story));
+    // The brief folds away. Once you know what you are waiting for it stops
+    // being information and starts being something between you and the
+    // subject -- and on a phone it covers the part of the frame she is
+    // standing in. Folded, it leaves the shot count and the exposure, which
+    // are the two things you still need while shooting.
+    const head = el('div', 'pg-briefhead');
+    head.append(el('span', 'pg-label', 'お題'));
+    const fold = el('button', 'pg-fold', session.briefHidden ? '見る' : '隠す');
+    fold.setAttribute('aria-expanded', String(!session.briefHidden));
+    fold.addEventListener('click', () => {
+      session.briefHidden = !session.briefHidden;
+      render();
+    });
+    head.append(fold);
+    panel.append(head);
 
-    const brief = el('div', 'pg-brief');
-    for (const entry of [described.pose, described.expression, described.framing, described.light]) {
-      if (!entry) continue;
-      const node = el('span', 'pg-chip',
-        `${entry.label}${entry.hint ? `<small>${entry.hint}</small>` : ''}`);
-      node.dataset.ok = 'false';
-      brief.append(node);
+    if (!session.briefHidden) {
+      // The story line, above the chips. The chips say what has to be true of
+      // the photograph; this says what is about to happen, which is the part
+      // you watch for.
+      if (described.story) panel.append(el('p', 'pg-story', described.story));
+
+      const brief = el('div', 'pg-brief');
+      for (const entry of [described.pose, described.expression, described.framing, described.light]) {
+        if (!entry) continue;
+        const node = el('span', 'pg-chip',
+          `${entry.label}${entry.hint ? `<small>${entry.hint}</small>` : ''}`);
+        node.dataset.ok = 'false';
+        brief.append(node);
+      }
+      panel.append(brief);
     }
-    panel.append(brief);
     panel.append(el('p', 'pg-count', `${session.shots.length + 1} / ${SHOTS_PER_SESSION} 枚目`));
     panel.append(renderExposure());
     // Inside the panel rather than floating above the shutter: on a phone in

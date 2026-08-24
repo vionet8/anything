@@ -1769,8 +1769,10 @@ function wearPieces(outfit) {
         const arm = makeSleeve({
           cloth: group.userData.sleeveCloth,
           length: group.userData.sleeve * scale,
-          top: 0.062 * scale,
-          bottom: 0.054 * scale,
+          // Her upper arm measures 42mm in the radius, so a sleeve is about
+          // 48. The first pass guessed 62 and gave her deltoids.
+          top: 0.050 * scale,
+          bottom: 0.045 * scale,
         });
         // Aimed at the elbow. A sleeve built down its own -Y and parented to
         // the bone assumes the bone points that way, and a VRM arm bone does
@@ -3815,12 +3817,88 @@ window.__char = {
   bodyProfileForTest: (heights) => {
     if (!vrm) return [];
     const points = [];
+    // Torso vertices only, chosen by the bone that actually drives them. Taking
+    // every skin vertex at a height sweeps in the arms and the hands, and the
+    // profile that came back from that was her whole silhouette, not her
+    // ribcage -- which is how a shirt got built eighteen millimetres inside
+    // her bust and clipped through it.
+    const TORSO_BONE = /Hips|Spine|Chest|Bust|Neck/i;
     vrm.scene.traverse((object) => {
       if (!object.isSkinnedMesh) return;
       const materials = Array.isArray(object.material) ? object.material : [object.material];
       if (!materials.some((m) => m.name && m.name.includes('Body_00_SKIN'))) return;
       const pos = object.geometry.attributes.position;
+      const skinIndex = object.geometry.attributes.skinIndex;
+      const skinWeight = object.geometry.attributes.skinWeight;
+      const bones = object.skeleton ? object.skeleton.bones : [];
+      const index = object.geometry.index;
       const v = new THREE.Vector3();
+      const seen = new Set();
+      const count = index ? index.count : pos.count;
+      for (let i = 0; i < count; i++) {
+        const vi = index ? index.getX(i) : i;
+        if (seen.has(vi)) continue;
+        seen.add(vi);
+        let best = null;
+        for (let k = 0; k < 4; k++) {
+          const w = skinWeight.getComponent(vi, k);
+          if (w <= 0.001) continue;
+          const bone = bones[skinIndex.getComponent(vi, k)];
+          if (bone && (!best || w > best.w)) best = { name: bone.name, w };
+        }
+        if (!best || !TORSO_BONE.test(best.name)) continue;
+        v.fromBufferAttribute(pos, vi);
+        object.localToWorld(v);
+        points.push([v.x, v.y, v.z]);
+      }
+    });
+    const base = vrm.scene.position;
+    // A high percentile, not the maximum. One stray vertex -- a fingertip
+    // hanging beside her hip, a deltoid caught by a chest weight -- sets the
+    // maximum, and a profile built from maxima came out as a barrel.
+    const pick = (values, q) => {
+      if (!values.length) return 0;
+      values.sort((a, b) => a - b);
+      return values[Math.min(values.length - 1, Math.floor(values.length * q))];
+    };
+    return heights.map((y) => {
+      const xs = []; const zs = [];
+      for (const [px, py, pz] of points) {
+        if (Math.abs(py - y) > 0.015) continue;
+        xs.push(Math.abs(px - base.x));
+        zs.push(Math.abs(pz - base.z));
+      }
+      return {
+        y,
+        rx: +pick(xs, 0.9).toFixed(4),
+        rz: +pick(zs, 0.9).toFixed(4),
+        samples: xs.length,
+      };
+    });
+  },
+  // The radius of a limb around its bone, from the skin mesh. A sleeve built
+  // on a guessed number came out two and a half times too wide, which put
+  // deltoids on her.
+  limbRadiusForTest: (boneName, childName) => {
+    if (!vrm || !vrm.humanoid) return null;
+    const bone = vrm.humanoid.getRawBoneNode(boneName);
+    const child = childName ? vrm.humanoid.getRawBoneNode(childName) : null;
+    if (!bone) return null;
+    bone.updateWorldMatrix(true, false);
+    const origin = new THREE.Vector3().setFromMatrixPosition(bone.matrixWorld);
+    let axis = new THREE.Vector3(0, -1, 0);
+    if (child) {
+      child.updateWorldMatrix(true, false);
+      axis = new THREE.Vector3().setFromMatrixPosition(child.matrixWorld).sub(origin).normalize();
+    }
+    const out = [];
+    const v = new THREE.Vector3();
+    const rel = new THREE.Vector3();
+    vrm.scene.traverse((object) => {
+      if (!object.isSkinnedMesh) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      if (!materials.some((m) => m.name && m.name.includes('Body_00_SKIN'))) return;
+      const pos = object.geometry.attributes.position;
       const index = object.geometry.index;
       const seen = new Set();
       const count = index ? index.count : pos.count;
@@ -3830,20 +3908,24 @@ window.__char = {
         seen.add(vi);
         v.fromBufferAttribute(pos, vi);
         object.localToWorld(v);
-        points.push([v.x, v.y, v.z]);
+        rel.copy(v).sub(origin);
+        const along = rel.dot(axis);
+        if (along < 0.02 || along > 0.12) continue;   // a slab down the limb
+        // And close to the bone. Without this the torso projects onto the arm
+        // axis too and the median comes back as 20cm, which is her, not her arm.
+        const r = rel.addScaledVector(axis, -along).length();
+        if (r > 0.075) continue;
+        out.push(r);
       }
     });
-    const base = vrm.scene.position;
-    return heights.map((y) => {
-      let rx = 0; let rz = 0; let n = 0;
-      for (const [px, py, pz] of points) {
-        if (Math.abs(py - y) > 0.012) continue;
-        rx = Math.max(rx, Math.abs(px - base.x));
-        rz = Math.max(rz, Math.abs(pz - base.z));
-        n++;
-      }
-      return { y, rx: +rx.toFixed(4), rz: +rz.toFixed(4), samples: n };
-    });
+    if (!out.length) return null;
+    out.sort((a, b) => a - b);
+    return {
+      samples: out.length,
+      median: +out[Math.floor(out.length / 2)].toFixed(4),
+      p90: +out[Math.floor(out.length * 0.9)].toFixed(4),
+      max: +out[out.length - 1].toFixed(4),
+    };
   },
   getSpringSettings: () => {
     if (!vrm || !vrm.springBoneManager) return [];
