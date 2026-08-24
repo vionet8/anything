@@ -361,7 +361,14 @@ test('a held expression key overrides the expression the pose would wear', async
   const smiling = await page.evaluate(() => window.__char.getState());
 
   await page.keyboard.down('Digit4'); // scowl through it
-  await page.waitForTimeout(400);
+  // Waited on rather than slept through. The weight eases towards 1 a step per
+  // rendered frame, and this renderer draws a few a second, so a fixed 400ms
+  // lands on whichever step it lands on -- exactly 0.9, on the run that
+  // failed, against an assertion of more than 0.9. What is under test is which
+  // expression wins, not how many frames it took to get there.
+  await page.waitForFunction(
+    () => window.__char.getState().expressionWeight > 0.92, null, { timeout: 15000 }
+  );
   const scowling = await page.evaluate(() => window.__char.getState());
 
   await page.keyboard.up('Digit4');
