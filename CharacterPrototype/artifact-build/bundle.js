@@ -36795,16 +36795,18 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     {
       key: "blazer",
       label: "\u5236\u670D\uFF08\u30D6\u30EC\u30B6\u30FC\uFF09",
-      show: { Tops: true, Bottoms: false },
-      tops: { colour: "#2b3350", gamma: 0.86 },
-      pieces: [{ kind: "skirt", cloth: 3752028 }]
+      show: { Tops: false, Bottoms: false },
+      pieces: [
+        { kind: "blouse", cloth: 2831184, sleeve: 0.3 },
+        { kind: "skirt", cloth: 3752028 }
+      ]
     },
     {
       key: "sailor",
       label: "\u5236\u670D\uFF08\u30BB\u30FC\u30E9\u30FC\uFF09",
-      show: { Tops: true, Bottoms: false },
-      tops: { colour: "#f3f4f6", gamma: 1.15 },
+      show: { Tops: false, Bottoms: false },
       pieces: [
+        { kind: "blouse", cloth: 16185337, sleeve: 0.16 },
         { kind: "collar", cloth: 16185337, stripe: 2568527 },
         { kind: "skirt", cloth: 2568527 }
       ]
@@ -36826,9 +36828,9 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     {
       key: "idol",
       label: "\u30A2\u30A4\u30C9\u30EB",
-      show: { Tops: true, Bottoms: false },
-      tops: { colour: "#f7f2ff", gamma: 1.15 },
+      show: { Tops: false, Bottoms: false },
       pieces: [
+        { kind: "blouse", cloth: 16643839, sleeve: 0.13 },
         { kind: "skirt", cloth: 8146872, flare: 0.11, pleats: 28 },
         { kind: "frill", cloth: 16642805, drop: 0.044, scallops: 26 },
         { kind: "collar", cloth: 16642805, stripe: 8146872 }
@@ -36869,16 +36871,53 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     return out;
   }
   function outfitIsDressed(outfit) {
-    const bare = outfit.show && outfit.show.Tops === false && outfit.show.Bottoms === false;
-    return !bare || !!(outfit.body && BODY_PAINTERS[outfit.body]);
+    const show = outfit.show || {};
+    const pieces = outfit.pieces || [];
+    const has = (kind) => pieces.some((piece) => piece.kind === kind);
+    const topOff = show.Tops === false;
+    const bottomOff = show.Bottoms === false;
+    if (!topOff && !bottomOff) return true;
+    if (outfit.body && BODY_PAINTERS[outfit.body]) return true;
+    return (!topOff || has("blouse")) && (!bottomOff || has("skirt"));
   }
 
   // src/garments.js
-  function torsoAt(y, scale = 1) {
-    const t = MathUtils.clamp((y - 0.95) / 0.33, 0, 1);
-    const rx = (0.108 - t * 0.036) * scale;
-    const rz = (0.076 - t * 0.026) * scale;
-    return { rx, rz };
+  var TORSO = [
+    { y: 0.945, rx: 0.118, rz: 0.096 },
+    // hip, where a tucked-in shirt ends
+    { y: 1.005, rx: 0.114, rz: 0.092 },
+    { y: 1.07, rx: 0.11, rz: 0.09 },
+    // waist
+    { y: 1.13, rx: 0.113, rz: 0.098 },
+    { y: 1.19, rx: 0.117, rz: 0.104 },
+    // chest
+    { y: 1.24, rx: 0.124, rz: 0.1 },
+    // shoulders, the widest point
+    { y: 1.272, rx: 0.108, rz: 0.086 },
+    { y: 1.286, rx: 0.05, rz: 0.048 }
+    // neck hole
+  ];
+  function shirtLift(y) {
+    const t = MathUtils.clamp((y - TORSO[0].y) / (TORSO[TORSO.length - 1].y - TORSO[0].y), 0, 1);
+    return 0.013 + (1 - t) * 9e-3;
+  }
+  function torsoAt(y, extra = 0) {
+    let lo = TORSO[0];
+    let hi = TORSO[TORSO.length - 1];
+    for (let i = 0; i < TORSO.length - 1; i++) {
+      if (y >= TORSO[i].y && y <= TORSO[i + 1].y) {
+        lo = TORSO[i];
+        hi = TORSO[i + 1];
+        break;
+      }
+    }
+    const span = hi.y - lo.y;
+    const t = span > 1e-6 ? MathUtils.clamp((y - lo.y) / span, 0, 1) : 0;
+    const off = shirtLift(y) + extra;
+    return {
+      rx: lo.rx + (hi.rx - lo.rx) * t + off,
+      rz: lo.rz + (hi.rz - lo.rz) * t + off
+    };
   }
   function attachToBone(bone, group, { position, rotation, scale = 1 }) {
     bone.updateWorldMatrix(true, false);
@@ -36892,6 +36931,72 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     group.matrix.decompose(group.position, group.quaternion, group.scale);
     group.matrixAutoUpdate = true;
     bone.add(group);
+    return group;
+  }
+  function makeBlouse({
+    cloth = 16185337,
+    hemY = 0.945,
+    neckY = 1.286,
+    sleeve = 0.15,
+    sleeveCloth = null
+  } = {}) {
+    const group = new Group();
+    const material = new MeshStandardMaterial({
+      color: cloth,
+      roughness: 0.87,
+      side: DoubleSide
+    });
+    const STATIONS = TORSO;
+    const COLS = 26;
+    const positions = [];
+    const indices = [];
+    for (const station of STATIONS) {
+      const at = torsoAt(station.y);
+      for (let c = 0; c <= COLS; c++) {
+        const angle = c / COLS * Math.PI * 2;
+        positions.push(Math.sin(angle) * at.rx, station.y, Math.cos(angle) * at.rz);
+      }
+    }
+    for (let r = 0; r < STATIONS.length - 1; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const a = r * (COLS + 1) + c;
+        const b = a + 1;
+        const d = a + COLS + 1;
+        const e = d + 1;
+        indices.push(a, d, b, b, d, e);
+      }
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const shell = new Mesh(geometry, material);
+    shell.castShadow = true;
+    shell.receiveShadow = true;
+    group.add(shell);
+    group.userData.garment = "blouse";
+    group.userData.sleeve = sleeve;
+    group.userData.sleeveCloth = sleeveCloth === null ? cloth : sleeveCloth;
+    group.userData.stations = STATIONS;
+    return group;
+  }
+  function makeSleeve({ cloth = 16185337, length = 0.15, top = 0.062, bottom = 0.054 } = {}) {
+    const group = new Group();
+    const material = new MeshStandardMaterial({
+      color: cloth,
+      roughness: 0.87,
+      side: DoubleSide
+    });
+    const tube = new Mesh(
+      new CylinderGeometry(top, bottom, length, 18, 1, true),
+      material
+    );
+    tube.position.y = -length / 2;
+    tube.castShadow = true;
+    group.add(tube);
+    const cap = new Mesh(new SphereGeometry(top, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), material);
+    group.add(cap);
+    group.userData.garment = "sleeve";
     return group;
   }
   function makeSailorCollar({
@@ -36911,8 +37016,8 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       side: DoubleSide
     });
     const NECK_Y = 1.272;
-    const BACK_HEM = 1.098;
-    const LIFT = 0.044 * scale;
+    const BACK_HEM = 1.058;
+    const LIFT = 0.01 * scale;
     const COLS = 15;
     const ROWS = 9;
     const build = (material, uFrom, uTo, topY, bottomY, widen, lift = LIFT) => {
@@ -36921,15 +37026,15 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       for (let r = 0; r <= ROWS; r++) {
         const v = r / ROWS;
         const y = topY + (bottomY - topY) * v;
-        const body = torsoAt(y, scale);
+        const body = torsoAt(y, lift);
         const grow = 1 + widen * v;
         for (let c = 0; c <= COLS; c++) {
           const u = uFrom + (uTo - uFrom) * (c / COLS);
           const angle = u * Math.PI * 2;
           positions.push(
-            Math.sin(angle) * (body.rx * grow + lift),
+            Math.sin(angle) * body.rx * grow,
             y,
-            Math.cos(angle) * (body.rz * grow + lift)
+            Math.cos(angle) * body.rz * grow
           );
         }
       }
@@ -36950,29 +37055,31 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       mesh.castShadow = true;
       return mesh;
     };
-    group.add(build(stripeMat, 0.235, 0.765, NECK_Y, BACK_HEM, 0.3));
-    const trim = build(clothMat, 0.255, 0.745, NECK_Y + 2e-3, BACK_HEM - 0.026, 0.26);
+    group.add(build(stripeMat, 0.235, 0.765, NECK_Y, BACK_HEM, 0.16));
+    const trim = build(clothMat, 0.255, 0.745, NECK_Y + 2e-3, BACK_HEM - 0.026, 0.14);
     trim.scale.multiplyScalar(1);
     group.add(trim);
-    group.add(build(stripeMat, 0.272, 0.728, NECK_Y + 4e-3, BACK_HEM - 0.044, 0.22));
-    const FRONT_LIFT = LIFT * 1.9;
-    for (const [from, to] of [[0.938, 0.972], [0.028, 0.062]]) {
-      group.add(build(stripeMat, from, to, NECK_Y, 1.132, 0, FRONT_LIFT));
+    group.add(build(stripeMat, 0.272, 0.728, NECK_Y + 4e-3, BACK_HEM - 0.044, 0.12));
+    const FRONT_LIFT = LIFT * 1.5;
+    const V_Y = 1.104;
+    for (const [from, to] of [[0.952, 0.982], [0.018, 0.048]]) {
+      group.add(build(stripeMat, from, to, NECK_Y, V_Y, 0, FRONT_LIFT));
     }
     const scarf = new Mesh(new BufferGeometry(), stripeMat);
     {
-      const body = torsoAt(1.17, scale);
-      const w = 0.032 * scale;
+      const body = torsoAt(1.12, FRONT_LIFT);
+      const w = 0.026 * scale;
+      const front = body.rz + 4e-3;
       const positions = [
         -w,
-        1.196,
-        body.rz + FRONT_LIFT + 6e-3,
+        1.11,
+        front,
         w,
-        1.196,
-        body.rz + FRONT_LIFT + 6e-3,
+        1.11,
+        front,
         0,
-        1.108,
-        body.rz + FRONT_LIFT + 0.016
+        1.012,
+        front + 0.012 * scale
       ];
       scarf.geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
       scarf.geometry.computeVertexNormals();
@@ -36980,12 +37087,12 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     scarf.castShadow = true;
     group.add(scarf);
     const knot = new Mesh(
-      new SphereGeometry(0.017 * scale, 10, 8),
+      new SphereGeometry(0.011 * scale, 10, 8),
       new MeshStandardMaterial({ color: stripe, roughness: 0.8 })
     );
-    const at = torsoAt(1.192, scale);
-    knot.position.set(0, 1.192, at.rz + FRONT_LIFT + 0.01);
-    knot.scale.set(1.5, 0.85, 0.7);
+    const at = torsoAt(1.112, FRONT_LIFT);
+    knot.position.set(0, 1.112, at.rz + 6e-3);
+    knot.scale.set(1.4, 0.8, 0.6);
     group.add(knot);
     group.userData.garment = "collar";
     return group;
@@ -38324,7 +38431,7 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     }
     wornPieces = [];
   }
-  var PIECE_BONE = { collar: "upperChest", skirt: "hips", frill: "hips" };
+  var PIECE_BONE = { collar: "upperChest", skirt: "hips", frill: "hips", blouse: "chest" };
   function wearPieces(outfit) {
     clearWornPieces();
     if (!outfit.pieces || !vrm || !vrm.humanoid) return;
@@ -38335,24 +38442,44 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
       const bone = vrm.humanoid.getRawBoneNode(boneName);
       if (!bone) continue;
       let group = null;
-      if (spec.kind === "collar") group = makeSailorCollar({ ...spec, scale });
-      else if (spec.kind === "skirt") group = makePleatedSkirt({ ...spec, scale });
+      if (spec.kind === "collar") group = makeSailorCollar({ ...spec });
+      else if (spec.kind === "blouse") group = makeBlouse({ ...spec });
+      else if (spec.kind === "skirt") group = makePleatedSkirt({ ...spec });
       else if (spec.kind === "frill") {
         const base = outfit.pieces.find((p) => p.kind === "skirt");
         group = makeFrillRing({
           radius: spec.radius !== void 0 ? spec.radius : (base && base.waist !== void 0 ? base.waist : 0.118) + (base && base.flare !== void 0 ? base.flare : 0.086),
           y: spec.y !== void 0 ? spec.y : base && base.hemY !== void 0 ? base.hemY : 0.735,
-          ...spec,
-          scale
+          ...spec
         });
       }
       if (!group) continue;
       attachToBone(bone, group, {
         position: vrm.scene.position,
         rotation: new Euler(0, facing, 0),
-        scale: 1
+        scale
       });
       wornPieces.push(group);
+      if (spec.kind === "blouse" && group.userData.sleeve) {
+        for (const side of ["left", "right"]) {
+          const armBone = vrm.humanoid.getRawBoneNode(`${side}UpperArm`);
+          if (!armBone) continue;
+          const arm = makeSleeve({
+            cloth: group.userData.sleeveCloth,
+            length: group.userData.sleeve * scale,
+            top: 0.062 * scale,
+            bottom: 0.054 * scale
+          });
+          const elbow = vrm.humanoid.getRawBoneNode(`${side}LowerArm`);
+          armBone.add(arm);
+          arm.position.set(0, 0, 0);
+          if (elbow) {
+            const down = elbow.position.clone().normalize();
+            arm.quaternion.setFromUnitVectors(new Vector3(0, -1, 0), down);
+          }
+          wornPieces.push(arm);
+        }
+      }
     }
   }
   function applyOutfit(key) {
@@ -39798,6 +39925,44 @@ body.pg-directed .pg-manual-hint { opacity: 0.32; }
     },
     getOutfitForTest: () => outfitKey,
     listOutfitsForTest: () => OUTFITS.map((o) => ({ key: o.key, label: o.label })),
+    // The body's actual half-width and half-depth at a set of heights, taken
+    // off the skin mesh. Garments that lie on the body need this; guessing it is
+    // how the sailor collar ended up narrower than her shoulders.
+    bodyProfileForTest: (heights) => {
+      if (!vrm) return [];
+      const points = [];
+      vrm.scene.traverse((object) => {
+        if (!object.isSkinnedMesh) return;
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        if (!materials.some((m) => m.name && m.name.includes("Body_00_SKIN"))) return;
+        const pos = object.geometry.attributes.position;
+        const v = new Vector3();
+        const index = object.geometry.index;
+        const seen = /* @__PURE__ */ new Set();
+        const count = index ? index.count : pos.count;
+        for (let i = 0; i < count; i++) {
+          const vi = index ? index.getX(i) : i;
+          if (seen.has(vi)) continue;
+          seen.add(vi);
+          v.fromBufferAttribute(pos, vi);
+          object.localToWorld(v);
+          points.push([v.x, v.y, v.z]);
+        }
+      });
+      const base = vrm.scene.position;
+      return heights.map((y) => {
+        let rx = 0;
+        let rz = 0;
+        let n = 0;
+        for (const [px2, py2, pz2] of points) {
+          if (Math.abs(py2 - y) > 0.012) continue;
+          rx = Math.max(rx, Math.abs(px2 - base.x));
+          rz = Math.max(rz, Math.abs(pz2 - base.z));
+          n++;
+        }
+        return { y, rx: +rx.toFixed(4), rz: +rz.toFixed(4), samples: n };
+      });
+    },
     getSpringSettings: () => {
       if (!vrm || !vrm.springBoneManager) return [];
       return [...vrm.springBoneManager.joints].map((joint) => ({

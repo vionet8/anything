@@ -1177,14 +1177,25 @@ test.describe('wardrobe', () => {
       }, outfit.key);
       expect(state.outfit, `${outfit.label} goes on`).toBe(outfit.key);
 
-      // The one that matters. Taking the outer garments off is how a swimsuit
-      // is done -- the swimsuit is painted into the body texture, where the
-      // camisole was -- so an outfit that hides both without having repainted
-      // that texture would leave her in whatever the body happens to carry.
-      // This is not a wrong colour; it is the failure that must not happen.
-      const bare = state.visible.Tops === false && state.visible.Bottoms === false;
-      expect(bare && !state.bodyPainted, `${outfit.label} hides both layers unpainted`)
-        .toBe(false);
+      // The one that matters: whatever came off was replaced in kind. There
+      // are two ways to replace it and an outfit may use either. Swimwear
+      // paints the layer underneath, into the body texture where the camisole
+      // was. The uniforms hide the model's own top and skirt and wear built
+      // ones -- which is the only way a sailor collar can work, since laid
+      // over the avatar's own clothes it is variously swallowed by a cardigan,
+      // buried under waist-length hair, or poking through a puffer as a lump.
+      //
+      // Read off what the renderer is actually holding, not off the outfit
+      // table, and checked for every outfit. This is not a wrong colour; it is
+      // the failure that must not happen.
+      const topOff = state.visible.Tops === false;
+      const bottomOff = state.visible.Bottoms === false;
+      const covered = state.bodyPainted
+        || ((!topOff || state.pieces.includes('blouse'))
+          && (!bottomOff || state.pieces.includes('skirt')));
+      expect(covered, `${outfit.label}: tops ${state.visible.Tops}, `
+        + `bottoms ${state.visible.Bottoms}, painted ${state.bodyPainted}, `
+        + `pieces [${state.pieces}]`).toBe(true);
     }
   });
 

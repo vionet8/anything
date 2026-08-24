@@ -9,7 +9,9 @@ import {
 import { createWeather } from '../src/weather.js';
 import { BIRDS, SCENE_BIRD, makeCrab, setWingSpread } from '../src/fauna.js';
 import { OUTFITS, outfitByKey, buildOutfit, outfitIsDressed } from '../src/wardrobe.js';
-import { attachToBone, makeSailorCollar, makePleatedSkirt, makeFrillRing } from '../src/garments.js';
+import {
+  attachToBone, makeSailorCollar, makePleatedSkirt, makeFrillRing, makeBlouse, makeSleeve,
+} from '../src/garments.js';
 
 const canvas = document.getElementById('scene');
 const scene = new THREE.Scene();
@@ -1717,7 +1719,7 @@ function clearWornPieces() {
 // Where each kind of garment hangs. A collar rides the upper chest and a skirt
 // the hips, which is what makes them follow her when she moves rather than
 // staying behind in the world like the umbrella does.
-const PIECE_BONE = { collar: 'upperChest', skirt: 'hips', frill: 'hips' };
+const PIECE_BONE = { collar: 'upperChest', skirt: 'hips', frill: 'hips', blouse: 'chest' };
 
 function wearPieces(outfit) {
   clearWornPieces();
@@ -1731,8 +1733,15 @@ function wearPieces(outfit) {
     const bone = vrm.humanoid.getRawBoneNode(boneName);
     if (!bone) continue;
     let group = null;
-    if (spec.kind === 'collar') group = makeSailorCollar({ ...spec, scale });
-    else if (spec.kind === 'skirt') group = makePleatedSkirt({ ...spec, scale });
+    // No scale passed into the builders: they author in metres against a
+    // 1.76m figure and attachToBone scales the whole group about her feet, so
+    // heights and widths come out in proportion together. Scaling inside the
+    // builder scaled the radii and left the heights alone, which put a skirt
+    // hem in the right place on a tall character and eight per cent high on a
+    // short one.
+    if (spec.kind === 'collar') group = makeSailorCollar({ ...spec });
+    else if (spec.kind === 'blouse') group = makeBlouse({ ...spec });
+    else if (spec.kind === 'skirt') group = makePleatedSkirt({ ...spec });
     else if (spec.kind === 'frill') {
       const base = outfit.pieces.find((p) => p.kind === 'skirt');
       group = makeFrillRing({
@@ -1740,7 +1749,7 @@ function wearPieces(outfit) {
           : ((base && base.waist !== undefined ? base.waist : 0.118)
             + (base && base.flare !== undefined ? base.flare : 0.086)),
         y: spec.y !== undefined ? spec.y : (base && base.hemY !== undefined ? base.hemY : 0.735),
-        ...spec, scale,
+        ...spec,
       });
     }
     if (!group) continue;
@@ -1753,9 +1762,37 @@ function wearPieces(outfit) {
     attachToBone(bone, group, {
       position: vrm.scene.position,
       rotation: new THREE.Euler(0, facing, 0),
-      scale: 1,
+      scale,
     });
     wornPieces.push(group);
+
+    // Sleeves are part of the blouse but they cannot hang off the chest: an
+    // arm that moves takes its sleeve with it, so each one goes on its own
+    // upper-arm bone.
+    if (spec.kind === 'blouse' && group.userData.sleeve) {
+      for (const side of ['left', 'right']) {
+        const armBone = vrm.humanoid.getRawBoneNode(`${side}UpperArm`);
+        if (!armBone) continue;
+        const arm = makeSleeve({
+          cloth: group.userData.sleeveCloth,
+          length: group.userData.sleeve * scale,
+          top: 0.062 * scale,
+          bottom: 0.054 * scale,
+        });
+        // Aimed at the elbow. A sleeve built down its own -Y and parented to
+        // the bone assumes the bone points that way, and a VRM arm bone does
+        // not -- the first pass put two puffballs on her shoulders. Taking the
+        // direction from the bone to its child is true whatever the rig does.
+        const elbow = vrm.humanoid.getRawBoneNode(`${side}LowerArm`);
+        armBone.add(arm);
+        arm.position.set(0, 0, 0);
+        if (elbow) {
+          const down = elbow.position.clone().normalize();
+          arm.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), down);
+        }
+        wornPieces.push(arm);
+      }
+    }
   }
 }
 
@@ -3781,6 +3818,42 @@ window.__char = {
   },
   getOutfitForTest: () => outfitKey,
   listOutfitsForTest: () => OUTFITS.map((o) => ({ key: o.key, label: o.label })),
+  // The body's actual half-width and half-depth at a set of heights, taken
+  // off the skin mesh. Garments that lie on the body need this; guessing it is
+  // how the sailor collar ended up narrower than her shoulders.
+  bodyProfileForTest: (heights) => {
+    if (!vrm) return [];
+    const points = [];
+    vrm.scene.traverse((object) => {
+      if (!object.isSkinnedMesh) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      if (!materials.some((m) => m.name && m.name.includes('Body_00_SKIN'))) return;
+      const pos = object.geometry.attributes.position;
+      const v = new THREE.Vector3();
+      const index = object.geometry.index;
+      const seen = new Set();
+      const count = index ? index.count : pos.count;
+      for (let i = 0; i < count; i++) {
+        const vi = index ? index.getX(i) : i;
+        if (seen.has(vi)) continue;
+        seen.add(vi);
+        v.fromBufferAttribute(pos, vi);
+        object.localToWorld(v);
+        points.push([v.x, v.y, v.z]);
+      }
+    });
+    const base = vrm.scene.position;
+    return heights.map((y) => {
+      let rx = 0; let rz = 0; let n = 0;
+      for (const [px, py, pz] of points) {
+        if (Math.abs(py - y) > 0.012) continue;
+        rx = Math.max(rx, Math.abs(px - base.x));
+        rz = Math.max(rz, Math.abs(pz - base.z));
+        n++;
+      }
+      return { y, rx: +rx.toFixed(4), rz: +rz.toFixed(4), samples: n };
+    });
+  },
   getSpringSettings: () => {
     if (!vrm || !vrm.springBoneManager) return [];
     return [...vrm.springBoneManager.joints].map((joint) => ({
