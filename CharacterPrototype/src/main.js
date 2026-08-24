@@ -3818,6 +3818,13 @@ window.__char = {
     image.src = url;
   }),
   setOutfitForTest: (key) => applyOutfit(key),
+  // The painted texture itself, so a costume can be inspected as a flat image
+  // rather than guessed at from the model.
+  outfitTextureForTest: (key, slot) => {
+    const originals = originalMaps.get(activeCharacter ? activeCharacter.key : '') || {};
+    const built = buildOutfit(outfitByKey(key), originals);
+    return built[slot] ? built[slot].toDataURL('image/png') : null;
+  },
   // What she is actually wearing right now, as the renderer sees it, rather
   // than what the outfit table says she should be. The invariant worth
   // checking is that the outer layers are never both off without the layer

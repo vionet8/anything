@@ -180,11 +180,11 @@ function stripToSkin(ctx) {
     ctx.fillRect(block.x0, BODY.thigh.y0, block.x1 - block.x0, BODY.shin.y1 - BODY.thigh.y0);
   }
   for (const block of BODY.arms) {
-    // Wrists, for the lace cuffs, and the very top of the island, because the
-    // camisole's shoulder straps run off the torso onto the arm and left two
-    // dark tabs sitting on her shoulders.
-    skinOver(ctx, skin, { x0: block.x0, y0: 300, x1: block.x1, y1: BODY.armsY.y1 });
-    skinOver(ctx, skin, { x0: block.x0, y0: 0, x1: block.x1, y1: 62 });
+    // The whole island, not its two ends. Clearing only the shoulder and the
+    // wrist left whatever the character wears in between -- on one of them a
+    // pair of black bands round the upper arms, which survived into the
+    // swimsuit and read as armlets.
+    skinOver(ctx, skin, { x0: block.x0, y0: BODY.armsY.y0, x1: block.x1, y1: BODY.armsY.y1 });
   }
   skinOver(ctx, skin, {
     x0: BODY.torso.x0, y0: BODY.neck.y0, x1: BODY.torso.x1, y1: BODY.hips.y1 + 30,
@@ -241,52 +241,92 @@ function paintBikini(ctx, colour, accent) {
   stripToSkin(ctx);
   const chest = BODY.chest;
   const hips = BODY.hips;
+  const { front, x0, x1 } = BODY.torso;
+  const half = Math.min(front - x0, x1 - front);
 
-  // ---- The top: two triangles ----
-  // Apex up at the halter tie, base under the bust, and a gap at the sternum.
-  // The previous version was a band right round the bust, which is a bandeau,
-  // not a bikini.
-  const cupY0 = chest.y0 + 28;
-  const cupY1 = chest.y0 + 126;
-  torsoShape(ctx, cupY0, cupY1,
-    // Outer edge: widens as it falls, so the cup is a triangle standing on its
-    // base, and rounds off at the very bottom rather than ending in a corner.
-    (t) => 0.09 + Math.sin(Math.min(1, t * 1.06) * Math.PI * 0.5) * 0.40,
-    colour,
-    // Inner edge: the gap at the centre, narrowing towards the bottom where
-    // the two cups nearly meet.
-    (t) => 0.075 * (1 - t * 0.72));
+  // ---- The top ----
+  // A triangle cup has its apex up and *out*, where the strap leaves it, and
+  // its inner corner down at the sternum. The first version had the apex at
+  // the centre, which put both straps side by side up the middle of her chest
+  // -- from the front that reads as a black cord round the throat, which is
+  // what it was mistaken for.
+  const cupY0 = chest.y0 + 30;
+  const cupY1 = chest.y0 + 128;
+  const cupInner = (t) => 0.30 * Math.pow(1 - t, 1.7) + 0.035;
+  const cupOuter = (t) => 0.42 + t * 0.07;
+  torsoShape(ctx, cupY0, cupY1, cupOuter, colour, cupInner);
 
-  // The halter, from the apex of each cup up over the shoulder.
-  torsoShape(ctx, BODY.neck.y1 - 22, cupY0 + 8, (t) => 0.10 + t * 0.03, colour,
-    (t) => 0.055 + t * 0.02);
-  // The band under the bust, carrying round to tie at the back.
-  torsoShape(ctx, cupY1 - 16, cupY1, () => 1, colour);
-  hemShadow(ctx, cupY1, 16, 0.55);
+  // The straps, carrying on up from the apex of each cup and round the neck --
+  // out at the sides, where a halter actually ties.
+  torsoShape(ctx, BODY.neck.y1 - 26, cupY0 + 6, () => 0.40, colour, () => 0.325);
+
+  // The band under the bust, tying at the back.
+  torsoShape(ctx, cupY1 - 15, cupY1, () => 1, colour);
+  hemShadow(ctx, cupY1, 16, 0.6);
+
+  // The cleavage. The cups meeting either side of a bare strip is anatomically
+  // where it is and still reads flat, because a toon shader has no shadow to
+  // give it: the shadow has to be painted. A soft dark wedge down the sternum,
+  // narrow at the top and opening a little as it falls.
+  {
+    const shadeTop = cupY0 + 22;
+    const shadeBottom = cupY1 - 4;
+    const grad = ctx.createLinearGradient(front, shadeTop, front, shadeBottom);
+    grad.addColorStop(0, 'rgba(96,58,44,0)');
+    grad.addColorStop(0.45, 'rgba(96,58,44,0.34)');
+    grad.addColorStop(1, 'rgba(96,58,44,0.16)');
+    ctx.fillStyle = grad;
+    for (const dir of [-1, 1]) {
+      ctx.beginPath();
+      for (let y = shadeTop; y <= shadeBottom; y++) {
+        const t = (y - shadeTop) / (shadeBottom - shadeTop);
+        const w = half * (0.012 + 0.030 * Math.sin(t * Math.PI * 0.85));
+        if (y === shadeTop) ctx.moveTo(front, y); else ctx.lineTo(front + dir * w, y);
+      }
+      ctx.lineTo(front, shadeBottom);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
 
   // ---- The bottom ----
-  // A full ring where it has to be a full ring -- the foot of this island is
-  // the crotch -- and above that, panels that rise to a tie on each hip, which
-  // is what makes it read as tie-side rather than as shorts.
-  const briefY0 = hips.y0 + 66;
-  const briefY1 = hips.y1;
-  const solidFrom = briefY0 + 86;
-  torsoShape(ctx, solidFrom, briefY1, () => 1, colour);
-  // The front and back panels: downward-pointing triangles. At the top there
-  // is cloth only out at the sides, where the ties are; going down it spreads
-  // inwards until the two panels meet at the centre. A shallow notch here read
-  // as boy shorts, which is what the first attempt gave her.
-  torsoShape(ctx, briefY0, solidFrom, () => 1, colour,
-    (t) => 0.93 * Math.pow(1 - t, 1.5));
-  // The ties themselves, a thin strap sitting on the hip bone.
-  torsoShape(ctx, briefY0 - 6, briefY0 + 14, () => 0.88, colour, () => 0.66);
-  hemShadow(ctx, solidFrom + 34, 18, 1);
+  // Cut high at the hip, which is the whole difference between a brief and a
+  // pair of shorts. The leg openings are at her sides, so the front panel and
+  // the back panel are drawn separately: one span reaching out from the front
+  // centre-line, one reaching in from the spine, with bare skin between them
+  // where the leg comes through.
+  const briefY0 = hips.y0 + 62;
+  // Not the foot of the island. The island carries on down the thighs, so its
+  // bottom edge is not the crotch -- a panel drawn to it ends in a horizontal
+  // line across both legs, which is a leg hem, which is a pair of shorts. This
+  // is where the crotch actually is, found by painting bands and looking.
+  const briefY1 = hips.y0 + 170;
+  const span = briefY1 - briefY0;
+  // Front: starts as a narrow strap at the tie and widens into the panel.
+  torsoShape(ctx, briefY0, briefY1,
+    (t) => 0.50 - Math.max(0, t - 0.35) * 0.34, colour,
+    (t) => 0.44 * Math.pow(1 - t / 0.42, 2) * (t < 0.42 ? 1 : 0));
+  // Back: the mirror of it, reaching in from the spine.
+  torsoShape(ctx, briefY0, briefY1, () => 1, colour,
+    (t) => Math.min(0.80, 0.70 + Math.max(0, t - 0.4) * 0.40));
+  // The ties over each hip, joining the two panels.
+  torsoShape(ctx, briefY0 - 4, briefY0 + 18, () => 0.80, colour, () => 0.56);
+  // No band across the foot of the island. There was one, to guarantee the
+  // crotch was covered, and it was the thing making the brief read as shorts:
+  // this island runs on down the thighs, so a full ring at its bottom edge is
+  // not a gusset, it is a hem painted across both legs, and it closed the leg
+  // openings that the shaping above had just cut.
+  //
+  // Coverage is guaranteed by the panels instead. The front span always
+  // reaches out from the centre-line and the back span always reaches in from
+  // the spine, at every height -- so her front and her back are covered the
+  // whole way down and what is bare is the side of the hip, which is where a
+  // brief is cut away.
 
-  // A lighter piping along the cup edges, which is what stops a solid colour
-  // reading as paint on skin.
+  // Piping, which is what stops a solid colour reading as paint on skin.
   ctx.globalAlpha = 0.8;
   torsoShape(ctx, cupY1 - 6, cupY1, () => 1, accent);
-  torsoShape(ctx, briefY0 - 2, briefY0 + 5, () => 0.88, accent, () => 0.66);
+  torsoShape(ctx, briefY0 - 2, briefY0 + 6, () => 0.80, accent, () => 0.56);
   ctx.globalAlpha = 1;
 }
 
