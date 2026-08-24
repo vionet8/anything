@@ -829,13 +829,14 @@ test('starting a session hands pose and expression to her; manual keys stop work
   // held keys regardless. Variety over the window is the proof either way,
   // and it sidesteps the coincidence risk of checking a single instant against
   // a single expected value.
+  // Recorded in the game rather than polled from here. The poses are what is
+  // under test; twenty round trips to collect them are not, and they were what
+  // put this over its budget.
+  await page.evaluate(() => window.__char.tracePosesForTest());
   await page.keyboard.down('KeyE');
   await page.keyboard.down('Digit1');
-  const poses = new Set();
-  for (let i = 0; i < 20; i++) {
-    poses.add(await page.evaluate(() => window.__char.getState().animName));
-    await page.waitForTimeout(350);   // ~7s total; the shortest hold is 1.4s
-  }
+  await page.waitForTimeout(7000);           // the shortest hold is 1.4s
+  const poses = new Set(await page.evaluate(() => window.__char.readPoseTraceForTest()));
   await page.keyboard.up('KeyE');
   await page.keyboard.up('Digit1');
 

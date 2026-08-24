@@ -1472,9 +1472,16 @@ function runDirector(dt) {
 
 const stateLabel = document.getElementById('anim-state');
 
+// Set by a test that wants to know which poses happened over a window. Same
+// reason as beatTrace: reading it once per frame from outside is twenty
+// round trips against a renderer managing a few frames a second, and the
+// round trips, not the waiting, are what overran the budget.
+let poseTrace = null;
+
 function setAnimName(name) {
   if (state.animName === name) return;
   state.animName = name;
+  if (poseTrace) poseTrace.push(name);
   notePoseChange(name);
   if (stateLabel) {
     stateLabel.textContent = 'state: ' + name;
@@ -3622,6 +3629,8 @@ window.__char = {
     return beatTrace.length;
   },
   readBeatTraceForTest: () => (beatTrace ? beatTrace.slice() : []),
+  tracePosesForTest: () => { poseTrace = [state.animName]; },
+  readPoseTraceForTest: () => (poseTrace ? poseTrace.slice() : []),
   stopBeatTraceForTest: () => { beatTrace = null; },
   scenarioPeaksForTest: () => scenarioPeaks(),
   getBirdStateForTest: () => ({
