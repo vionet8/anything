@@ -322,15 +322,17 @@ export const OUTFITS = [
   },
   {
     key: 'blazer', label: '制服（ブレザー）',
-    show: { Tops: true, Bottoms: false },
-    tops: { colour: '#2b3350', gamma: 0.86 },
-    pieces: [{ kind: 'skirt', cloth: 0x39405c }],
+    show: { Tops: false, Bottoms: false },
+    pieces: [
+      { kind: 'blouse', cloth: 0x2b3350, sleeve: 0.30 },
+      { kind: 'skirt', cloth: 0x39405c },
+    ],
   },
   {
     key: 'sailor', label: '制服（セーラー）',
-    show: { Tops: true, Bottoms: false },
-    tops: { colour: '#f3f4f6', gamma: 1.15 },
+    show: { Tops: false, Bottoms: false },
     pieces: [
+      { kind: 'blouse', cloth: 0xf6f7f9, sleeve: 0.16 },
       { kind: 'collar', cloth: 0xf6f7f9, stripe: 0x27314f },
       { kind: 'skirt', cloth: 0x27314f },
     ],
@@ -349,9 +351,9 @@ export const OUTFITS = [
   },
   {
     key: 'idol', label: 'アイドル',
-    show: { Tops: true, Bottoms: false },
-    tops: { colour: '#f7f2ff', gamma: 1.15 },
+    show: { Tops: false, Bottoms: false },
     pieces: [
+      { kind: 'blouse', cloth: 0xfdf6ff, sleeve: 0.13 },
       { kind: 'skirt', cloth: 0x7c4fb8, flare: 0.11, pleats: 28 },
       { kind: 'frill', cloth: 0xfdf2f5, drop: 0.044, scallops: 26 },
       { kind: 'collar', cloth: 0xfdf2f5, stripe: 0x7c4fb8 },
@@ -396,7 +398,21 @@ export function buildOutfit(outfit, originals) {
 
 // A costume that takes the outer layers off must bring its own. Checked here
 // rather than trusted, because the failure mode is not a wrong colour.
+//
+// There are two ways to bring your own. Swimwear paints the layer underneath,
+// into the body texture itself. The uniforms hide the model's top and skirt
+// and wear built ones instead -- which is the only way a sailor collar can
+// work, since laid over the avatar's own clothes it is variously swallowed by
+// a cardigan, buried under waist-length hair, or poking through a puffer as a
+// lump. Either is fine; neither being present is not.
 export function outfitIsDressed(outfit) {
-  const bare = outfit.show && outfit.show.Tops === false && outfit.show.Bottoms === false;
-  return !bare || !!(outfit.body && BODY_PAINTERS[outfit.body]);
+  const show = outfit.show || {};
+  const pieces = outfit.pieces || [];
+  const has = (kind) => pieces.some((piece) => piece.kind === kind);
+  const topOff = show.Tops === false;
+  const bottomOff = show.Bottoms === false;
+  if (!topOff && !bottomOff) return true;
+  if (outfit.body && BODY_PAINTERS[outfit.body]) return true;
+  // Whatever was taken off has to have been replaced in kind.
+  return (!topOff || has('blouse')) && (!bottomOff || has('skirt'));
 }
