@@ -250,15 +250,32 @@ function paintBikini(ctx, colour, accent) {
   // the centre, which put both straps side by side up the middle of her chest
   // -- from the front that reads as a black cord round the throat, which is
   // what it was mistaken for.
-  const cupY0 = chest.y0 + 30;
-  const cupY1 = chest.y0 + 128;
+  // The top of this island is her neck, not her shoulders -- painting bands
+  // across the first hundred and thirty rows puts a collar round her throat
+  // and nothing on her chest, and the shoulder cap belongs to the arm island
+  // instead. So the cups start below the collarbone, leaving the chest above
+  // them for the straps, and the straps tie round the neck rather than
+  // crossing a shoulder this island does not contain.
+  const cupY0 = chest.y0 + 66;
+  const cupY1 = chest.y0 + 146;
   const cupInner = (t) => 0.30 * Math.pow(1 - t, 1.7) + 0.035;
   const cupOuter = (t) => 0.42 + t * 0.07;
   torsoShape(ctx, cupY0, cupY1, cupOuter, colour, cupInner);
 
-  // The straps, carrying on up from the apex of each cup and round the neck --
-  // out at the sides, where a halter actually ties.
-  torsoShape(ctx, BODY.neck.y1 - 26, cupY0 + 6, () => 0.40, colour, () => 0.325);
+  // The straps, from the apex of each cup up over the shoulder.
+  //
+  // They were drawn at a constant distance round the body, and stopped at the
+  // collarbone. Both were wrong. At chest height a third of the way round is
+  // already the edge of what a front view can see, so the straps sat out under
+  // her arms where nothing showed them; and a strap that ends at the collarbone
+  // is not attached to anything. They run to the top of the island now, moving
+  // outwards as they rise, which takes them across the collarbone and over the
+  // shoulder.
+  torsoShape(ctx, 46, cupY0 + 8,
+    (t) => 0.20 + t * 0.15, colour,
+    (t) => 0.145 + t * 0.13);
+  // And the tie round the back of the neck that they run to.
+  torsoShape(ctx, 46, 62, () => 1, colour, () => 0.34);
 
   // The band under the bust, tying at the back.
   torsoShape(ctx, cupY1 - 15, cupY1, () => 1, colour);
