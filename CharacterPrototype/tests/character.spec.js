@@ -1160,13 +1160,16 @@ test('a tap is one photograph and skips the picker entirely', async ({ page }) =
 });
 
 test('retaking a burst discards it without spending a shot', async ({ page }) => {
-  // Two bursts back to back, on top of the model load. Kept short on purpose:
-  // what is under test is that a retake costs nothing, and how many frames a
-  // burst holds is tested separately -- long bursts here just left the
-  // software renderer encoding frames until the test ran out of time.
+  // Two bursts back to back, on top of the model load. Shorter than they
+  // were, because what is under test is that a retake costs nothing and long
+  // bursts just left the software renderer encoding frames until the test ran
+  // out of time -- but not arbitrarily shorter. A burst can only capture
+  // frames that were actually drawn, and the test above this one measures 1.8s
+  // as about two or three of them here; below that there is no burst to pick
+  // from and the picker never opens, which is what 1.4s did.
   test.setTimeout(90000);
   await page.getByRole('button', { name: '撮影を始める' }).click();
-  await holdShutter(page, 1400);
+  await holdShutter(page, 1800);
   await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
 
   await page.getByRole('button', { name: '撮り直す' }).click();
@@ -1174,7 +1177,7 @@ test('retaking a burst discards it without spending a shot', async ({ page }) =>
   expect(await page.evaluate(() => window.__game.getShots())).toHaveLength(0);
 
   // A second attempt still completes normally.
-  await holdShutter(page, 1400);
+  await holdShutter(page, 1800);
   await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
   await page.locator('.pg-frame').first().click();
   await page.locator('.pg-use').click();
