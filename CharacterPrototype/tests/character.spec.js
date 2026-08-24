@@ -1097,19 +1097,26 @@ test('every scenario peak is a pair a brief could sensibly ask for', async ({ pa
 
 test('a scenario runs its beats in order rather than cutting at random', async ({ page }) => {
   test.setTimeout(60000);
-  const trace = await traceScenario(page, 'posing-for-you', 30);
-  const beats = [];
-  for (const frame of trace) {
-    if (beats[beats.length - 1] !== frame.beat) beats.push(frame.beat);
-  }
-  expect(beats).toEqual([0, 1, 2, 3]);
+  // Read out of the game as the beats happen rather than sampled from here.
+  // Sampling meant a round trip per frame against a renderer doing a few
+  // frames a second, and this story's last beat is its shortest -- so the
+  // sampler stepped over it now and then and the trace came back three beats
+  // long. The order is the thing being tested; whether a poller happened to
+  // catch every beat is not.
+  await page.evaluate(() => window.__char.traceBeatsForTest('posing-for-you'));
+  await page.waitForFunction(
+    () => window.__char.readBeatTraceForTest().length >= 4, null, { timeout: 40000 }
+  );
+  const trace = await page.evaluate(() => {
+    const out = window.__char.readBeatTraceForTest();
+    window.__char.stopBeatTraceForTest();
+    return out;
+  });
 
-  // Each beat is one pose held for a while, not a pose per frame.
-  const poses = [];
-  for (const frame of trace) {
-    if (poses[poses.length - 1] !== frame.pose) poses.push(frame.pose);
-  }
-  expect(poses).toEqual(['idle', 'wave', 'peace', 'idle']);
+  const run = trace.filter((frame) => frame.scenario === 'posing-for-you').slice(0, 4);
+  expect(run.map((frame) => frame.beat)).toEqual([0, 1, 2, 3]);
+  // Each beat is one pose, not a pose per frame.
+  expect(run.map((frame) => frame.pose)).toEqual(['idle', 'wave', 'peace', 'idle']);
 });
 
 test('how long you hold the shutter is how long it shoots', async ({ page }) => {
@@ -1152,11 +1159,13 @@ test('a tap is one photograph and skips the picker entirely', async ({ page }) =
 });
 
 test('retaking a burst discards it without spending a shot', async ({ page }) => {
-  // Two full bursts captured over real time, back to back, on top of the
-  // model load. 30s was not enough for that on a loaded machine.
-  test.setTimeout(60000);
+  // Two bursts back to back, on top of the model load. Kept short on purpose:
+  // what is under test is that a retake costs nothing, and how many frames a
+  // burst holds is tested separately -- long bursts here just left the
+  // software renderer encoding frames until the test ran out of time.
+  test.setTimeout(90000);
   await page.getByRole('button', { name: '撮影を始める' }).click();
-  await holdShutter(page, 2500);
+  await holdShutter(page, 1400);
   await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
 
   await page.getByRole('button', { name: '撮り直す' }).click();
@@ -1164,7 +1173,7 @@ test('retaking a burst discards it without spending a shot', async ({ page }) =>
   expect(await page.evaluate(() => window.__game.getShots())).toHaveLength(0);
 
   // A second attempt still completes normally.
-  await holdShutter(page, 2500);
+  await holdShutter(page, 1400);
   await expect(page.locator('.pg-frame').first()).toBeVisible({ timeout: 10000 });
   await page.locator('.pg-frame').first().click();
   await page.locator('.pg-use').click();
