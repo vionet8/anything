@@ -8,6 +8,7 @@ import {
 } from './scenes.js';
 import { createWeather } from './weather.js';
 import { BIRDS, SCENE_BIRD, makeCrab, setWingSpread } from './fauna.js';
+import { OUTFITS, outfitByKey, buildOutfit, outfitIsDressed } from './wardrobe.js';
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xbfd9e8, 28, 75);
@@ -1617,6 +1618,97 @@ function loadCharacter(source) {
   });
 }
 
+// ---- Wardrobe ----
+// The model's own garment textures, kept so an outfit can be built from them
+// and so 'そのまま' can put them back. Captured per character at load, because
+// the three of them do not wear the same clothes.
+const originalMaps = new Map();     // character key -> { Body, Tops, Bottoms }
+let outfitKey = 'original';
+
+const SLOT_MATCH = { Body: 'Body_00_SKIN', Tops: 'Tops', Bottoms: 'Bottoms', Shoes: 'Shoes' };
+
+function eachSlotMaterial(target, slot, fn) {
+  const match = SLOT_MATCH[slot];
+  target.scene.traverse((object) => {
+    if (!object.isMesh && !object.isSkinnedMesh) return;
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    let touched = false;
+    for (const m of materials) {
+      if (!m.name || !m.name.includes(match)) continue;
+      fn(m, object);
+      touched = true;
+    }
+    if (touched) fn.mesh && fn.mesh(object);
+  });
+}
+
+function captureOriginalMaps(loaded) {
+  if (originalMaps.has(loaded.key)) return;
+  const maps = {};
+  for (const slot of Object.keys(SLOT_MATCH)) {
+    eachSlotMaterial(loaded.vrm, slot, (m) => {
+      if (!maps[slot] && m.map && m.map.image) maps[slot] = m.map.image;
+    });
+  }
+  originalMaps.set(loaded.key, maps);
+}
+
+// Puts a canvas onto a slot's colour map. Both MToon maps, because the shader
+// draws the lit side from one and the shadow side from the other: setting only
+// the first leaves her wearing the old clothes wherever the sun is not on her.
+function wearCanvas(slot, canvas) {
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.flipY = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  eachSlotMaterial(vrm, slot, (m) => {
+    m.map = texture;
+    if ('shadeMultiplyTexture' in m) m.shadeMultiplyTexture = texture;
+    m.needsUpdate = true;
+  });
+}
+
+function restoreSlot(slot, image) {
+  if (!image) return;
+  const texture = new THREE.Texture(image);
+  texture.flipY = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  eachSlotMaterial(vrm, slot, (m) => {
+    m.map = texture;
+    if ('shadeMultiplyTexture' in m) m.shadeMultiplyTexture = texture;
+    m.needsUpdate = true;
+  });
+}
+
+function setSlotVisible(slot, visible) {
+  const match = SLOT_MATCH[slot];
+  vrm.scene.traverse((object) => {
+    if (!object.isMesh && !object.isSkinnedMesh) return;
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    if (materials.some((m) => m.name && m.name.includes(match))) object.visible = visible;
+  });
+}
+
+function applyOutfit(key) {
+  if (!vrm || !activeCharacter) return outfitKey;
+  const outfit = outfitByKey(key);
+  // An outfit that takes the outer layers off has to bring its own. This is
+  // the one check in here whose failure mode is not a wrong colour.
+  if (!outfitIsDressed(outfit)) return outfitKey;
+  const originals = originalMaps.get(activeCharacter.key) || {};
+  const built = buildOutfit(outfit, originals);
+  for (const slot of ['Body', 'Tops', 'Bottoms', 'Shoes']) {
+    if (built[slot]) wearCanvas(slot, built[slot]);
+    else restoreSlot(slot, originals[slot]);
+    const show = outfit.show ? outfit.show[slot] : undefined;
+    if (show !== undefined) setSlotVisible(slot, show);
+    else if (slot !== 'Body') setSlotVisible(slot, true);
+  }
+  outfitKey = outfit.key;
+  return outfitKey;
+}
+
 // How dark her shadow side is allowed to go, and how sharply it arrives.
 // VRoid ships MToon set for even, flattering light from any direction: with the
 // stock values her face measures the same brightness whether the sun is behind
@@ -1728,6 +1820,10 @@ function setActiveCharacter(key) {
   vrm.scene.position.copy(state.position);
   vrm.scene.rotation.y = facing + modelYaw;
   if (vrm.lookAt) vrm.lookAt.target = gazeTarget;
+  // She keeps what she was wearing when you swap who is on stage; the three of
+  // them start in different clothes, so the outfit has to be re-applied to the
+  // new model's own textures rather than carried across as pixels.
+  applyOutfit(outfitKey);
 }
 
 // The first character to arrive goes on stage and starts the page; the rest
@@ -1738,6 +1834,7 @@ CHARACTER_SOURCES.forEach((source, index) => {
     cast.push(loaded);
     cast.sort((a, b) => CHARACTER_SOURCES.findIndex((s) => s.key === a.key)
       - CHARACTER_SOURCES.findIndex((s) => s.key === b.key));
+    captureOriginalMaps(loaded);
     if (activeCharacter) {
       if (photoGame) photoGame.castChanged();
       return;
@@ -3416,6 +3513,154 @@ window.__char = {
       );
     return { x: offset.x, y: offset.y, z: offset.z };
   },
+  // What she is actually wearing, as the renderer sees it: every mesh, the
+  // materials on it, and the size and slot of each texture. Any costume change
+  // has to work with this, so it is worth being able to look at it.
+  wardrobeForTest: () => {
+    if (!vrm) return [];
+    const out = [];
+    vrm.scene.traverse((object) => {
+      if (!object.isMesh && !object.isSkinnedMesh) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      out.push({
+        mesh: object.name,
+        skinned: !!object.isSkinnedMesh,
+        groups: object.geometry.groups.length,
+        vertices: object.geometry.attributes.position.count,
+        materials: materials.map((m) => ({
+          name: m.name,
+          type: m.type,
+          transparent: !!m.transparent,
+          map: m.map ? `${m.map.image ? m.map.image.width : '?'}x${m.map.image ? m.map.image.height : '?'}` : null,
+          mapName: m.map && m.map.name ? m.map.name : null,
+          color: m.color ? `#${m.color.getHexString()}` : null,
+        })),
+      });
+    });
+    return out;
+  },
+  // Show or hide one of the body mesh's material slots, so a costume change
+  // can take a garment off before putting another on.
+  setGarmentVisibleForTest: (match, visible) => {
+    if (!vrm) return 0;
+    let hit = 0;
+    vrm.scene.traverse((object) => {
+      if (!object.isMesh && !object.isSkinnedMesh) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      if (!materials.some((m) => m.name && m.name.includes(match))) return;
+      object.visible = visible;
+      hit++;
+    });
+    return hit;
+  },
+  // Rasterises a garment's UV triangles, colour-coded by the bone that drives
+  // them, and hands back a data URL. Painting a costume means knowing which
+  // patch of a 768-square texture is the torso and which is a shin, and the
+  // only place that is actually written down is the model.
+  uvAtlasForTest: (match, size = 768) => {
+    if (!vrm) return null;
+    let target = null;
+    vrm.scene.traverse((object) => {
+      if (target || !(object.isMesh || object.isSkinnedMesh)) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      if (materials.some((m) => m.name && m.name.includes(match))) target = object;
+    });
+    if (!target) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#101014'; ctx.fillRect(0, 0, size, size);
+
+    const uv = target.geometry.attributes.uv;
+    const skinIndex = target.geometry.attributes.skinIndex;
+    const skinWeight = target.geometry.attributes.skinWeight;
+    const index = target.geometry.index;
+    const bones = target.skeleton ? target.skeleton.bones : [];
+    // A colour per body region, so the atlas can be read at a glance.
+    const REGION = [
+      [/Hips|Spine/i, '#e0552e', 'hips'],
+      [/Chest|Bust/i, '#e8a33a', 'chest'],
+      [/Neck|Head/i, '#f2e05c', 'head'],
+      [/Shoulder/i, '#7ad46a', 'shoulder'],
+      [/UpperArm/i, '#3fb6a8', 'upper arm'],
+      [/LowerArm/i, '#3f86d0', 'lower arm'],
+      [/Hand|Thumb|Index|Middle|Ring|Little/i, '#8f6ce0', 'hand'],
+      [/UpperLeg/i, '#e05a9a', 'thigh'],
+      [/LowerLeg/i, '#c04040', 'shin'],
+      [/Foot|Toe/i, '#a0a8b4', 'foot'],
+    ];
+    const colourFor = (name) => {
+      for (const [re, colour] of REGION) if (re.test(name)) return colour;
+      return '#4a4a52';
+    };
+    const count = index ? index.count : uv.count;
+    for (let i = 0; i < count; i += 3) {
+      const tri = [0, 1, 2].map((k) => (index ? index.getX(i + k) : i + k));
+      // The bone with the most weight over the triangle names the region.
+      const tally = {};
+      for (const v of tri) {
+        for (let k = 0; k < 4; k++) {
+          const w = skinWeight.getComponent(v, k);
+          if (w <= 0.001) continue;
+          const bone = bones[skinIndex.getComponent(v, k)];
+          if (!bone) continue;
+          tally[bone.name] = (tally[bone.name] || 0) + w;
+        }
+      }
+      let best = null;
+      for (const [name, w] of Object.entries(tally)) if (!best || w > best[1]) best = [name, w];
+      ctx.fillStyle = best ? colourFor(best[0]) : '#4a4a52';
+      ctx.beginPath();
+      tri.forEach((v, k) => {
+        const x = uv.getX(v) * size;
+        // glTF puts v=0 at the top of the image and the loader leaves flipY
+        // off to match, so this is `v * size`, not `(1 - v) * size`. Getting it
+        // the other way round paints the leg texture onto the arms, which is
+        // exactly what it did.
+        const y = uv.getY(v) * size;
+        if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.closePath();
+      ctx.fill();
+    }
+    return { url: canvas.toDataURL('image/png'), legend: REGION.map(([, c, n]) => `${n}=${c}`) };
+  },
+  // Puts a data-URL image onto a garment's colour map. Used to check that a
+  // painted texture lands where it was meant to: UV orientation is the kind of
+  // thing that is either obviously right or obviously wrong on the model, and
+  // arguing about flipY from first principles is how you get a shin on a face.
+  wearTextureForTest: (match, url) => new Promise((resolve) => {
+    if (!vrm) { resolve(0); return; }
+    const image = new Image();
+    image.onload = () => {
+      const texture = new THREE.Texture(image);
+      texture.flipY = false;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.needsUpdate = true;
+      let hit = 0;
+      vrm.scene.traverse((object) => {
+        if (!object.isMesh && !object.isSkinnedMesh) return;
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const m of materials) {
+          if (!m.name || !m.name.includes(match)) continue;
+          // Both maps. MToon draws the lit side from `map` and the shadow side
+          // from `shadeMultiplyTexture`; setting only the first repaints a
+          // figure that goes back to its old clothes wherever the sun is not
+          // on it.
+          m.map = texture;
+          if ('shadeMultiplyTexture' in m) m.shadeMultiplyTexture = texture;
+          m.needsUpdate = true;
+          hit++;
+        }
+      });
+      resolve(hit);
+    };
+    image.onerror = () => resolve(-1);
+    image.src = url;
+  }),
+  setOutfitForTest: (key) => applyOutfit(key),
+  getOutfitForTest: () => outfitKey,
+  listOutfitsForTest: () => OUTFITS.map((o) => ({ key: o.key, label: o.label })),
   getSpringSettings: () => {
     if (!vrm || !vrm.springBoneManager) return [];
     return [...vrm.springBoneManager.joints].map((joint) => ({
