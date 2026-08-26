@@ -419,16 +419,33 @@ export const OUTFITS = [
   {
     key: 'blazer', label: '制服（ブレザー）',
     show: { Tops: false, Bottoms: false },
+    // A white shirt under a navy jacket, not a navy shirt on its own -- a
+    // blazer with no lapel is just a recoloured cardigan, which is what this
+    // was before makeBlazerJacket existed. The shirt's sleeve runs a little
+    // past the jacket's own, so a cuff of it shows at the wrist.
     pieces: [
-      { kind: 'blouse', cloth: 0x2b3350, sleeve: 0.30 },
-      { kind: 'skirt', cloth: 0x39405c },
+      { kind: 'blouse', cloth: 0xf7f8fa, sleeve: 0.30 },
+      { kind: 'jacket', cloth: 0x222a46, sleeve: 0.24 },
+      { kind: 'skirt', cloth: 0x2b3350 },
     ],
   },
   {
     key: 'sailor', label: '制服（セーラー）',
     show: { Tops: false, Bottoms: false },
+    // straight: true -- a sailor top's cloth is thick and stiff and falls
+    // straight from the bust rather than nipping in at the waist the way an
+    // ordinary shirt does; without it this was a fitted blouse with a collar
+    // stapled on.
+    //
+    // sleeve: 0.07 -- a short cap sleeve reads fine side-on, where its length
+    // is what the camera sees, but a photo is usually closer to front-on,
+    // where a stubby cylinder is seen mostly end-on and its *width* is what
+    // shows. At 0.16 that read as a flat pale flap sticking out past the
+    // shoulder -- the "wings" -- because the tube was nearly as wide as it
+    // was long. Short enough that the width can't dominate fixes it without
+    // touching the radius at all.
     pieces: [
-      { kind: 'blouse', cloth: 0xf6f7f9, sleeve: 0.16 },
+      { kind: 'blouse', cloth: 0xf6f7f9, sleeve: 0.07, straight: true },
       { kind: 'collar', cloth: 0xf6f7f9, stripe: 0x27314f },
       { kind: 'skirt', cloth: 0x27314f },
     ],
@@ -449,7 +466,7 @@ export const OUTFITS = [
     key: 'idol', label: 'アイドル',
     show: { Tops: false, Bottoms: false },
     pieces: [
-      { kind: 'blouse', cloth: 0xfdf6ff, sleeve: 0.13 },
+      { kind: 'blouse', cloth: 0xfdf6ff, sleeve: 0.07 },
       { kind: 'skirt', cloth: 0x7c4fb8, flare: 0.11, pleats: 28 },
       { kind: 'frill', cloth: 0xfdf2f5, drop: 0.044, scallops: 26 },
       { kind: 'collar', cloth: 0xfdf2f5, stripe: 0x7c4fb8 },

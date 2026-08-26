@@ -41,6 +41,20 @@ const TORSO = [
   { y: 1.378, rx: 0.050, rz: 0.056 },   // neck hole
 ];
 
+// The same body, but falling straight from the bust instead of nipping in at
+// the waist. A blazer's shirt can taper like any shirt; a sailor top's fabric
+// is thick and stiff and does not, which is most of what gives a sailor
+// uniform its silhouette -- and the first version used the tailored TORSO for
+// it regardless, so it looked like a fitted blouse with a collar stapled on.
+// Built by taking the bust station's radius as a floor for everything below
+// it, so the waist and hip cannot pinch in narrower than the bust.
+const STRAIGHT_TORSO = (() => {
+  const bust = TORSO.find((s) => s.y === 1.252);
+  return TORSO.map((s) => (s.y <= bust.y
+    ? { y: s.y, rx: Math.max(s.rx, bust.rx), rz: Math.max(s.rz, bust.rz) }
+    : s));
+})();
+
 // How far a shirt hangs off the body: closer at the shoulders, where it is
 // held up, further below. A constant offset reads as shrink-wrap.
 function shirtLift(y) {
@@ -102,13 +116,14 @@ export function attachToBone(bone, group, { position, rotation, scale = 1 }) {
 // nearly twice as wide as she is deep at the waist and squarer at the chest.
 export function makeBlouse({
   cloth = 0xf6f7f9, hemY = 1.023, neckY = 1.378, sleeve = 0.15, sleeveCloth = null,
+  straight = false,
 } = {}) {
   const group = new THREE.Group();
   const material = new THREE.MeshStandardMaterial({
     color: cloth, roughness: 0.87, side: THREE.DoubleSide,
   });
 
-  const STATIONS = TORSO;
+  const STATIONS = straight ? STRAIGHT_TORSO : TORSO;
   const COLS = 26;
   const positions = [];
   const indices = [];
@@ -147,6 +162,14 @@ export function makeBlouse({
 // A short sleeve, hung on an upper-arm bone so it turns with the arm. Built
 // down the bone's own -Y, which is the direction an arm bone points in a VRM
 // rig once the rest pose is normalised.
+//
+// The cap that closes the shoulder end used to be a full hemisphere at the
+// sleeve's own radius, sitting right at the shoulder joint -- the single most
+// visible point of the whole silhouette. A dome that size does not read as
+// "the top of a sleeve," it reads as a shoulder pad, and stacked on both
+// arms it was the entire "shoulders wider than the body" effect this was
+// reported against. A flat disc closes the same opening without adding a
+// single millimetre of width the cylinder does not already have.
 export function makeSleeve({ cloth = 0xf6f7f9, length = 0.15, top = 0.062, bottom = 0.054 } = {}) {
   const group = new THREE.Group();
   const material = new THREE.MeshStandardMaterial({
@@ -158,9 +181,8 @@ export function makeSleeve({ cloth = 0xf6f7f9, length = 0.15, top = 0.062, botto
   tube.position.y = -length / 2;
   tube.castShadow = true;
   group.add(tube);
-  // A cap over the shoulder end, so the sleeve is not an open pipe seen from
-  // above when she raises her arm.
-  const cap = new THREE.Mesh(new THREE.SphereGeometry(top, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), material);
+  const cap = new THREE.Mesh(new THREE.CircleGeometry(top, 18), material);
+  cap.rotation.x = -Math.PI / 2;
   group.add(cap);
   group.userData.garment = 'sleeve';
   return group;
@@ -179,44 +201,243 @@ export function makeSailorCollar({
   cloth = 0xffffff, stripe = 0x2c3a5e, scale = 1,
 } = {}) {
   const group = new THREE.Group();
-  const clothMat = new THREE.MeshStandardMaterial({
-    color: cloth, roughness: 0.86, side: THREE.DoubleSide,
-  });
-  const stripeMat = new THREE.MeshStandardMaterial({
+  // Plain navy, for the pieces that are a single flat colour and were never
+  // at risk of the panels' z-fighting: the chest guard, the scarf, the knot.
+  const navyMat = new THREE.MeshStandardMaterial({
     color: stripe, roughness: 0.84, side: THREE.DoubleSide,
   });
 
   const NECK_Y = 1.372;
   const BACK_HEM = 1.190;
+  const V_Y = 1.235;
   // Clear of the *outer* garment, not the skin. The first value here was 12mm,
   // measured off the torso, and the collar came out entirely inside a chunky
-  // cardigan -- visible in the render as nothing at all.
-  // Over the shirt, not over the skin -- torsoAt already carries the
-  // shirt's own clearance.
+  // cardigan -- visible in the render as nothing at all. Over the shirt, not
+  // over the skin -- torsoAt already carries the shirt's own clearance.
   const LIFT = 0.010 * scale;
+  // Further out than the back flap. A cardigan is thicker down the front than
+  // across the shoulders, and at the back-flap's clearance the front strips
+  // vanished inside it -- the collar read from behind and not at all from the
+  // front, which is the wrong way round for the one detail that says sailor.
+  const FRONT_LIFT = LIFT * 1.5;
 
-  // The back flap. Runs from the base of the neck round the shoulders to about
-  // the level of the shoulder blades, squared off at the bottom.
-  const COLS = 15;
-  const ROWS = 9;
-  const build = (material, uFrom, uTo, topY, bottomY, widen, lift = LIFT) => {
+  // Every panel here is one vertex-coloured surface -- navy cloth with a
+  // white border painted near its own edges -- rather than three stacked
+  // shapes in navy/white/navy. The stacked version put all three layers at
+  // the same radius with only their edges inset from one another, which is
+  // coplanar geometry wherever they overlap; the GPU has no consistent answer
+  // for which layer wins that depth test, and what actually rendered was a
+  // field of flickering dashes rather than clean piping, worst exactly where
+  // the collar is most visible: right behind her neck. A single surface
+  // cannot z-fight with itself.
+  //
+  // The old code also scaled the *radius* by a `widen` factor across the
+  // whole u-range, including the side edges, to square the flap's bottom
+  // corners off. Applied at the sides that pushed the fabric outward as it
+  // fell, flaring the back flap into wings past her shoulders. There is no
+  // widen here: torsoAt's own curve already goes from a narrow neck to a
+  // full shoulder width over that span, which is the squaring off, and
+  // adding a second multiplier on top of it is what broke the shape.
+  const navy = new THREE.Color(stripe);
+  const white = new THREE.Color(cloth);
+  const trimmed = (uFrac, vFrac, edges, border) => (
+    (edges.includes('uStart') && uFrac < border)
+    || (edges.includes('uEnd') && uFrac > 1 - border)
+    || (edges.includes('vEnd') && vFrac > 1 - border * 1.3)
+  );
+  const buildPanel = (uFrom, uTo, topY, bottomY, lift, edges, border = 0.12) => {
+    const COLS = 22;
+    const ROWS = 11;
+    const positions = [];
+    const colors = [];
+    const indices = [];
+    const c = new THREE.Color();
+    // uFrom/uTo may be numbers or functions of vFrac -- the back flap needs
+    // a u-range that narrows as it falls (see the note above the call), and a
+    // constant number is just a function that ignores its argument.
+    const uf = typeof uFrom === 'function' ? uFrom : () => uFrom;
+    const ut = typeof uTo === 'function' ? uTo : () => uTo;
+    for (let r = 0; r <= ROWS; r++) {
+      const vFrac = r / ROWS;
+      const y = topY + (bottomY - topY) * vFrac;
+      const at = torsoAt(y, lift);
+      const rowFrom = uf(vFrac);
+      const rowTo = ut(vFrac);
+      for (let col = 0; col <= COLS; col++) {
+        const uFrac = col / COLS;
+        const u = rowFrom + (rowTo - rowFrom) * uFrac;
+        const angle = u * Math.PI * 2;
+        positions.push(Math.sin(angle) * at.rx, y, Math.cos(angle) * at.rz);
+        c.copy(trimmed(uFrac, vFrac, edges, border) ? white : navy);
+        colors.push(c.r, c.g, c.b);
+      }
+    }
+    for (let r = 0; r < ROWS; r++) {
+      for (let col = 0; col < COLS; col++) {
+        const a = r * (COLS + 1) + col;
+        const b = a + 1;
+        const d = a + COLS + 1;
+        const e = d + 1;
+        indices.push(a, d, b, b, d, e);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const material = new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.85, side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.castShadow = true;
+    return mesh;
+  };
+
+  // The back flap: shoulder point to shoulder point round the back, trimmed
+  // along both sides and across the squared-off bottom hem. u is measured
+  // with 0 at her front, so the back runs roughly 0.235 to 0.765 up near the
+  // neck -- but that span has to narrow as the flap falls, not stay constant.
+  // torsoAt's own radius nearly doubles between the neck and the back hem
+  // (the neck-to-shoulder taper), and a constant angular span swept at a
+  // doubled radius sweeps double the arc length: at the original constant
+  // 0.235/0.765 the flap's lower corners landed almost due sideways from her
+  // body rather than over her shoulder blades, projecting past her actual
+  // shoulders as two wings. Narrowing the span as it falls keeps the edge
+  // roughly over the same point on her body at every height instead.
+  group.add(buildPanel(
+    (v) => 0.235 + (0.335 - 0.235) * v,
+    (v) => 0.765 - (0.765 - 0.665) * v,
+    NECK_Y, BACK_HEM, LIFT, ['uStart', 'uEnd', 'vEnd']
+  ));
+
+  // The front: two strips from the shoulders down to the V, trimmed along
+  // their outer edge and the bottom hem where they run into the chest guard --
+  // not the inner edge, since that is where the guard sits behind them, not a
+  // hem of its own. `uFrom` is always the outer side here so `edges` can stay
+  // the same for both strips despite the two spans running opposite ways
+  // round the front centre-line.
+  group.add(buildPanel(0.048, 0.018, NECK_Y, V_Y, FRONT_LIFT, ['uStart', 'vEnd']));
+  group.add(buildPanel(0.952, 0.982, NECK_Y, V_Y, FRONT_LIFT, ['uStart', 'vEnd']));
+
+  // The chest guard (胸当て): a triangular panel of the collar's own cloth,
+  // filling the V the two front strips leave open. A collar with a V this
+  // deep is not worn over bare shirt in the gap -- the gap is faced with its
+  // own piece of fabric, sewn behind the strips -- and without it the V shows
+  // the blouse straight through as a wedge of the wrong colour.
+  {
+    const guard = new THREE.Mesh(new THREE.BufferGeometry(), navyMat);
+    const ROWS_G = 6;
+    const positions = [];
+    const indices = [];
+    for (let r = 0; r <= ROWS_G; r++) {
+      const v = r / ROWS_G;
+      const y = NECK_Y + (V_Y - NECK_Y) * v;
+      const at = torsoAt(y, FRONT_LIFT - 0.003);   // just behind the strips
+      const half = 0.048 * scale * (1 - v);        // narrows to a point at the V
+      positions.push(-half, y, at.rz, half, y, at.rz);
+    }
+    for (let r = 0; r < ROWS_G; r++) {
+      const a = r * 2; const b = a + 1; const d = a + 2; const e = a + 3;
+      indices.push(a, d, b, b, d, e);
+    }
+    guard.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    guard.geometry.setIndex(indices);
+    guard.geometry.computeVertexNormals();
+    guard.castShadow = true;
+    group.add(guard);
+  }
+
+  // The neckerchief. A real one is a square scarf roughly 85cm on a side,
+  // folded corner to corner into a triangle with a 120cm hypotenuse and
+  // draped through the V loosely rather than pinned flat against it -- the
+  // first version, at a 5cm half-width, was closer to a lapel pin than a
+  // scarf. Bigger now, and hanging further down than the guard behind it.
+  const scarf = new THREE.Mesh(new THREE.BufferGeometry(), navyMat);
+  {
+    const body = torsoAt(1.262, FRONT_LIFT + 0.008);
+    const w = 0.075 * scale;
+    const front = body.rz + 0.006;
+    const positions = [
+      -w, 1.262, front,
+      w, 1.262, front,
+      0, 1.085, front + 0.020 * scale,
+    ];
+    scarf.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    scarf.geometry.computeVertexNormals();
+  }
+  scarf.castShadow = true;
+  group.add(scarf);
+
+  // The knot, where the strips cross.
+  const knot = new THREE.Mesh(new THREE.SphereGeometry(0.013 * scale, 10, 8), navyMat);
+  const at = torsoAt(1.262, FRONT_LIFT + 0.008);
+  knot.position.set(0, 1.262, at.rz + 0.008);
+  knot.scale.set(1.5, 0.85, 0.6);
+  group.add(knot);
+
+  group.userData.garment = 'collar';
+  return group;
+}
+
+// ---- ブレザー ----
+// The jacket worn over the blouse: notched lapels rolling open at the front
+// down to a button, closed above and below that the way a blazer actually
+// reads from a few metres away -- as one piece of cloth with two triangular
+// flaps at the top, not as two independent panels laced together. Two things
+// about the front are not just style:
+//
+//  - The gap the lapels open onto is not symmetric. Her left edge reaches
+//    further in towards the centre than her right edge does, because a
+//    women's jacket closes left over right -- the opposite of a man's -- and
+//    an even gap on both sides reads as a men's jacket regardless of anything
+//    else about the shape.
+//  - The lapels are not flat against the body. A lapel is the same cloth as
+//    the collar, folded back and outward, so its outer edge stands proud of
+//    the chest rather than following the body's own curve the way the rest
+//    of the jacket does.
+//
+// This is stylised, not a cloth simulation -- the notch where the collar
+// meets the lapel is a seam between two separate meshes rather than a
+// modelled cut, which is close enough at the polygon count everything else
+// here is built at.
+export function makeBlazerJacket({
+  cloth = 0x222a46, button = 0x14182a, buttonY = 1.205, hemY = 1.010,
+  sleeve = 0.24, sleeveCloth = null,
+} = {}) {
+  const group = new THREE.Group();
+  const material = new THREE.MeshStandardMaterial({
+    color: cloth, roughness: 0.68, side: THREE.DoubleSide,
+  });
+
+  const NECK_Y = 1.372;
+  const LIFT = 0.018;
+
+  // How wide the front gap is at a given height: zero at the button, widest
+  // at the neckline, and narrower on her left than on her right -- see the
+  // note above.
+  const gapRight = (y) => 0.150 * THREE.MathUtils.clamp((y - buttonY) / (NECK_Y - buttonY), 0, 1);
+  const gapLeft = (y) => 0.070 * THREE.MathUtils.clamp((y - buttonY) / (NECK_Y - buttonY), 0, 1);
+
+  // ---- The body: one tube, closed below the button and gapped above it. ----
+  {
+    const ROWS = 11;
+    const COLS = 30;
     const positions = [];
     const indices = [];
     for (let r = 0; r <= ROWS; r++) {
-      const v = r / ROWS;
-      const y = topY + (bottomY - topY) * v;
-      const body = torsoAt(y, lift);
-      // The flap widens as it falls, which is what squares off a sailor collar
-      // instead of leaving it a tube.
-      const grow = 1 + widen * v;
+      const t = r / ROWS;
+      const y = hemY + (NECK_Y - hemY) * t;
+      const at = torsoAt(y, LIFT);
+      const gR = gapRight(y);
+      const gL = gapLeft(y);
+      // The ring runs from her right gap edge, the long way round through the
+      // back, to her left gap edge -- the whole circle minus the notch at the
+      // front, which closes to nothing at the button.
       for (let c = 0; c <= COLS; c++) {
-        const u = uFrom + (uTo - uFrom) * (c / COLS);
+        const u = gR + (1 - gL - gR) * (c / COLS);
         const angle = u * Math.PI * 2;
-        positions.push(
-          Math.sin(angle) * body.rx * grow,
-          y,
-          Math.cos(angle) * body.rz * grow
-        );
+        positions.push(Math.sin(angle) * at.rx, y, Math.cos(angle) * at.rz);
       }
     }
     for (let r = 0; r < ROWS; r++) {
@@ -232,68 +453,128 @@ export function makeSailorCollar({
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setIndex(indices);
     geometry.computeVertexNormals();
+    const body = new THREE.Mesh(geometry, material);
+    body.castShadow = true;
+    body.receiveShadow = true;
+    group.add(body);
+  }
+
+  // ---- The lapels: two flaps rolling outward from the gap's edge. ----
+  // Each is a strip over the same height range as the gap: its inner edge
+  // follows the gap boundary at the body's own radius, and its outer edge
+  // swings back towards the centre and bulges out past the body -- which is
+  // what a folded-back lapel actually is, not a flat panel lying against the
+  // chest.
+  //
+  // The two are not mirror images, on purpose. A pair built from one function
+  // with a sign flip came out reading as a zipper -- both edges stopping
+  // politely near the centre-line, close enough in magnitude that nothing
+  // told the eye which side was on top. What actually reads as an overlap is
+  // one edge visibly crossing onto the *other* side of the centre-line while
+  // the other stays clear of it, so these are two distinct shapes: her right
+  // lapel folds back only across its own side and no further; her left one --
+  // the one on top -- rolls all the way past the centre and a little into
+  // her right side, over the top of it. `u` past 1 is not a bug: angle = u *
+  // 2π is periodic, so u = 1.05 lands in exactly the small-positive-u
+  // territory her right lapel occupies, which is the crossing this needs.
+  const buildLapelStrip = (innerU, outerU, bulge) => {
+    const ROWS2 = 8;
+    const positions = [];
+    const indices = [];
+    for (let r = 0; r <= ROWS2; r++) {
+      const v = r / ROWS2;
+      const y = buttonY + (NECK_Y - buttonY) * v;
+      const at = torsoAt(y, LIFT);
+      const innerAngle = innerU(v) * Math.PI * 2;
+      positions.push(Math.sin(innerAngle) * at.rx, y, Math.cos(innerAngle) * at.rz);
+      const outerAngle = outerU(v) * Math.PI * 2;
+      const b = bulge(v);
+      positions.push(
+        Math.sin(outerAngle) * (at.rx + b), y - 0.006, Math.cos(outerAngle) * (at.rz + b)
+      );
+    }
+    for (let r = 0; r < ROWS2; r++) {
+      const a = r * 2; const b = a + 1; const d = a + 2; const e = a + 3;
+      indices.push(a, d, b, b, d, e);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
     return mesh;
   };
 
-  // Back: from one shoulder round the back to the other. u is measured with 0
-  // at her front, so the back runs 0.25 to 0.75.
-  group.add(build(stripeMat, 0.235, 0.765, NECK_Y, BACK_HEM, 0.16));
-  // A white band inside the navy, the two stripes a sailor collar carries.
-  const trim = build(clothMat, 0.255, 0.745, NECK_Y + 0.002, BACK_HEM - 0.026, 0.14);
-  trim.scale.multiplyScalar(1.0);
-  group.add(trim);
-  group.add(build(stripeMat, 0.272, 0.728, NECK_Y + 0.004, BACK_HEM - 0.044, 0.12));
+  // Her right lapel: tucked under, folding back only a third of the way from
+  // its own edge towards the centre.
+  group.add(buildLapelStrip(
+    (v) => gapRight(buttonY + (NECK_Y - buttonY) * v),
+    (v) => gapRight(buttonY + (NECK_Y - buttonY) * v) * 0.4,
+    (v) => 0.018 * (0.3 + 0.7 * v)
+  ));
+  // Her left lapel: the one on top, crossing all the way past the centre
+  // line and into her right side's territory.
+  group.add(buildLapelStrip(
+    (v) => 1 - gapLeft(buttonY + (NECK_Y - buttonY) * v),
+    (v) => 1 + 0.045 * v,
+    (v) => 0.040 * (0.3 + 0.7 * v)
+  ));
 
-  // Front: two strips from the shoulders down to the V. They narrow as they
-  // fall and stop short of meeting, which is where the neckerchief goes.
-  //
-  // Further out than the back flap. A cardigan is thicker down the front than
-  // across the shoulders, and at the back-flap's clearance these two vanished
-  // inside it -- the collar read from behind and not at all from the front,
-  // which is the wrong way round for the one detail that says sailor.
-  const FRONT_LIFT = LIFT * 1.5;
-    // Narrow. These sit *on top of* whatever the model happens to be wearing,
-  // and how far out that is varies by character and by outfit -- a chunky
-  // puffer stands twice as far off the chest as a knit cardigan does. At panel
-  // width the mismatch reads as two rectangles stuck to her front; as a pair of
-  // thin edges it reads as the collar's trim wherever it lands. The real fix is
-  // for a sailor uniform to replace the top rather than lie over it, which
-  // means building the shirt as well.
-  const V_Y = 1.235;
-  for (const [from, to] of [[0.952, 0.982], [0.018, 0.048]]) {
-    group.add(build(stripeMat, from, to, NECK_Y, V_Y, 0.0, FRONT_LIFT));
-  }
-
-  // The neckerchief: a small triangle hanging at the base of the V.
-  const scarf = new THREE.Mesh(new THREE.BufferGeometry(), stripeMat);
+  // ---- The collar stand: a narrow band round the back of the neck. ----
   {
-    const body = torsoAt(1.24, FRONT_LIFT);
-    const w = 0.026 * scale;
-    const front = body.rz + 0.004;
-    const positions = [
-      -w, 1.240, front,
-      w, 1.240, front,
-      0, 1.130, front + 0.012 * scale,
-    ];
-    scarf.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    scarf.geometry.computeVertexNormals();
+    const ROWS3 = 3;
+    const COLS3 = 14;
+    const positions = [];
+    const indices = [];
+    const topY = NECK_Y + 0.020;
+    const botY = NECK_Y - 0.006;
+    for (let r = 0; r <= ROWS3; r++) {
+      const v = r / ROWS3;
+      const y = topY + (botY - topY) * v;
+      const at = torsoAt(NECK_Y, LIFT + 0.010);
+      const rr = 1 - Math.abs(v - 0.4) * 0.3;
+      for (let c = 0; c <= COLS3; c++) {
+        // Shoulder point to shoulder point round the back -- the same span
+        // the sailor collar's own back flap uses.
+        const u = 0.235 + (0.765 - 0.235) * (c / COLS3);
+        const angle = u * Math.PI * 2;
+        positions.push(Math.sin(angle) * at.rx * rr, y, Math.cos(angle) * at.rz * rr);
+      }
+    }
+    for (let r = 0; r < ROWS3; r++) {
+      for (let c = 0; c < COLS3; c++) {
+        const a = r * (COLS3 + 1) + c;
+        const b = a + 1;
+        const d = a + COLS3 + 1;
+        const e = d + 1;
+        indices.push(a, d, b, b, d, e);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const collar = new THREE.Mesh(geometry, material);
+    collar.castShadow = true;
+    group.add(collar);
   }
-  scarf.castShadow = true;
-  group.add(scarf);
 
-  // The knot, where the strips cross.
-  const knot = new THREE.Mesh(
-    new THREE.SphereGeometry(0.011 * scale, 10, 8),
-    new THREE.MeshStandardMaterial({ color: stripe, roughness: 0.8 })
-  );
-  const at = torsoAt(1.243, FRONT_LIFT);
-  knot.position.set(0, 1.243, at.rz + 0.006);
-  knot.scale.set(1.4, 0.8, 0.6);
-  group.add(knot);
+  // ---- Buttons ----
+  // The second one sits about level with where a pocket would be, which is
+  // the one hard number the reference material gave for spacing them.
+  const buttonMat = new THREE.MeshStandardMaterial({ color: button, roughness: 0.4 });
+  for (const y of [buttonY, buttonY - 0.062]) {
+    const at = torsoAt(y, LIFT + 0.004);
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.007, 8, 6), buttonMat);
+    dot.position.set(0, y, at.rz);
+    dot.scale.z = 0.6;
+    group.add(dot);
+  }
 
-  group.userData.garment = 'collar';
+  group.userData.garment = 'jacket';
+  group.userData.sleeve = sleeve;
+  group.userData.sleeveCloth = sleeveCloth === null ? cloth : sleeveCloth;
   return group;
 }
 

@@ -1242,6 +1242,18 @@ test.describe('wardrobe', () => {
     // And the model's own shorts are off, or she is wearing both.
     expect(sailor.visible.Bottoms).toBe(false);
 
+    // The blazer's own regression: this outfit *was* a recoloured cardigan
+    // for one entire session, because nothing checked for a lapel and a
+    // navy hoodie with no collar passes every other test in this file. A
+    // jacket with no 'jacket' piece is exactly that regression again.
+    const blazer = await page.evaluate(() => {
+      window.__char.setOutfitForTest('blazer');
+      return window.__char.wardrobeStateForTest();
+    });
+    expect(blazer.pieces).toContain('jacket');
+    expect(blazer.pieces).toContain('skirt');
+    expect(blazer.visible.Bottoms).toBe(false);
+
     const plain = await page.evaluate(() => {
       window.__char.setOutfitForTest('original');
       return window.__char.wardrobeStateForTest();

@@ -11,6 +11,7 @@ import { BIRDS, SCENE_BIRD, makeCrab, setWingSpread } from './fauna.js';
 import { OUTFITS, outfitByKey, buildOutfit, outfitIsDressed } from './wardrobe.js';
 import {
   attachToBone, makeSailorCollar, makePleatedSkirt, makeFrillRing, makeBlouse, makeSleeve,
+  makeBlazerJacket,
 } from './garments.js';
 
 const scene = new THREE.Scene();
@@ -1739,7 +1740,9 @@ function clearWornPieces() {
 // Where each kind of garment hangs. A collar rides the upper chest and a skirt
 // the hips, which is what makes them follow her when she moves rather than
 // staying behind in the world like the umbrella does.
-const PIECE_BONE = { collar: 'upperChest', skirt: 'hips', frill: 'hips', blouse: 'chest' };
+const PIECE_BONE = {
+  collar: 'upperChest', skirt: 'hips', frill: 'hips', blouse: 'chest', jacket: 'chest',
+};
 
 function wearPieces(outfit) {
   clearWornPieces();
@@ -1761,6 +1764,7 @@ function wearPieces(outfit) {
     // short one.
     if (spec.kind === 'collar') group = makeSailorCollar({ ...spec });
     else if (spec.kind === 'blouse') group = makeBlouse({ ...spec });
+    else if (spec.kind === 'jacket') group = makeBlazerJacket({ ...spec });
     else if (spec.kind === 'skirt') group = makePleatedSkirt({ ...spec });
     else if (spec.kind === 'frill') {
       const base = outfit.pieces.find((p) => p.kind === 'skirt');
@@ -1786,10 +1790,14 @@ function wearPieces(outfit) {
     });
     wornPieces.push(group);
 
-    // Sleeves are part of the blouse but they cannot hang off the chest: an
-    // arm that moves takes its sleeve with it, so each one goes on its own
-    // upper-arm bone.
-    if (spec.kind === 'blouse' && group.userData.sleeve) {
+    // Sleeves are part of the blouse (or the jacket over it) but they cannot
+    // hang off the chest: an arm that moves takes its sleeve with it, so each
+    // one goes on its own upper-arm bone. A jacket sleeve is a hair wider than
+    // the shirt sleeve underneath it, so it clears rather than fighting for
+    // the same surface, and shorter, so a cuff of shirt shows past its end --
+    // which is the point of a shirt sleeve existing under a jacket at all.
+    if ((spec.kind === 'blouse' || spec.kind === 'jacket') && group.userData.sleeve) {
+      const jacket = spec.kind === 'jacket';
       for (const side of ['left', 'right']) {
         const armBone = vrm.humanoid.getRawBoneNode(`${side}UpperArm`);
         if (!armBone) continue;
@@ -1797,9 +1805,11 @@ function wearPieces(outfit) {
           cloth: group.userData.sleeveCloth,
           length: group.userData.sleeve * scale,
           // Her upper arm measures 42mm in the radius, so a sleeve is about
-          // 48. The first pass guessed 62 and gave her deltoids.
-          top: 0.050 * scale,
-          bottom: 0.045 * scale,
+          // 48-50. The jacket sleeve only needs to clear the shirt sleeve
+          // underneath it, not stand well off it -- 56mm read as a shoulder
+          // pad even before the cap sphere piled a dome on top of it.
+          top: (jacket ? 0.052 : 0.050) * scale,
+          bottom: (jacket ? 0.048 : 0.045) * scale,
         });
         // Aimed at the elbow. A sleeve built down its own -Y and parented to
         // the bone assumes the bone points that way, and a VRM arm bone does
