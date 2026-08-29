@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FPRLサイクル｜理論編</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans+JP:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="grid-overlay" aria-hidden="true"></div>
+
+<header class="hero">
+  <div class="hero-inner">
+    <p class="eyebrow">FPRL CYCLE — THEORY SHEET / REV. 2026</p>
+    <h1>基準がなければ、<br>差分は生まれない。</h1>
+    <p class="hero-sub">F（基盤）→ P（知覚）→ R（推論）→ L（学習）という4つのゲートを通過して初めて、経験は学習になる。n=1の実務経験から抽出した、認知と熟達の仮説モデル。</p>
+
+    <div class="loop-diagram" role="img" aria-label="F to P to R to L の循環ループ図。各遷移にE1・E2・E3のゲートがある。">
+      <svg viewBox="0 0 900 340" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#5FD4C4"></path>
+          </marker>
+        </defs>
+
+        <!-- loop path -->
+        <path id="loopPath" d="M 130 100 C 260 20, 520 20, 650 100 C 780 170, 780 230, 650 260 C 520 320, 260 320, 130 260 C 20 220, 20 140, 130 100 Z"
+              fill="none" stroke="#2A5578" stroke-width="2"/>
+        <path d="M 130 100 C 260 20, 520 20, 650 100 C 780 170, 780 230, 650 260 C 520 320, 260 320, 130 260 C 20 220, 20 140, 130 100 Z"
+              fill="none" stroke="#5FD4C4" stroke-width="2" stroke-dasharray="6 10" class="flow-dash"/>
+
+        <!-- nodes -->
+        <g class="node">
+          <circle cx="130" cy="100" r="34"/>
+          <text x="130" y="94">F</text>
+          <text x="130" y="112" class="node-label">基盤</text>
+        </g>
+        <g class="node">
+          <circle cx="650" cy="100" r="34"/>
+          <text x="650" y="94">P</text>
+          <text x="650" y="112" class="node-label">知覚</text>
+        </g>
+        <g class="node">
+          <circle cx="650" cy="260" r="34"/>
+          <text x="650" y="254">R</text>
+          <text x="650" y="272" class="node-label">推論</text>
+        </g>
+        <g class="node">
+          <circle cx="130" cy="260" r="34"/>
+          <text x="130" y="254">L</text>
+          <text x="130" y="272" class="node-label">学習</text>
+        </g>
+
+        <!-- gates -->
+        <g class="gate">
+          <rect x="365" y="42" width="70" height="30" rx="4"/>
+          <text x="400" y="62">E₁</text>
+        </g>
+        <g class="gate">
+          <rect x="730" y="165" width="70" height="30" rx="4"/>
+          <text x="765" y="185">E₂</text>
+        </g>
+        <g class="gate">
+          <rect x="365" y="288" width="70" height="30" rx="4"/>
+          <text x="400" y="308">E₃</text>
+        </g>
+
+        <text x="60" y="185" class="gate-note">残響</text>
+      </svg>
+    </div>
+    <p class="hero-caption">F→P間：気づくゲート（E₁） ／ P→R間：考えるゲート（E₂） ／ R→L間：変わるゲート（E₃） ／ L→Fで循環し、次のFを更新する</p>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" id="toc" aria-label="目次">
+    <div class="toc-head">CONTENTS</div>
+    <div id="tocList"></div>
+  </nav>
+
+  <main class="content" id="content">
+    <p class="loading">読み込み中…</p>
+  </main>
+</div>
+
+<footer class="site-footer">
+  <p>FPRL — n=1の実務経験から構築された仮説モデル。理論は継続的に更新される。</p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
