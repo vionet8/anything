@@ -1,83 +1,94 @@
 # AI Secretary — 自分専用のAI秘書/AI右腕
 
-Claude Codeを、ユーザー個人の好み・価値観・仕事のスタイルを継続的に蓄積して理解する
-「AI秘書」に変える仕組み。ユーザーレベル(`~/.claude/`)にインストールするため、
-どのプロジェクト・どのチャットを開いても同じ記憶とふるまいを引き継げる。
+Claude(claude.aiのWeb・モバイル・デスクトップ、Claude Codeを含むすべて)を、
+ユーザー個人の好み・価値観・仕事のスタイルを継続的に蓄積して理解する「AI秘書」に
+変える仕組み。記憶は自前サーバーではなく **Google Driveの"AI Secretary"フォルダ**
+に置かれたMarkdownノートとして保存されるため、Google Driveコネクタさえ有効なら
+どのClaudeからでも同じ記憶を読み書きできる。Obsidianユーザーなら、同じフォルダを
+vaultとして開けばObsidianアプリからも直接閲覧・編集できる。
+
+## なぜこの構成か
+
+最初はローカルのベクトルDB(MCPサーバー)案で作ったが、「claude.aiのWeb/モバイル
+アプリも含め、あらゆるClaude利用で記憶を共有したい」という要望に対して、自前で
+常時稼働のリモートMCPサーバー+OAuth認証+ホスティングを新たに用意するのは
+過剰だと判断し、**既にAnthropicが提供しているGoogle Driveコネクタに乗る**方式に
+作り替えた。サーバー運用・認証・課金が一切不要になる。
 
 ## 構成
 
 ```
 ai-secretary/
 ├── research/market-research.md   # パーソナルAIアシスタント市場調査(2026年時点)
-├── mcp-server/                   # 記憶を持つMCPサーバー(ローカルベクトルDB)
-│   ├── src/                      # remember / recall / forget / 一覧 / 統計 の5ツール
-│   └── README.md
-├── skills/ai-secretary/SKILL.md  # 「AI秘書」としてのふるまい方を定義するスキル
-└── install.sh                    # ユーザースコープへの一括インストーラ
+├── skills/ai-secretary/SKILL.md  # 「AI秘書」としてのふるまい方(Drive読み書き手順)を定義
+└── install.sh                    # Claude Code用: スキルをユーザースコープにコピー
 ```
 
-### なぜこの3層構成か
+記憶そのものはこのリポジトリの外、あなたのGoogle Drive上に存在する:
 
-1. **市場調査** (`research/`) — ChatGPT/Gemini/CopilotのMemory機能、Rewind/Limitless
-   のような常時記録型、Mem0/Zepのようなメモリフレームワークなどを調査し、この設計の
-   位置づけ(ローカル完結・低コスト・開発ワークフロー統合というニッチ)を確認した。
-2. **記憶(RAG/ベクトルDB)** (`mcp-server/`) — ユーザーの趣味趣向・仕事スタイル・価値観
-   などの事実を、ローカル埋め込みモデルでベクトル化してローカルDBに蓄積し、意味検索で
-   呼び出す。外部APIキー不要、データは一切外に出ない。
-3. **パーソナリティ** (`skills/ai-secretary/`) — ここでの「パーソナリティ」はClaude側の
-   キャラクター演技ではなく、「ユーザー自身をちゃんと理解し、記憶を蓄積している構造」
-   そのものを指す。会話の前に関連記憶を思い出し(`recall`)、会話中に新しい事実を
-   静かに記憶する(`remember`)ふるまいをスキルとして定義している。
+```
+AI Secretary/                  (Google Driveのマイドライブ直下)
+├── README.md
+├── memories/
+│   ├── work_style/ hobbies/ food/ communication_style/ goals/
+│   ├── relationships/ tools_and_tech/ schedule_patterns/
+│   └── values/ dislikes/ general/
+└── profile/
+```
+
+- 1事実=1ファイル(immutable)。Google Driveの書き込みツールはファイルの中身を
+  後から編集できない(タイトル/移動のみ)ため、事実が変わったら新しいファイルを
+  作る設計にしている。
+- 取得(recall)は `search_files` のキーワード検索 + 検索結果に含まれる
+  `contentSnippet`(ノートが短いため大抵は全文が返る)で完結させ、
+  `read_file_content` は使わない設計にしている(理由は下記「わかったこと」参照)。
+
+このセッションで実際に `vionet828@gmail.com` のGoogle Driveに上記フォルダ構造を
+作成済み: https://drive.google.com/drive/folders/12JihAZsraHzANWUn0yG_YwNLpdD5DIp6
 
 ## セットアップ
 
-```bash
-./install.sh
-```
-
-これだけで以下が行われる:
-
-- `mcp-server/` の依存関係インストール
-- `claude mcp add -s user ai-secretary-memory -- node .../src/index.js` による
-  ユーザースコープでのMCPサーバー登録
-- `skills/ai-secretary` を `~/.claude/skills/ai-secretary` にコピー
-
-インストール後、実行中のClaude Codeセッションは一度再起動してMCPサーバーを
-読み込ませる。初回、記憶の保存/検索を行うタイミングで埋め込みモデル
-(`Xenova/all-MiniLM-L6-v2`, 約90MB)が `huggingface.co` から一度だけ
-ダウンロードされる(以降はローカルにキャッシュされ、完全オフラインで動作する)。
-このモデルダウンロードには、このリポジトリを開発したサンドボックス環境ではなく、
-**実際にインストールする手元のマシン**でのネットワークアクセスが必要。
+1. **Google Driveコネクタ**: claude.ai > Settings > Connectors > Google Drive
+   を有効化(既に有効な場合は不要)。
+2. **Claude Code用スキル**:
+   ```bash
+   ./install.sh
+   ```
+   `~/.claude/skills/ai-secretary` にスキルをコピーするだけ。サーバー登録は不要。
+3. **(任意) Obsidianとの連携**: Google Drive for desktopをインストールし、
+   ローカルにミラーされた `AI Secretary` フォルダをObsidian vaultのルートとして
+   開く。これでObsidianアプリからも同じメモを直接編集できる。
 
 ## 使い方
 
-インストール後は、どのプロジェクトのどのチャットでも:
+セットアップ後は、どのClaude(claude.aiでもClaude Codeでも)でも:
 
-- 「覚えておいて: 私は朝型で午前中に集中したい」のように話しかけると `remember` で保存される
-- おすすめ・計画・優先順位付けなど、好みが関わる質問をすると、事前に `recall` で
-  関連する記憶を呼び出した上で答える
-- 「私について何を知ってる?」と聞くと `list_recent_memories` / `memory_stats` を使って
-  要約してくれる
+- 「覚えておいて: 私は朝型で午前中に集中したい」→ `memories/work_style/` に
+  1ファイル作成される
+- おすすめ・計画・優先順位付けなど好みが関わる質問 → 事前に関連メモを検索して
+  踏まえた上で回答する
+- 「私について何を知ってる?」→ 各カテゴリを検索して要約する
 
-## 動作確認について
+## 実装時にわかったこと(Google Driveツールの制約)
 
-このセッション(クラウドのサンドボックス環境)は `huggingface.co` へのアウトバウンド
-アクセスがネットワークポリシーでブロックされていたため、埋め込みモデルの実ダウンロード
-を伴うエンドツーエンドの動作確認はできなかった。代わりに以下を確認済み:
+- `create_file` はデフォルトでプレーンテキストをGoogleドキュメントに変換する。
+  `.md`ファイルのまま残すには `contentMimeType: 'text/markdown'` と
+  `disableConversionToGoogleType: true` を必ず指定する必要がある(実際にREADME.md
+  を作成して `mimeType: "text/markdown"` のまま保存されることを確認済み)。
+- `update_file` はタイトルとフォルダ移動のみ対応で、**ファイル内容の更新はできない**。
+  → 「1事実=1ファイルのimmutable設計」はこの制約から導いた。
+- `read_file_content` がサポートするMIMEタイプにMarkdown/プレーンテキストは
+  **含まれておらず**、`.md`ファイルに対しては空文字が返ることを実機で確認した。
+  → 内容取得は `read_file_content` ではなく、`search_files` が返す
+  `contentSnippet`(ノートが短ければ全文相当が返る)で代替する設計にした。
+  `fullText contains 'キーワード'` で検索して動作することも確認済み。
 
-- MCPサーバーが起動し、5つのツール(`remember`/`recall`/`forget`/
-  `list_recent_memories`/`memory_stats`)を正しく登録すること(実際のMCPクライアントで
-  ハンドシェイク・`listTools`を実施して確認)
-- ベクトルストア層(vectraの `insertItem`/`queryItems`/`listItemsByMetadata`/
-  `deleteItem`)が、ダミー埋め込みを使った検証で意図通りに類似度順位付け・
-  カテゴリフィルタ・削除を行うこと
+## 今後の拡張余地
 
-手元のマシン(ネットワーク制限のない環境)で `./install.sh` を実行し、実際に
-`remember`→`recall` を試して、実モデルでの精度・挙動を確認することを推奨する。
-
-## 今後の拡張余地(市場調査より)
-
-`research/market-research.md` で触れている通り、業界的には単純なベクトル検索から
-「ベクトル+ナレッジグラフ」のハイブリッドへの移行が進んでいる。将来的に「昔はAが
-好きだったが今はBを好む」のような時系列変化を扱いたくなった場合は、軽量な
-ナレッジグラフ層(例: Zep/Graphitiのアプローチ)を追加することを検討する。
+- `research/market-research.md` にある通り、業界的にはベクトル検索から
+  「ベクトル+ナレッジグラフ」のハイブリッドへの移行が進んでいる。Drive検索は
+  意味検索ではなくキーワード検索なので、将来的に精度を上げたくなった場合は、
+  ローカル(Claude Code側)でのみ軽量な埋め込み検索を補助的に使う、といった
+  拡張の余地を残している。
+- `profile/` フォルダは現状空。メモが増えてきたら、カテゴリごとの要約を
+  Claudeに作らせて置く運用にすると、recall時の検索回数を減らせる。

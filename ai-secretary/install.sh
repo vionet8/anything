@@ -1,31 +1,21 @@
 #!/usr/bin/env bash
-# Installs the AI secretary at USER scope (~/.claude/), so it is available in
-# every Claude Code chat on this machine, regardless of which project is open.
+# Installs the AI secretary skill at USER scope (~/.claude/skills/), so it's
+# available in every Claude Code chat on this machine, regardless of project.
 #
-# What this does:
-#   1. npm install the memory MCP server (local vector DB + local embeddings).
-#   2. Register it with Claude Code at user scope (`claude mcp add -s user`).
-#   3. Copy the `ai-secretary` skill into ~/.claude/skills/.
+# There is no server to run and nothing to register: the actual memory lives
+# as Markdown files in a "AI Secretary" Google Drive folder, read/written via
+# the Google Drive connector — which is why the same memory also works from
+# claude.ai (web/mobile/desktop), not just Claude Code, as long as the Google
+# Drive connector is enabled for your account (claude.ai > Settings >
+# Connectors) and this skill's instructions are available to that surface.
 #
-# Safe to re-run: MCP registration is idempotent (removes and re-adds), and
-# the skill copy overwrites the previous version.
+# Safe to re-run: overwrites the previous copy of the skill.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MCP_SERVER_DIR="$SCRIPT_DIR/mcp-server"
 SKILL_SRC="$SCRIPT_DIR/skills/ai-secretary"
 SKILL_DEST="$HOME/.claude/skills/ai-secretary"
-
-command -v node >/dev/null 2>&1 || { echo "node is required (v18+)." >&2; exit 1; }
-command -v claude >/dev/null 2>&1 || { echo "the 'claude' CLI is required on PATH." >&2; exit 1; }
-
-echo "==> Installing MCP server dependencies ($MCP_SERVER_DIR)"
-(cd "$MCP_SERVER_DIR" && npm install)
-
-echo "==> Registering ai-secretary-memory MCP server at user scope"
-claude mcp remove -s user ai-secretary-memory >/dev/null 2>&1 || true
-claude mcp add -s user ai-secretary-memory -- node "$MCP_SERVER_DIR/src/index.js"
 
 echo "==> Installing the ai-secretary skill to $SKILL_DEST"
 mkdir -p "$HOME/.claude/skills"
@@ -34,18 +24,19 @@ cp -r "$SKILL_SRC" "$SKILL_DEST"
 
 cat <<'EOF'
 
-Done.
+Done. The ai-secretary skill is installed to ~/.claude/skills/ai-secretary.
 
-The ai-secretary-memory MCP server is registered at user scope and the
-ai-secretary skill is installed to ~/.claude/skills/ai-secretary.
+Two things to check that this script can't do for you:
 
-Restart any running Claude Code sessions (or start a new one) to pick up the
-new MCP server. The first time a memory is stored or recalled, the embedding
-model (~90MB, Xenova/all-MiniLM-L6-v2) will be downloaded once from
-huggingface.co and cached under ~/.claude/ai-secretary/models — this needs
-outbound network access to huggingface.co on this machine.
+1. Enable the Google Drive connector for your Claude account, if you haven't:
+   claude.ai > Settings > Connectors > Google Drive.
+2. (Optional, for Obsidian) Install Google Drive for desktop, then point an
+   Obsidian vault at the "AI Secretary" folder it mirrors locally, so you can
+   browse/edit the same memory notes in Obsidian. Claude will create the
+   "AI Secretary" folder (and its category subfolders) in your Drive root the
+   first time it saves a memory, if it doesn't already exist.
 
 Try it: ask Claude something like "覚えておいて: 私は朝型で、午前中に集中したい"
-in any project, then in a different project ask for a recommendation and see
-it factor that in.
+in any Claude surface with Google Drive connected, then in a different one ask
+for a recommendation and see it factor that in.
 EOF
