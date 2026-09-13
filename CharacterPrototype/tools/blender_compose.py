@@ -85,8 +85,12 @@ POSE_SEATED = {
     # Leaning back through the spine, chin up a little and turned toward the
     # camera -- the lean is what makes it lounging rather than sitting to
     # attention.
-    "J_Bip_C_Spine": (D(16), 0, 0),
-    "J_Bip_C_Chest": (D(9), 0, D(3)),
+    # A shallow lean, not the deep one this pose wants. Rigid hair rides the
+    # head, so every degree the torso goes back swings half a metre of hair
+    # forward -- at 16 degrees it closed over her face like a curtain. Six
+    # degrees still reads as leaning on her hands and leaves her face clear.
+    "J_Bip_C_Spine": (D(6), 0, 0),
+    "J_Bip_C_Chest": (D(4), 0, D(3)),
     # Chin down rather than up, which is not the lounging tilt it wants to be
     # but is the one her hair allows: the hair is rigid and rides the head, so
     # tipping her head back swings the whole length of it forward and hangs it
@@ -158,8 +162,8 @@ CAM_FRONT_AIM = (0.0, 0.30, 0.30)
 
 RES = (1000, 1500)
 SAMPLES = 220
-QUICK_RES = (440, 660)
-QUICK_SAMPLES = 28
+QUICK_RES = (620, 930)
+QUICK_SAMPLES = 55
 
 
 def argv():

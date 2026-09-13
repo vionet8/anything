@@ -30,6 +30,23 @@ World conventions (Blender Z-up, real-world metres)
     of props -- that is the character's footprint.
   * Everything is parented (directly or indirectly) to a single empty named
     "Scene_Engawa", so the whole set can be moved or hidden as one.
+  * The sleeping cat hangs off its own empty, "Cat" (a child of Scene_Engawa),
+    at X=1.54 Y=0.30 yawed 58 deg. Move/rotate that one empty to re-place it
+    without touching anything else.
+  * Deck spans X in [-4.30, 4.30], Y in [-0.75, 1.65]. The house opening
+    (posts + sliding doors) is the plane Y = 1.65; tatami runs back to the far
+    wall at Y = 3.95. The eave soffit is at Z = 3.05 and overhangs to Y = -0.70.
+
+Composition notes (the reason the hero framing is what it is)
+-------------------------------------------------------------
+  * build_lighting() is deliberately separate and self-contained: sun,
+    physical sky, the dapple gobo and three soft fills. SUN_ELEVATION /
+    SUN_AZIMUTH at module level move the whole mood -- the eave's shadow line
+    lands on the deck at Y = EAVE_FRONT + EAVE_Z / tan(elevation).
+  * The dappled light is a large plane high above the set ("Engawa_Light_Gobo")
+    that is invisible to camera and to indirect rays but still casts. It is
+    what makes the deck read as a hot afternoon rather than an overcast one;
+    pass build_lighting(dappled=False) to drop it.
 
 Rendering notes for this environment (inherited from tools/blender_build.py)
 ---------------------------------------------------------------------------
@@ -42,7 +59,6 @@ Rendering notes for this environment (inherited from tools/blender_build.py)
 import math
 import os
 import random
-import sys
 
 import bmesh
 import bpy
@@ -75,7 +91,7 @@ POST_W = 0.11
 CLEAR_X = (-1.2, 1.2)     # character footprint -- keep props out
 CLEAR_Y = (-0.4, 0.9)
 
-RENDER_SAMPLES = int(os.environ.get("ENGAWA_SAMPLES", "220"))
+RENDER_SAMPLES = int(os.environ.get("ENGAWA_SAMPLES", "150"))
 RENDER_SCALE = float(os.environ.get("ENGAWA_SCALE", "1.0"))
 
 _created = []             # everything built this run, parented at the end
@@ -142,10 +158,7 @@ def bm_box(bm, center, size, rot=None):
 def box_obj(name, center, size, rot=None, mat=None, smooth=False):
     bm = bmesh.new()
     bm_box(bm, center, size, rot)
-    obj = obj_from_bmesh(name, bm, smooth=smooth)
-    if rot is not None:
-        # bm_box already baked the rotation about the box centre
-        pass
+    obj = obj_from_bmesh(name, bm, smooth=smooth)   # bm_box baked the rotation
     if mat:
         obj.data.materials.append(mat)
     return obj
@@ -742,7 +755,10 @@ def build_deck():
     bm = bmesh.new()
     for r in range(rows):
         y = DECK_FRONT + pitch * (r + 0.5)
-        drop = RNG.uniform(0.0, 0.0006)          # never above Z = 0
+        # Every third board sits dead on the contract plane; the rest drop a
+        # few tenths of a millimetre so the deck is not a machined slab. No
+        # board is ever ABOVE Z = 0.
+        drop = 0.0 if r % 3 == 0 else RNG.uniform(0.00015, 0.0006)
         # 2-3 butt-jointed runs per row, joints staggered row to row
         n_seg = RNG.choice((2, 2, 3))
         cuts = sorted(RNG.uniform(-DECK_X * 0.55, DECK_X * 0.55)
@@ -1262,7 +1278,7 @@ def build_water():
     return objs
 
 
-def _koi(bm_body, bm_fin, origin, heading_deg, length, rng, z):
+def _koi(bm_body, bm_fin, origin, heading_deg, length, z):
     """One fish: lofted body, forked caudal fin, dorsal and pectorals."""
     a = math.radians(heading_deg)
     fwd = Vector((math.cos(a), math.sin(a), 0))
@@ -1307,11 +1323,10 @@ def _koi(bm_body, bm_fin, origin, heading_deg, length, rng, z):
 def build_koi():
     bm_a, bm_fin = bmesh.new(), bmesh.new()
     bm_pale = bmesh.new()
-    rng = random.Random(9)
     for (x, y, hd, ln, z) in [(-0.85, -1.20, 18, 0.44, -0.19),
                               (0.95, -1.80, 162, 0.40, -0.27)]:
-        _koi(bm_a, bm_fin, (x, y, 0), hd, ln, rng, WATER_LEVEL + z)
-    _koi(bm_pale, bm_fin, (-0.55, -1.88, 0), 74, 0.38, rng, WATER_LEVEL - 0.38)
+        _koi(bm_a, bm_fin, (x, y, 0), hd, ln, WATER_LEVEL + z)
+    _koi(bm_pale, bm_fin, (-0.55, -1.88, 0), 74, 0.38, WATER_LEVEL - 0.38)
     koi = obj_from_bmesh("Engawa_Koi", bm_a, smooth=True)
     koi.data.materials.append(MATS["koi"])
     pale = obj_from_bmesh("Engawa_Koi_Pale", bm_pale, smooth=True)
@@ -2218,6 +2233,20 @@ def build_lighting(dappled=True):
     # cool skylight fill from over the water -- keeps shadows blue, not black
     area("Engawa_Water_Fill", (-1.5, -6.0, 4.6), (0.0, 0.4, -0.3),
          55.0, 9.0, (0.78, 0.89, 1.0), size_y=7.0)
+
+    # Gather the rig under its own empty, itself a child of Scene_Engawa when
+    # that exists: the whole set still moves and hides as one, but a
+    # composition pass can delete or swap just "Engawa_Lighting".
+    rig = bpy.data.objects.new("Engawa_Lighting", None)
+    rig.empty_display_type = "SINGLE_ARROW"
+    rig.empty_display_size = 0.5
+    scene.collection.objects.link(rig)
+    _register(rig)
+    root = bpy.data.objects.get("Scene_Engawa")
+    if root is not None:
+        rig.parent = root
+    for o in made:
+        o.parent = rig
     return made
 
 
@@ -2260,7 +2289,10 @@ def configure_render(samples=None, resolution=(1080, 1920)):
 SENSOR_H = 24.0
 
 
-def setup_camera(name, location, target, lens=35.0, roll=0.0, shift_y=0.0):
+def setup_camera(name, location, target, lens=35.0, shift_y=0.0):
+    """Camera at `location` aimed at `target`, on a vertical-fit 24 mm sensor
+    so the vertical field of view depends only on the lens, not on whatever
+    aspect ratio a given shot renders at."""
     cd = bpy.data.cameras.new(name)
     cd.lens = lens
     cd.sensor_fit = "VERTICAL"
@@ -2271,8 +2303,6 @@ def setup_camera(name, location, target, lens=35.0, roll=0.0, shift_y=0.0):
     cam.location = location
     q = (Vector(target) - Vector(location)).to_track_quat("-Z", "Y")
     cam.rotation_euler = q.to_euler()
-    if roll:
-        cam.rotation_euler.rotate_axis("Z", 0)
     bpy.context.scene.camera = cam
     return cam
 
@@ -2296,6 +2326,7 @@ def build_scene():
     build lights, camera or render settings -- call build_lighting() and
     configure_render() for those, or supply your own.
     """
+    _created.clear()
     build_materials()
     build_deck()
     build_house()
@@ -2334,6 +2365,28 @@ def _render(path, samples, resolution):
     log("rendered", path)
 
 
+def verify_conventions():
+    """Cheap self-check on the two things the character workstream relies on:
+    the deck surface really is Z = 0, and nothing is parked in the footprint."""
+    deck = bpy.data.objects.get("Engawa_Deck_Planks")
+    if deck:
+        top = max((deck.matrix_world @ v.co).z for v in deck.data.vertices)
+        log(f"deck top surface Z = {top:+.6f} (contract: 0.000000)")
+    intruders = {}
+    for obj in bpy.data.objects:
+        if obj.type != "MESH" or obj.name.startswith("Engawa_Water"):
+            continue
+        for v in obj.data.vertices:
+            w = obj.matrix_world @ v.co
+            if (CLEAR_X[0] < w.x < CLEAR_X[1] and CLEAR_Y[0] < w.y < CLEAR_Y[1]
+                    and 0.002 < w.z < 2.0):
+                intruders[obj.name] = intruders.get(obj.name, 0) + 1
+    if intruders:
+        log("WARNING: geometry inside the character footprint:", intruders)
+    else:
+        log("character footprint X[-1.2,1.2] Y[-0.4,0.9] is clear")
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     clear_scene()
@@ -2341,18 +2394,23 @@ def main():
     build_lighting()
 
     samples = RENDER_SAMPLES
-    res_scale = RENDER_SCALE
+
+    verify_conventions()
 
     # 1. Wide establishing shot: the whole set, three-quarters on.
-    setup_camera("Cam_Wide", (-7.6, -9.4, 4.6), (-0.30, 1.20, 0.70), lens=38.0)
-    _render(os.path.join(OUT_DIR, "scene_test_wide.png"), samples, (1600, 900))
+    setup_camera("Cam_Wide", (-7.3, -8.9, 3.55), (-0.10, 1.10, 0.85), lens=40.0)
+    _render(os.path.join(OUT_DIR, "scene_test_wide.png"),
+            int(samples * 0.8), (1280, 720))
 
     # 2. The reference framing: high, out over the water, looking down the
-    #    deck. Portrait, 24mm on a 24mm vertical sensor -- the deck fills the
-    #    middle, the house stacks behind it, the pond takes the bottom quarter
-    #    and the bamboo hangs into the top corners.
+    #    deck. Portrait, 18mm on a 24mm vertical sensor -- wide enough that
+    #    the deck fills the middle third, the house stacks behind it, the pond
+    #    takes the bottom quarter and the bamboo reaches into the top corners.
+    #    (The corners sit only ~2m from the lens, in front of the eave: that
+    #    is why the framing bamboo hangs where it does rather than off at the
+    #    sides where the culms are.)
     setup_camera("Cam_Hero", (0.62, -2.75, 3.60), (0.20, 0.50, -0.05), lens=18.0)
-    _render(os.path.join(OUT_DIR, "scene_test_camera.png"), samples, (1080, 1920))
+    _render(os.path.join(OUT_DIR, "scene_test_camera.png"), samples, (900, 1600))
     log("done")
 
 

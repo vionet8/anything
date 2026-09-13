@@ -24,21 +24,55 @@ camera, reusing blender_build's helpers) to render:
     assets/blender/char_summer_full.png
 
 Geometry conventions (for whoever poses her next):
-  - Z-up, metres. Feet are at Z=0 in the returned rest state.
-  - Skeleton is VRM's standard biped naming: J_Bip_{L,R}_UpperArm/LowerArm/
-    Hand/..., J_Bip_C_Head/Neck/Spine/Hips, J_Bip_{L,R}_UpperLeg/LowerLeg/
-    Foot. J_Sec_* are physics/jiggle bones (bust, hood string); the grafted
-    hair's own spring-bone chain was discarded (see graft_silver_hair()) so
-    there are no HairJoint-* bones left for it, but the two ears ARE real
-    skinned geometry, 100% weighted to J_Bip_C_Head -- rotate that bone and
-    they follow like any other attached part.
-  - T-pose is the bind/rest pose, as imported. To bring an arm down to a
-    relaxed at-the-sides stance (this file's own test renders do exactly
-    this -- see pose_test_arms() below): in POSE mode, set rotation_mode
-    to 'XYZ' on J_Bip_R_UpperArm / J_Bip_L_UpperArm and rotate LOCAL Z by
-    -78deg / +78deg respectively (signs are mirrored between the two
-    sides). That was measured empirically (not guessed) by rotating each
-    axis in turn and watching where the hand bone's world position moved.
+  - Z-up, metres. She stands 1.62m; her soles are at Z=0 in the returned
+    rest state, so she can be dropped straight onto a deck at Z=0.
+  - She faces +Y. Her right hand is at +X.
+  - Skeleton is VRM's standard biped naming: J_Bip_C_Hips/Spine/Chest/
+    UpperChest/Neck/Head, J_Bip_{L,R}_Shoulder/UpperArm/LowerArm/Hand plus
+    per-finger chains, J_Bip_{L,R}_UpperLeg/LowerLeg/Foot/ToeBase. J_Sec_*
+    are physics/jiggle bones (bust, hood strings). The grafted hair's own
+    spring-bone chain was discarded (see graft_silver_hair()), so there are
+    no HairJoint-* bones driving it -- the hair is rigid and follows
+    J_Bip_C_Head. The two ears are ordinary skinned geometry, 100% weighted
+    to J_Bip_C_Head, so they follow the head like the hair does.
+  - The bind/rest pose is a T-pose and nothing here changes it; pose-mode
+    rotations behave normally. Pose bones arrive with rotation_mode
+    'QUATERNION', so set `pb.rotation_mode = 'XYZ'` before assigning
+    rotation_euler or the assignment silently does nothing -- that one cost
+    a debugging round the first time.
+
+  Measured rotations. Each of these was found by rotating one axis at a
+  time and watching where the end-effector bone's world position actually
+  went -- the arms and the legs do NOT share a swing axis, which is the
+  sort of thing that is easy to assume and wrong:
+
+  - ARMS swing on local Z. Arms down to the sides is J_Bip_R_UpperArm
+    Z=-78deg and J_Bip_L_UpperArm Z=+78deg; the sign mirrors between sides.
+    (pose_test_arms() below does exactly this for the test renders.)
+  - LEGS swing on local X, and the sign does NOT mirror -- both legs use
+    the same one. On J_Bip_{L,R}_UpperLeg, +X raises the knee toward the
+    chest (at +45deg the foot travels +0.47m forward, +0.17m up); -X takes
+    the leg behind her. Local Z is abduction, opening the knee out to the
+    side (+Z opens the right leg, -Z the left, so that pair does mirror);
+    local Y is just twist.
+  - KNEES bend on J_Bip_{L,R}_LowerLeg local X, negative: -45deg carries
+    the foot 0.20m back and 0.10m up, i.e. heel toward the buttock, which
+    is the only way a knee goes. Same sign for both legs.
+  - SPINE: J_Bip_C_Hips local X tips the torso in the sagittal plane (+X
+    leans her back, -X curls her forward), local Z is the side bend, local
+    Y the twist.
+
+  For the lying-on-her-back-with-knees-up shot:
+  - Lay the whole figure down at the ROOT empty, not at the hips:
+    `root.rotation_euler.x = +pi/2` puts her on her back, face up (+Z),
+    head toward -Y and feet toward +Y. (-pi/2 would put her face-down.)
+  - The root's origin is at her soles, so after that rotation she pivots
+    about her feet and her back drops below Z=0 -- her hair reaches about
+    0.33m under. Lift the root in Z until she rests on the deck; recompute
+    with character_bounds(), which is exported for this and returns the
+    evaluated, posed world bounds.
+  - Then knees up = +X on both UpperLegs and -X on both LowerLegs, with a
+    little +Z/-Z abduction to let the knees fall apart naturally.
 """
 
 import colorsys
@@ -511,101 +545,203 @@ def _close_mask(mask, iterations):
     return grown
 
 
-def bare_legs(img):
-    """Repaint the tights as skin, matched to this model's own skin rather
-    than to a hardcoded colour: the reference tone is measured from the pale
-    warm pixels of the same atlas (the arms and torso), so it tracks whatever
-    build_model.py's skin lightening produced."""
+def _uv_mask_for_bones(body, bone_keys, shape, material_key="SKIN"):
+    """Texel mask of the UV footprint of the skin faces a set of bones owns.
+
+    Colour alone can't answer "which part of this atlas is her arm" -- the
+    arms, the torso and the blank margins are all the same pale cream. The
+    rig can: take the faces whose vertices are all weighted to these bones,
+    and rasterise their UVs.
+    """
+    h, w = shape
+    mask = np.zeros((h, w), dtype=bool)
+    group_ids = {g.index for g in body.vertex_groups
+                 if any(k in g.name for k in bone_keys)}
+    slots = {i for i, sl in enumerate(body.material_slots)
+             if sl.material and material_key in sl.material.name}
+    if not group_ids or not slots:
+        return mask
+    mesh = body.data
+    chosen = {i for i, vert in enumerate(mesh.vertices)
+              if any(g.group in group_ids and g.weight > 0.5 for g in vert.groups)}
+    uv_layer = mesh.uv_layers.active.data
+    for poly in mesh.polygons:
+        if poly.material_index not in slots or not all(x in chosen for x in poly.vertices):
+            continue
+        pts = [(uv_layer[li].uv[0] * w, uv_layer[li].uv[1] * h) for li in poly.loop_indices]
+        for a in range(1, len(pts) - 1):
+            (ax, ay), (bx, by), (cx, cy) = pts[0], pts[a], pts[a + 1]
+            x0, x1 = max(int(min(ax, bx, cx)), 0), min(int(max(ax, bx, cx)) + 1, w - 1)
+            y0, y1 = max(int(min(ay, by, cy)), 0), min(int(max(ay, by, cy)) + 1, h - 1)
+            if x1 < x0 or y1 < y0:
+                continue
+            yy, xx = np.mgrid[y0:y1 + 1, x0:x1 + 1]
+            px, py = xx + 0.5, yy + 0.5
+            det = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+            if abs(det) < 1e-9:
+                continue
+            l1 = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / det
+            l2 = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / det
+            l3 = 1.0 - l1 - l2
+            mask[y0:y1 + 1, x0:x1 + 1] |= (l1 >= -0.002) & (l2 >= -0.002) & (l3 >= -0.002)
+    return mask
+
+
+def _blur(field, iterations):
+    for _ in range(iterations):
+        acc = field.copy()
+        for axis in (0, 1):
+            for d in (1, -1):
+                acc = acc + np.roll(field, d, axis=axis)
+        field = acc / 5.0
+    return field
+
+
+# How much warmer than the arms the legs are allowed to get, and where.
+LEG_SAT_BASE_FROM_ARM = 1.15   # x the arms' own p90 saturation
+LEG_SAT_WARM = 0.26            # at knees, ankles and form creases
+LEG_VALUE_BASE = 0.975         # off the clipping point, unlike the arms
+LEG_VALUE_CREASE = 0.90
+WARMTH_BLUR = 6
+
+
+def bare_legs(img, body=None):
+    """Repaint the tights as bare skin in her own complexion.
+
+    Two things had to be right here, and the first version got the second
+    one wrong:
+
+    1. WHERE the reference comes from. Sampling "pale warm pixels of this
+       atlas" is not the same as sampling her arm: the atlas's cream
+       margins and torso land in the same bucket. The arm's own UV
+       footprint, taken off the rig, is the honest reference.
+
+    2. That a faithful match is NOT what's wanted. Measured over the arm
+       footprint, this model's arm skin is almost flat white -- value
+       0.992-1.000, saturation 0.06-0.14 -- because build_model.py's skin
+       lightening (0.46 of the headroom to white) pushes it there. Painting
+       a whole leg that colour gives a large, flat, near-clipping surface,
+       and under a warm key light it reads as an opaque white stocking:
+       exactly the note we were trying to remove. So the legs sit a touch
+       off the clipping point and carry a warmth gradient -- stronger at
+       the knees, ankles and form creases -- which is what makes them read
+       as skin rather than as plastic. That leaves the legs marginally
+       warmer than the arms by the numbers; that is deliberate, and it is
+       the direction real legs err in anyway.
+    """
     arr = bb.load_pixels(img)
     rgb, alpha = arr[..., :3], arr[..., 3]
     h, s, v = bb.rgb_to_hsv(rgb)
     deg = h * 360.0
     warm = (deg <= LEG_WARM_MAX_DEG) | (deg >= LEG_WARM_MIN_DEG)
 
-    skin_ref = warm & (v >= SKIN_REF_VALUE_MIN) & (alpha > 0.5)
-    if skin_ref.sum() < 1000:
-        log("WARNING: too little reference skin found; leaving legwear alone")
+    arm_mask = None
+    if body is not None:
+        arm_mask = _uv_mask_for_bones(body, ("UpperArm", "LowerArm"), rgb.shape[:2])
+    if arm_mask is None or arm_mask.sum() < 1000:
+        log("WARNING: couldn't isolate the arm skin; falling back to pale warm pixels")
+        arm_mask = warm & (v >= SKIN_REF_VALUE_MIN) & (alpha > 0.5)
+    if arm_mask.sum() < 1000:
+        log("WARNING: no reference skin at all; leaving legwear alone")
         return 0
-    skin_h = float(np.median(h[skin_ref]))
-    skin_s = float(np.median(s[skin_ref]))
-    skin_v = float(np.median(v[skin_ref]))
+
+    skin_h = float(np.median(h[arm_mask]))
+    arm_s90 = float(np.percentile(s[arm_mask], 90))
+    base_s = min(arm_s90 * LEG_SAT_BASE_FROM_ARM, LEG_SAT_WARM)
 
     seed = warm & (v < LEG_VALUE_MAX) & (s > LEG_SAT_MIN) & (alpha > 0.5)
     mask = _close_mask(seed, LEG_CLOSE_ITERS) & (alpha > 0.5)
 
-    # Land on the arms' own tone and keep only a little of the legwear's
-    # form shading, so the legs don't read as a tanner person below the hem.
+    # Warmth field: 1 at knees/ankles/feet, plus wherever the old legwear's
+    # own shading was darkest (which tracks the sides of the calf, behind
+    # the knee and around the ankle bone).
+    warmth = np.zeros(rgb.shape[:2], dtype=np.float32)
+    if body is not None:
+        lower = _uv_mask_for_bones(body, ("LowerLeg", "Foot", "ToeBase"), rgb.shape[:2])
+        warmth = np.maximum(warmth, lower.astype(np.float32))
+    warmth = _blur(warmth, WARMTH_BLUR)
     shade = np.clip(v / LEG_VALUE_MAX, 0.0, 1.0) ** 0.65
-    remapped = np.clip(skin_v - LEG_SHADE_SPREAD * (1.0 - shade), 0.0, 1.0)
+    warmth = np.clip(warmth * 0.75 + (1.0 - shade) * 0.6, 0.0, 1.0)
+
+    leg_s = base_s + (LEG_SAT_WARM - base_s) * warmth
+    leg_v = LEG_VALUE_BASE - (LEG_VALUE_BASE - LEG_VALUE_CREASE) * (1.0 - shade)
 
     h2 = np.where(mask, skin_h, h)
-    s2 = np.where(mask, skin_s, s)
-    v2 = np.where(mask, remapped, v)
+    s2 = np.where(mask, leg_s, s)
+    v2 = np.where(mask, np.clip(leg_v, 0.0, 1.0), v)
     r, g, b = bb.hsv_to_rgb(h2, s2, v2)
     final = np.where(mask[..., None], np.stack([r, g, b], axis=-1), rgb)
     bb.store_pixels(img, np.concatenate([final, alpha[..., None]], axis=-1))
-    log(f"bare legs: skin ref hsv=({skin_h:.3f},{skin_s:.3f},{skin_v:.3f}); "
-        f"{int(seed.sum())} px by colour, {int(mask.sum())} after closing")
+    log(f"bare legs: arm reference hue={skin_h:.3f} sat_p90={arm_s90:.3f} "
+        f"-> leg sat {base_s:.3f}-{LEG_SAT_WARM:.2f}, value {LEG_VALUE_CREASE:.2f}-"
+        f"{LEG_VALUE_BASE:.2f}; {int(mask.sum())} px repainted")
     return int(mask.sum())
 
 
-FLOOR_ISLAND_MAX_Z = 0.15   # nothing of hers but the feet lives this low
+FOOT_MAX_Z = 0.115          # the body's skin stops at the ankle, z=0.1047
 
 
-def remove_floor_islands():
-    """Delete VRoid's fake-shadow mesh from under her feet.
+def remove_subankle_garment():
+    """Delete the Bottoms garment's shell below the ankle.
 
-    It is a separate shell of geometry ringing the character at floor level
-    (radius 0.19-0.31m, z from -0.055 up to ~0.09), weighted to the foot
-    bones, and it is what `character_bounds()` kept finding as the lowest
-    point -- so "feet at Z=0" was really "shadow mesh at Z=0", leaving the
-    actual soles floating 4.6cm in the air. It also renders: it's the soft
-    dark blotch that shows on the ground in a test render, and on a sunlit
-    deck it would have read as a grubby smear.
-
-    Identified by connectivity rather than by a radius/height box, because
-    it is not a flat disc and any box that caught all of it also clipped
-    toes. Her body is one big connected shell running up to the head, so
-    "a connected component that never rises above ankle height" is exactly
-    the junk and nothing else.
+    It is the liner and platform sole that sat inside the loafers: entirely
+    invisible (measured: alpha 0 across every one of its faces) but it hangs
+    to z=-0.055, below her actual soles, so it would otherwise define where
+    the floor is and leave her standing 6cm in the air. Faces only -- the
+    shell is one connected piece with the shorts, which must stay.
     """
     removed = 0
+    body = bpy.data.objects.get("Body")
+    if body is None:
+        return 0
+    slots = {i for i, s in enumerate(body.material_slots)
+             if s.material and "Bottoms" in s.material.name}
+    if not slots:
+        return 0
+    mw = body.matrix_world
+    bm = bmesh.new()
+    bm.from_mesh(body.data)
+    doomed = [f for f in bm.faces
+              if f.material_index in slots
+              and all((mw @ v.co).z < FOOT_MAX_Z for v in f.verts)]
+    if doomed:
+        removed = len(doomed)
+        bmesh.ops.delete(bm, geom=doomed, context="FACES")
+        bm.to_mesh(body.data)
+        body.data.update()
+    bm.free()
+    log(f"sub-ankle garment shell removed: {removed} polygons")
+    return removed
+
+
+# --- Bounds + root -----------------------------------------------------
+
+def character_bounds():
+    """World-space bounds of the posed, evaluated character meshes.
+
+    Reads depsgraph-evaluated vertices rather than Object.bound_box, which
+    reflects the rest mesh and so would ignore any armature posing."""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    mn = Vector((1e9, 1e9, 1e9))
+    mx = Vector((-1e9, -1e9, -1e9))
     for obj in bpy.data.objects:
         if obj.type != "MESH" or obj.name not in CHARACTER_MESH_NAMES:
             continue
-        mw = obj.matrix_world
-        bm = bmesh.new()
-        bm.from_mesh(obj.data)
-        bm.faces.ensure_lookup_table()
-
-        seen = set()
-        doomed = []
-        for face in bm.faces:
-            if face.index in seen:
-                continue
-            # flood fill this connected component
-            stack, component = [face], []
-            seen.add(face.index)
-            while stack:
-                f = stack.pop()
-                component.append(f)
-                for edge in f.edges:
-                    for nb in edge.link_faces:
-                        if nb.index not in seen:
-                            seen.add(nb.index)
-                            stack.append(nb)
-            top = max((mw @ v.co).z for f in component for v in f.verts)
-            if top < FLOOR_ISLAND_MAX_Z:
-                doomed.extend(component)
-
-        if doomed:
-            removed += len(doomed)
-            bmesh.ops.delete(bm, geom=doomed, context="FACES")
-            bm.to_mesh(obj.data)
-            obj.data.update()
-        bm.free()
-    log(f"floor-level shadow islands removed: {removed} polygons")
-    return removed
+        eval_obj = obj.evaluated_get(depsgraph)
+        mesh = eval_obj.to_mesh()
+        if len(mesh.vertices) == 0:
+            eval_obj.to_mesh_clear()
+            continue
+        coords = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+        mesh.vertices.foreach_get("co", coords)
+        coords = coords.reshape(-1, 3)
+        world = np.array(eval_obj.matrix_world)
+        world_coords = coords @ world[:3, :3].T + world[:3, 3]
+        lo, hi = world_coords.min(axis=0), world_coords.max(axis=0)
+        mn.x, mn.y, mn.z = min(mn.x, lo[0]), min(mn.y, lo[1]), min(mn.z, lo[2])
+        mx.x, mx.y, mx.z = max(mx.x, hi[0]), max(mx.y, hi[1]), max(mx.z, hi[2])
+        eval_obj.to_mesh_clear()
+    return mn, mx
 
 
 def remove_shoes():
@@ -633,7 +769,7 @@ def remove_shoes():
 def recolour_outfit_summer():
     """Cardigan -> warm gold robe; camisole and shorts -> one white-and-blue
     floral under-layer, so they read as a single summer garment set rather
-    than three separate recoloured pieces."""
+    than three separate recoloured pieces. Then the legwear comes off."""
     tops = bpy.data.images.get("F00_006_01_Tops_01")
     body = bpy.data.images.get("F00_000_00_Body_00")
     bottoms = bpy.data.images.get("F00_008_01_Bottoms_01")
@@ -654,68 +790,7 @@ def recolour_outfit_summer():
     if body:
         bare_legs(body)
     remove_shoes()
-    remove_floor_islands()
-
-
-# --- Bounds + root -----------------------------------------------------
-
-def character_bounds():
-    depsgraph = bpy.context.evaluated_depsgraph_get()
-    mn = Vector((1e9, 1e9, 1e9))
-    mx = Vector((-1e9, -1e9, -1e9))
-    for obj in bpy.data.objects:
-        if obj.type != "MESH" or obj.name not in CHARACTER_MESH_NAMES:
-            continue
-        eval_obj = obj.evaluated_get(depsgraph)
-        mesh = eval_obj.to_mesh()
-        if len(mesh.vertices) == 0:
-            eval_obj.to_mesh_clear()
-            continue
-        coords = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
-        mesh.vertices.foreach_get("co", coords)
-        coords = coords.reshape(-1, 3)
-        world = np.array(eval_obj.matrix_world)
-        world_coords = coords @ world[:3, :3].T + world[:3, 3]
-        lo, hi = world_coords.min(axis=0), world_coords.max(axis=0)
-        mn.x, mn.y, mn.z = min(mn.x, lo[0]), min(mn.y, lo[1]), min(mn.z, lo[2])
-        mx.x, mx.y, mx.z = max(mx.x, hi[0]), max(mx.y, hi[1]), max(mx.z, hi[2])
-        eval_obj.to_mesh_clear()
-    return mn, mx
-
-
-def sole_z():
-    """World Z of the lowest *visible* point of her feet.
-
-    Not the same as the mesh's lowest vertex: the Bottoms garment carries
-    over-knee sock geometry that reaches to z=-0.055, below the soles, and
-    is invisible only because that region of its texture is fully
-    transparent. It shares a connected shell with the shorts, so it can't
-    be deleted -- but it must not define where the floor is, or she stands
-    10cm in the air. The bare feet are skin, so the skin material's lowest
-    vertex is the real ground contact.
-    """
-    depsgraph = bpy.context.evaluated_depsgraph_get()
-    lowest = None
-    for obj in bpy.data.objects:
-        if obj.type != "MESH" or obj.name not in CHARACTER_MESH_NAMES:
-            continue
-        skin_slots = {i for i, slot in enumerate(obj.material_slots)
-                      if slot.material and "SKIN" in slot.material.name}
-        if not skin_slots:
-            continue
-        eval_obj = obj.evaluated_get(depsgraph)
-        mesh = eval_obj.to_mesh()
-        world = np.array(eval_obj.matrix_world)
-        coords = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
-        mesh.vertices.foreach_get("co", coords)
-        pts = coords.reshape(-1, 3) @ world[:3, :3].T + world[:3, 3]
-        used = {vi for poly in mesh.polygons if poly.material_index in skin_slots
-                for vi in poly.vertices}
-        if used:
-            z = float(pts[sorted(used), 2].min())
-            lowest = z if lowest is None else min(lowest, z)
-        eval_obj.to_mesh_clear()
-    return lowest
+    remove_subankle_garment()
 
 
 def build_character():
@@ -735,13 +810,11 @@ def build_character():
     armature.matrix_parent_inverse = root.matrix_world.inverted()
 
     mn, mx = character_bounds()
-    ground = sole_z()
-    if ground is None:
-        log("WARNING: no skin geometry found to stand on; falling back to mesh minimum")
-        ground = mn.z
-    root.location = (0.0, 0.0, -ground)
+    # With the fake-shadow mesh gone and the feet made visible again, the
+    # lowest vertex of the character *is* the sole.
+    root.location = (0.0, 0.0, -mn.z)
     log(f"character bounds (pre feet-to-zero shift): {tuple(mn)} {tuple(mx)}; "
-        f"visible sole at {ground:.4f}, root lifted by {-ground:.4f}")
+        f"root lifted by {-mn.z:.4f}")
 
     return root, armature
 
