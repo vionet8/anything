@@ -49,7 +49,54 @@ D = math.radians
 # Read these as "from the T-pose bind", per bone, in her own frame -- the root
 # transform below is what lays the whole posed figure down, so these stay
 # authored as if she were standing.
-POSE = {
+POSE_SEATED = {
+    # Sitting on the edge of the engawa facing the water, legs hanging over it,
+    # leaning back on her hands. This is the pose the shot uses.
+    #
+    # The legs hang rather than lying along the deck because thigh flexion on
+    # this rig dips as it swings (the measured axis is tilted: -X carries the
+    # knee forward AND down), so legs stretched out flat fought the boards the
+    # whole way. Over the edge that dip is exactly what dangling legs do.
+    #
+    # It replaced a lying-on-her-back pose that matched the reference more
+    # literally but could not be made to work: her hair is one rigid mesh
+    # skinned to the head bone, with no bones of its own long enough to pose
+    # (the hair joints are crown stubs -- 40 degrees moves a chain tip 7mm), so
+    # laid on her back the whole length of it swung out across her body as a
+    # stiff white fan. Sitting up, the same geometry hangs down her back and
+    # behaves by construction rather than by tuning.
+    "J_Bip_L_UpperLeg": (D(78), 0, D(5)),
+    "J_Bip_R_UpperLeg": (D(80), 0, D(-7)),
+    "J_Bip_L_LowerLeg": (D(-72), 0, 0),
+    "J_Bip_R_LowerLeg": (D(-66), 0, 0),
+    # Ankles loose, the way feet hang when they are carrying no weight.
+    "J_Bip_L_Foot": (D(-14), 0, D(6)),
+    "J_Bip_R_Foot": (D(-10), 0, D(-5)),
+
+    # Arms planted behind her, taking her weight. Down from the T-pose, then
+    # swung back so the hands land behind her hips rather than beside them.
+    "J_Bip_L_UpperArm": (0, D(26), D(74)),
+    "J_Bip_R_UpperArm": (0, D(-30), D(-72)),
+    "J_Bip_L_LowerArm": (0, D(10), D(6)),
+    "J_Bip_R_LowerArm": (0, D(-12), D(-8)),
+    "J_Bip_L_Hand": (D(-20), 0, 0),
+    "J_Bip_R_Hand": (D(-20), 0, 0),
+
+    # Leaning back through the spine, chin up a little and turned toward the
+    # camera -- the lean is what makes it lounging rather than sitting to
+    # attention.
+    "J_Bip_C_Spine": (D(16), 0, 0),
+    "J_Bip_C_Chest": (D(9), 0, D(3)),
+    # Chin down rather than up, which is not the lounging tilt it wants to be
+    # but is the one her hair allows: the hair is rigid and rides the head, so
+    # tipping her head back swings the whole length of it forward and hangs it
+    # over her face like a curtain. Looking down at the water keeps it behind
+    # her -- and is what someone sitting over a pond would be doing anyway.
+    "J_Bip_C_Neck": (D(-7), 0, D(-10)),
+    "J_Bip_C_Head": (D(-5), 0, D(-12)),
+}
+
+POSE_LYING = {
     # Knees up. The thigh swing is the big one; without the matching knee bend
     # she reads as doing a leg raise rather than lying comfortably.
     "J_Bip_L_UpperLeg": (D(-51), 0, D(6)),
@@ -84,16 +131,28 @@ POSE = {
 # spins her about the vertical so her head points at the water and the camera
 # rather than at the house. Blender's default XYZ euler applies X before Z,
 # which is the order that keeps her on her back rather than face-down.
-ROOT_ROTATION = (D(-90), 0, D(180))
-ROOT_XY = (-0.15, 0.82)      # where on the deck she lies
-LYING_HIP_HEIGHT = 0.135     # hip joint above the planks, lying on her back
+ROOT_ROTATION_LYING = (D(-90), 0, D(180))
+# Seated she stays upright; she already faces -Y, which is the water and the
+# camera, so she needs no yaw either.
+ROOT_ROTATION_SEATED = (0, 0, D(180))
+ROOT_XY_LYING = (-0.15, 0.82)
+ROOT_XY_SEATED = (-0.10, -0.62)
+HIP_HEIGHT = 0.12            # hip joint above the boards, pelvis resting on them
+# Meshes allowed through the boards without the figure being lifted off them:
+# the deck is opaque and the camera looks down at it, so clipped hair reads as
+# hair spread on the planks.
+DECORATIVE = ("Hair", "Ear")
 
 # --- Camera -----------------------------------------------------------------
-# The reference is a tall portrait frame from above and in front, looking down
-# the length of her with the house behind and the water at the bottom edge.
-CAM_LOC = (1.02, -1.52, 1.72)
-CAM_AIM = (-0.12, -0.08, 0.20)
-CAM_LENS = 38
+# From out over the water, looking back at the veranda: her at the edge, the
+# house behind her, water in the foreground.
+#
+# The steep overhead angle the reference uses was right for a figure lying flat
+# and wrong for this one -- on a seated figure it looked down at the top of her
+# head and never found her face. Sitting up wants a camera near her own height.
+CAM_LOC = (0.95, -2.60, 1.15)
+CAM_AIM = (-0.10, -0.50, 0.42)
+CAM_LENS = 45
 CAM_FRONT_LOC = (2.6, -1.5, 1.5)
 CAM_FRONT_AIM = (0.0, 0.30, 0.30)
 
@@ -148,9 +207,9 @@ def load_character(force_fallback=False):
     return blender_character.build_character()
 
 
-def apply_pose(arm):
+def apply_pose(arm, pose):
     missing = []
-    for bone_name, rotation in POSE.items():
+    for bone_name, rotation in pose.items():
         pb = arm.pose.bones.get(bone_name)
         if pb is None:
             missing.append(bone_name)
@@ -201,8 +260,16 @@ def evaluated_bounds(root):
 _lowest = {"z": 1e9, "name": None, "at": (0, 0)}
 
 
+DECK_FRONT = -0.75   # matches blender_scene.py: the boards end over the water
+
+
 def report_sinking(deck_z=0.0, tolerance=0.005):
     if _lowest["name"] is None:
+        return
+    if _lowest["at"][1] < DECK_FRONT:
+        # Past the edge there are no boards to sink through -- that is the
+        # water, and her legs hanging over it is the pose, not a fault.
+        log("  nothing sinks through the boards (lowest point is past the edge)")
         return
     depth = deck_z - _lowest["z"]
     if depth > tolerance:
@@ -212,21 +279,31 @@ def report_sinking(deck_z=0.0, tolerance=0.005):
         log("  nothing sinks below the deck")
 
 
-def lay_down(root, arm):
-    apply_pose(arm)
+def place(root, arm, lying):
+    apply_pose(arm, POSE_LYING if lying else POSE_SEATED)
     root.rotation_mode = "XYZ"
-    root.rotation_euler = ROOT_ROTATION
-    root.location = (ROOT_XY[0], ROOT_XY[1], 0.0)
+    root.rotation_euler = ROOT_ROTATION_LYING if lying else ROOT_ROTATION_SEATED
+    xy = ROOT_XY_LYING if lying else ROOT_XY_SEATED
+    root.location = (xy[0], xy[1], 0.0)
     bpy.context.view_layer.update()
 
-    # Rest her by the hips rather than by her lowest vertex. Dropping the whole
-    # mesh onto its minimum leaves the figure hanging off whichever single point
-    # happens to reach furthest -- an outflung fingertip did exactly that, and
-    # propped her whole body 20cm above the planks. The hip height of someone
-    # lying on their back is about half the depth of the pelvis, and that is a
-    # number that stays true whatever the arms are doing.
-    hips = arm.pose.bones.get("J_Bip_C_Hips")
-    root.location.z += LYING_HIP_HEIGHT - (arm.matrix_world @ hips.head).z
+    # Rest her on her body, ignoring hair and ears. Whichever part of her is
+    # lowest is what the deck should meet -- her seat and calves sitting, her
+    # shoulders lying -- but hair and ears are decorative geometry that is
+    # allowed to pass through the boards (the deck is opaque and the camera
+    # looks down at it, so clipped hair just reads as hair spread on the
+    # planks). Include them and the longest strand becomes a tent pole holding
+    # the rest of her in the air.
+    # One rule for both poses: her pelvis is what rests on the boards, so the
+    # hip joint sits a fixed height above them. Resting her on her lowest
+    # vertex instead was tried twice and failed twice -- once on an outflung
+    # fingertip, once on a handful of vertices that extreme hip flexion had
+    # flung clear of the body through linear blend skinning -- and both times
+    # it left the whole figure hanging in the air. Hip height does not care
+    # what her limbs are doing, which is the point: sitting at the edge her
+    # legs hang BELOW the deck on purpose.
+    hips = arm.pose.bones["J_Bip_C_Hips"]
+    root.location.z += HIP_HEIGHT - (arm.matrix_world @ hips.head).z
     bpy.context.view_layer.update()
 
     _lowest.update(z=1e9, name=None, at=(0, 0))
@@ -333,7 +410,16 @@ def main():
     root, arm = load_character(force_fallback="--fallback" in args)
     if arm is None:
         raise SystemExit("character has no armature -- cannot pose")
-    centre = lay_down(root, arm)
+    centre = place(root, arm, lying="--lying" in args)
+
+    if "--objects" in args:
+        for obj in sorted(bpy.data.objects, key=lambda o: o.name):
+            if obj.type != "MESH":
+                continue
+            par = obj.parent.name if obj.parent else "-"
+            bone = obj.parent_bone or "-"
+            log(f"  {obj.name:<22} parent={par:<16} bone={bone:<18} "
+                f"verts={len(obj.data.vertices)}")
 
     if "--measure" in args:
         # Tuning a pose is a search over joint positions, and reading those as
