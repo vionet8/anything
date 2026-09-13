@@ -27,12 +27,17 @@ World conventions (Blender Z-up, real-world metres)
     toward the camera.
   * Water surface sits at Z = WATER_LEVEL (-0.8).
   * The rectangle X in [-1.2, 1.2], Y in [-0.4, 0.9] on the deck is kept clear
-    of props -- that is the character's footprint.
+    of SET geometry -- that is the character's footprint. The one deliberate
+    exception is the cat, which is meant to sit against her: it is inside that
+    rectangle, on its own empty, and verify_conventions() reports it rather
+    than warning about it.
   * Everything is parented (directly or indirectly) to a single empty named
     "Scene_Engawa", so the whole set can be moved or hidden as one.
   * The sleeping cat hangs off its own empty, "Cat" (a child of Scene_Engawa),
-    at X=1.54 Y=0.30 yawed 58 deg. Move/rotate that one empty to re-place it
-    without touching anything else.
+    at X=0.36 Y=-0.12 yawed 35 deg -- placed for the compose-shot camera
+    (0.95, -2.60, 1.15) aimed at (-0.10, -0.50, 0.42), 45 mm portrait, where
+    it lands just behind the seated character's right hip. Move/rotate that
+    one empty to re-place it without touching anything else.
   * Deck spans X in [-4.30, 4.30], Y in [-0.75, 1.65]. The house opening
     (posts + sliding doors) is the plane Y = 1.65; tatami runs back to the far
     wall at Y = 3.95. The eave soffit is at Z = 3.05 and overhangs to Y = -0.70.
@@ -2438,15 +2443,23 @@ def verify_conventions():
     for obj in bpy.data.objects:
         if obj.type != "MESH" or obj.name.startswith("Engawa_Water"):
             continue
+        if obj.name.startswith("Cat_"):
+            continue        # deliberately tucked in beside her -- see below
         for v in obj.data.vertices:
             w = obj.matrix_world @ v.co
             if (CLEAR_X[0] < w.x < CLEAR_X[1] and CLEAR_Y[0] < w.y < CLEAR_Y[1]
                     and 0.002 < w.z < 2.0):
                 intruders[obj.name] = intruders.get(obj.name, 0) + 1
     if intruders:
-        log("WARNING: geometry inside the character footprint:", intruders)
+        log("WARNING: set geometry inside the character footprint:", intruders)
     else:
-        log("character footprint X[-1.2,1.2] Y[-0.4,0.9] is clear")
+        log("character footprint X[-1.2,1.2] Y[-0.4,0.9] is clear of set geometry")
+    cat = bpy.data.objects.get("Cat")
+    if cat:
+        log("Cat empty at", tuple(round(v, 3) for v in cat.location),
+            "yaw", round(math.degrees(cat.rotation_euler.z), 1), "deg "
+            "(inside the nominal footprint by design -- it is meant to sit "
+            "against her hip; move the one empty to re-place it)")
 
 
 def main():
