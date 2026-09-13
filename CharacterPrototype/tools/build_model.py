@@ -88,6 +88,57 @@ A_HAIR_MIN_SATURATION = 15 / 255.0
 def a_hair_hue_test(hue):
     return (hue <= A_HAIR_HUE_MAX * 255) | (hue >= A_HAIR_HUE_MIN * 255)
 
+
+# Silver hair is not a hue change -- at this saturation the hue barely shows --
+# it is saturation crushed most of the way out and value lifted hard. The hue
+# that survives is set cool on purpose: crushing a warm brown's saturation
+# without moving its hue lands on a dun grey that reads as dirty blonde, where
+# a trace of blue reads as platinum.
+SILVER_HAIR_HUE = 0.58
+SILVER_HAIR_SATURATION = 0.12
+SILVER_HAIR_LIGHTEN = 0.62
+
+# Brows are recoloured with the hair, or the face reads as dyed hair rather
+# than as a silver-haired character. They get their own, gentler value lift:
+# the brow map already sits bright (median value 194 of 255), so the hair's
+# 0.62 lift takes it to ~230 and the brow disappears into skin this pale.
+#
+# The brow map is its own image with nothing else painted on it, and all of it
+# is one warm band (hue 10-35), so it takes an all-pass hue mask rather than
+# the hair's. The hair's own mask is measurably wrong here -- it catches only
+# 3774 of the brow's 9677 colourful pixels, which would leave a two-tone brow,
+# half silver and half upstream brown.
+BROW_LIGHTEN = 0.30
+BROW_MIN_SATURATION = 15 / 255.0
+BROW_IMAGES = ('F00_000_00_FaceBrow_00',)
+
+
+def any_hue_test(hue):
+    """Every pixel is the thing being recoloured -- for single-subject maps."""
+    return np.ones(hue.shape, dtype=bool)
+
+# --- Eyes -------------------------------------------------------------------
+# The iris is its own image (F00_000_00_EyeIris_00), so unlike the rings it can
+# be recoloured wholesale without masking around anything else on the map.
+#
+# Measured over its colourful pixels: 75% sit at hue 0-16 (the warm brown of
+# the iris body) and the rest run 216-252, which is the blue gradient across
+# the top of the iris. Both are recoloured, deliberately. Mapping only the warm
+# band -- the obvious reading of "make the eyes red" -- leaves that blue
+# gradient behind as a blue crescent sitting on top of a red eye.
+#
+# Only the hue is set. Value carries the iris's radial striations and the shade
+# under the lid, so leaving it alone is what keeps the eye looking like an eye
+# rather than a flat red disc.
+EYE_HUE = 250 / 255.0         # ~353 degrees: crimson, a shade off pure red
+EYE_SATURATION = 1.25
+# Protects the white sparkle highlights painted into the iris map, which have
+# no meaningful hue to set, and the near-black pupil, where a hue change would
+# be invisible anyway but a saturation lift would not.
+EYE_MIN_SATURATION = 30 / 255.0
+EYE_MIN_VALUE = 30 / 255.0
+EYE_IMAGES = ('F00_000_00_EyeIris_00',)
+
 # The warm pixels the hue mask deliberately skips are the hair clips, which
 # upstream are a strong red. The model this replaces carried pale cream clips,
 # and swapping them for red is not a change anyone asked for -- so pull most of
@@ -160,6 +211,18 @@ CHARACTERS = [
      'hair_min_saturation': A_HAIR_MIN_SATURATION,
      'hair_saturation_mult': PINK_HAIR_SATURATION,
      'hair_lighten': PINK_HAIR_LIGHTEN},
+    # Silver hair and red eyes, as the base colouring for a summer-scene
+    # character. The hair/ears/outfit geometry that finishes the look is built
+    # on top of this in Blender (tools/blender_build.py); what belongs here is
+    # only what a texture edit can do, which is the colour.
+    {'key': 'e', 'sample': 'AvatarSample_A', 'label': 'E',
+     'recolour_hair': True, 'lighten_skin': True, 'recolour_eyes': True,
+     'hair_hue': SILVER_HAIR_HUE,
+     'hair_hue_test': a_hair_hue_test,
+     'hair_min_saturation': A_HAIR_MIN_SATURATION,
+     'hair_saturation_mult': SILVER_HAIR_SATURATION,
+     'hair_lighten': SILVER_HAIR_LIGHTEN,
+     'recolour_brows': True},
 ]
 
 
@@ -259,6 +322,16 @@ def recolour_hair(payload, hue_target=HAIR_HUE, hue_test=_default_hue_test,
     saturation[is_hair] *= saturation_mult
     value[is_hair] += (255 - value[is_hair]) * lighten
     saturation[~is_hair] *= 1 - desaturate_rest
+    return _from_hsv(hsv, alpha)
+
+
+def recolour_eyes(payload, hue_target=EYE_HUE, saturation_mult=EYE_SATURATION):
+    """Set the iris to one hue, keeping its shading and its white highlights."""
+    hsv, alpha = _to_hsv(payload)
+    hue, saturation, value = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    iris = (saturation >= EYE_MIN_SATURATION * 255) & (value >= EYE_MIN_VALUE * 255)
+    hue[iris] = hue_target * 255
+    saturation[iris] *= saturation_mult
     return _from_hsv(hsv, alpha)
 
 
@@ -649,6 +722,31 @@ def build_character(character):
         for i in hair_images:
             payloads[i] = recolour_hair(payloads[i], **hair_kwargs)
         print(f"  hair textures recoloured: {len(hair_images)}")
+
+    if character.get("recolour_brows"):
+        brow_images = [i for i, name in names.items() if name in BROW_IMAGES]
+        for i in brow_images:
+            payloads[i] = recolour_hair(
+                payloads[i],
+                hue_target=character.get('hair_hue', HAIR_HUE),
+                hue_test=any_hue_test,
+                min_saturation=BROW_MIN_SATURATION,
+                saturation_mult=character.get('hair_saturation_mult', HAIR_SATURATION),
+                lighten=BROW_LIGHTEN,
+                desaturate_rest=0.0,
+            )
+        assert brow_images, f"no brow images matched {BROW_IMAGES}"
+        print(f"  brow textures recoloured: {len(brow_images)}")
+
+    if character.get("recolour_eyes"):
+        eye_images = [i for i, name in names.items() if name in EYE_IMAGES]
+        for i in eye_images:
+            payloads[i] = recolour_eyes(payloads[i])
+        # Loudly rather than quietly shipping the upstream eye colour: this is
+        # a match against upstream image names, and the failure mode if those
+        # ever change is finding nothing and saying nothing.
+        assert eye_images, f"no eye images matched {EYE_IMAGES}"
+        print(f"  eye textures recoloured: {len(eye_images)}")
 
     # Rings before the skin lift, so the pixels they leave behind are ordinary
     # skin by the time the lift runs and come out the same colour as the finger
