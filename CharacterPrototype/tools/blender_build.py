@@ -136,6 +136,11 @@ def load_pixels(img):
 
 def store_pixels(img, arr):
     img.pixels.foreach_set(np.clip(arr, 0.0, 1.0).reshape(-1).astype(np.float32))
+    # Force PNG (lossless) regardless of the image's source format -- a
+    # texture that arrived as JPEG (e.g. anything that went through
+    # build_model.py's opaque-texture compression) would otherwise get
+    # re-encoded lossily by .pack() using its existing file_format.
+    img.file_format = "PNG"
     img.pack()
     img.update()
 

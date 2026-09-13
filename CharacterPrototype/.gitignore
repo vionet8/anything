@@ -3,3 +3,7 @@ test-results/
 playwright-report/
 assets/source/
 tools/__pycache__/
+
+# Low-res iteration renders from the compose loop -- scratch, and regenerable
+# with --quick. The finished renders next to them are not ignored.
+assets/blender/*-quick.png
