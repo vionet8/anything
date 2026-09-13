@@ -1125,7 +1125,7 @@ def build_bamboo():
     # corner of the hero frame, just in front of the eave fascia -- the dark
     # leafy intrusions the reference uses to close off the top of the picture.
     def arch(start, end, sag, r0, r1, n_twigs, leaf_len, tw_scale, seed_dir,
-             tgt=None):
+             tgt=None, t0=0.10):
         bm_culm, bm_leaf, bm_stem = (tgt if tgt is not None
                                      else (_culm_default, _leaf_default,
                                            _stem_default))
@@ -1142,7 +1142,7 @@ def build_bamboo():
         sd = Vector(seed_dir).normalized()
         n_twigs = int(n_twigs * 2.2)
         for i in range(n_twigs):
-            t = 0.10 + 0.90 * (i / max(1, n_twigs - 1))
+            t = t0 + (1.0 - t0) * (i / max(1, n_twigs - 1))
             base = ((1 - t) ** 2 * a + 2 * (1 - t) * t * ctrl + t ** 2 * b)
             base = base + Vector((rng.uniform(-0.10, 0.10),
                                   rng.uniform(-0.10, 0.10),
@@ -1179,15 +1179,15 @@ def build_bamboo():
     culm((1.98, -1.46, -1.9), (1.88, -1.32, 2.55), 0.030, 0.021, nodes=5,
          tgt=bm_fculm)
     arch((1.86, -1.30, 2.28), (0.74, -1.24, 1.22), 0.09, 0.022, 0.011,
-         16, 0.100, 0.34, (-1.0, 0.05, -0.25), tgt=FG)
+         16, 0.100, 0.34, (-1.0, 0.05, -0.25), tgt=FG, t0=0.56)
     arch((1.88, -1.36, 1.84), (1.02, -1.30, 1.08), 0.05, 0.019, 0.010,
-         11, 0.092, 0.28, (-1.0, 0.05, -0.30), tgt=FG)
+         11, 0.092, 0.28, (-1.0, 0.05, -0.30), tgt=FG, t0=0.58)
     culm((-1.48, -1.62, -1.9), (-1.34, -1.48, 2.35), 0.028, 0.020, nodes=5,
          tgt=bm_fculm)
     arch((-1.32, -1.46, 2.08), (-0.36, -1.28, 1.24), 0.08, 0.020, 0.010,
-         15, 0.098, 0.32, (1.0, 0.05, -0.25), tgt=FG)
+         15, 0.098, 0.32, (1.0, 0.05, -0.25), tgt=FG, t0=0.56)
     arch((-1.34, -1.52, 1.70), (-0.62, -1.36, 1.06), 0.05, 0.018, 0.010,
-         10, 0.090, 0.26, (1.0, 0.05, -0.30), tgt=FG)
+         10, 0.090, 0.26, (1.0, 0.05, -0.30), tgt=FG, t0=0.58)
 
     for (bx, by, z0, z1, sgn) in [(-2.36, -1.46, 0.45, 3.90, 1.0),
                                   (2.92, -1.74, 0.40, 3.80, -1.0),
@@ -1380,7 +1380,7 @@ def build_koi():
     bm_pale = bmesh.new()
     for (x, y, hd, ln, z) in [(-1.05, -1.28, 18, 0.44, -0.19),
                               (0.95, -1.80, 162, 0.40, -0.27),
-                              (-0.80, -0.70, 6, 0.36, -0.045)]:
+                              (-0.96, -0.30, 3, 0.46, -0.130)]:
         _koi(bm_a, bm_fin, (x, y, 0), hd, ln, WATER_LEVEL + z)
     _koi(bm_pale, bm_fin, (-0.30, -1.78, 0), 74, 0.38, WATER_LEVEL - 0.30)
     koi = obj_from_bmesh("Engawa_Koi", bm_a, smooth=True)
@@ -2293,8 +2293,8 @@ def build_lighting(dappled=True):
     # shipping camera can see, and it sits in the deck's own shadow. A low,
     # warm bounce standing in for light kicking off the bright boards keeps
     # it (and the koi in it) from going to black.
-    area("Engawa_Underdeck_Bounce", (-0.9, -1.9, -0.30), (-0.7, -0.55, -0.75),
-         34.0, 2.4, (1.0, 0.90, 0.76), size_y=0.9)
+    area("Engawa_Underdeck_Bounce", (-1.0, -1.85, -0.32), (-0.95, -0.35, -0.92),
+         95.0, 2.2, (1.0, 0.91, 0.78), size_y=0.8)
 
     # Gather the rig under its own empty, itself a child of Scene_Engawa when
     # that exists: the whole set still moves and hides as one, but a
