@@ -49,21 +49,6 @@ UPSTREAM_URL = (
     "https://raw.githubusercontent.com/madjin/vrm-samples/master/vroid/stable/{sample}.vrm"
 )
 
-# The cast. All three share one skeleton -- 54 humanoid bones under identical
-# names -- which is why the hand-authored poses work on every one of them
-# without a per-character variant. Checked rather than assumed; the same is
-# true of the facial morph parts, except that C is missing the two the ">_<"
-# expression is built from, so that one face is A and B only.
-#
-# Only B is restyled. A and C are their own characters and arrive as they are;
-# the recolour was a request about her, not a house style.
-CHARACTERS = [
-    {'key': 'a', 'sample': 'AvatarSample_A', 'label': 'A'},
-    {'key': 'b', 'sample': 'AvatarSample_B', 'label': 'B',
-     'recolour_hair': True, 'lighten_skin': True, 'remove_rings': True},
-    {'key': 'c', 'sample': 'AvatarSample_C', 'label': 'C'},
-]
-
 # --- Recolour ---------------------------------------------------------------
 # Hair: hue is *set*, not rotated, so the result is the same blue no matter what
 # the upstream hair happened to be. Upstream is purple with a teal streak; a
@@ -84,6 +69,24 @@ HAIR_HUE_MAX = 250 / 255.0
 # Only to skip true greys and whites, where hue is meaningless -- the white
 # streak keeps its colour this way.
 HAIR_MIN_SATURATION = 8 / 255.0
+
+# A's upstream hair is a warm brown, measured (colourful pixels only, i.e.
+# saturation>20 & value>20, over the five hair maps) as splitting almost
+# evenly across the hue wraparound: the 25/50/75th percentiles come out
+# 3 / 251 / 253 on the 0-255 wheel -- there is no hair hue in the middle of
+# the range, only right at each end of it. So unlike B (a single contiguous
+# band, no wraparound needed), A's mask has to catch both ends. There are no
+# separate-coloured clips sharing these maps to exclude, unlike B's.
+PINK_HAIR_HUE = 0.94             # ~338 degrees, a clear sakura pink
+PINK_HAIR_SATURATION = 1.4
+PINK_HAIR_LIGHTEN = 0.10
+A_HAIR_HUE_MAX = 15 / 255.0      # low end of the wraparound (near-red browns)
+A_HAIR_HUE_MIN = 240 / 255.0     # high end (the same browns, wrapped)
+A_HAIR_MIN_SATURATION = 15 / 255.0
+
+
+def a_hair_hue_test(hue):
+    return (hue <= A_HAIR_HUE_MAX * 255) | (hue >= A_HAIR_HUE_MIN * 255)
 
 # The warm pixels the hue mask deliberately skips are the hair clips, which
 # upstream are a strong red. The model this replaces carried pale cream clips,
@@ -133,6 +136,31 @@ RING_FILL_PASSES = 80        # enough to close the widest band from both sides
 # How much of a vertex's skin weight has to sit on finger bones to count as
 # finger. Anything lower drags in the knuckles and the back of the hand.
 FINGER_WEIGHT = 0.6
+
+# The cast. All three share one skeleton -- 54 humanoid bones under identical
+# names -- which is why the hand-authored poses work on every one of them
+# without a per-character variant. Checked rather than assumed; the same is
+# true of the facial morph parts, except that C is missing the two the ">_<"
+# expression is built from, so that one face is A and B only.
+CHARACTERS = [
+    {'key': 'a', 'sample': 'AvatarSample_A', 'label': 'A'},
+    {'key': 'b', 'sample': 'AvatarSample_B', 'label': 'B',
+     'recolour_hair': True, 'lighten_skin': True, 'remove_rings': True},
+    {'key': 'c', 'sample': 'AvatarSample_C', 'label': 'C'},
+    # A second restyle of A (not B): same upstream mesh as the unmodified 'a',
+    # carried through the same recipe with a different hair hue, so the two
+    # can be compared side by side as two independent products of one source.
+    # A's hair sits at a different upstream hue than B's and shares its map
+    # with no clips to protect, so it gets its own mask range and an absolute
+    # (not relative) saturation target -- see recolour_hair().
+    {'key': 'd', 'sample': 'AvatarSample_A', 'label': 'D',
+     'recolour_hair': True, 'lighten_skin': True,
+     'hair_hue': PINK_HAIR_HUE,
+     'hair_hue_test': a_hair_hue_test,
+     'hair_min_saturation': A_HAIR_MIN_SATURATION,
+     'hair_saturation_mult': PINK_HAIR_SATURATION,
+     'hair_lighten': PINK_HAIR_LIGHTEN},
+]
 
 
 def read_glb(path):
@@ -207,19 +235,30 @@ def _from_hsv(hsv, alpha):
     return buffer.getvalue()
 
 
-def recolour_hair(payload):
-    """Set the hair to one hue, leaving the clips and the white streak alone."""
+def _default_hue_test(hue):
+    return (hue >= HAIR_HUE_MIN * 255) & (hue <= HAIR_HUE_MAX * 255)
+
+
+def recolour_hair(payload, hue_target=HAIR_HUE, hue_test=_default_hue_test,
+                   min_saturation=HAIR_MIN_SATURATION, saturation_mult=HAIR_SATURATION,
+                   lighten=HAIR_LIGHTEN, desaturate_rest=CLIP_DESATURATE):
+    """Set the hair to one hue, leaving the clips and the white streak alone.
+
+    The hue band that counts as "hair" (hue_test/min_saturation) and the
+    target look (hue_target/saturation_mult/lighten) are both parameters
+    because each upstream sample's hair sits at a different starting hue and
+    shares its texture with different accessories -- see CHARACTERS. hue_test
+    takes the hue channel (0-255 scale) and returns a boolean mask; it is a
+    callable rather than a plain (min, max) range because a brown hue (like
+    A's) straddles the 0/255 wraparound point the way B's never did.
+    """
     hsv, alpha = _to_hsv(payload)
     hue, saturation, value = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-    is_hair = (
-        (hue >= HAIR_HUE_MIN * 255)
-        & (hue <= HAIR_HUE_MAX * 255)
-        & (saturation >= HAIR_MIN_SATURATION * 255)
-    )
-    hue[is_hair] = HAIR_HUE * 255
-    saturation[is_hair] *= HAIR_SATURATION
-    value[is_hair] += (255 - value[is_hair]) * HAIR_LIGHTEN
-    saturation[~is_hair] *= 1 - CLIP_DESATURATE
+    is_hair = hue_test(hue) & (saturation >= min_saturation * 255)
+    hue[is_hair] = hue_target * 255
+    saturation[is_hair] *= saturation_mult
+    value[is_hair] += (255 - value[is_hair]) * lighten
+    saturation[~is_hair] *= 1 - desaturate_rest
     return _from_hsv(hsv, alpha)
 
 
@@ -596,8 +635,19 @@ def build_character(character):
                 tex_index = (mat.get("textureProperties") or {}).get(slot)
                 if tex_index is not None:
                     hair_images.add(js["textures"][tex_index]["source"])
+        hair_kwargs = {}
+        if 'hair_hue' in character:
+            hair_kwargs['hue_target'] = character['hair_hue']
+        if 'hair_hue_test' in character:
+            hair_kwargs['hue_test'] = character['hair_hue_test']
+        if 'hair_min_saturation' in character:
+            hair_kwargs['min_saturation'] = character['hair_min_saturation']
+        if 'hair_saturation_mult' in character:
+            hair_kwargs['saturation_mult'] = character['hair_saturation_mult']
+        if 'hair_lighten' in character:
+            hair_kwargs['lighten'] = character['hair_lighten']
         for i in hair_images:
-            payloads[i] = recolour_hair(payloads[i])
+            payloads[i] = recolour_hair(payloads[i], **hair_kwargs)
         print(f"  hair textures recoloured: {len(hair_images)}")
 
     # Rings before the skin lift, so the pixels they leave behind are ordinary
