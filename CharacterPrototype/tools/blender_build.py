@@ -287,7 +287,29 @@ def convert_to_principled(mat):
     if mat.blend_method != "OPAQUE":
         alpha_out = tex_node.outputs.get("Alpha")
         if alpha_out:
-            nt.links.new(alpha_out, bsdf.inputs["Alpha"])
+            if mat.blend_method == "CLIP":
+                # Cycles ignores blend_method and alpha_threshold -- they are
+                # Eevee-only settings -- so a material the importer marked
+                # "alpha clip" still reaches Cycles as smooth alpha. That
+                # matters here because VRoid's hair cards are not cleanly
+                # binary: the regions meant to be cut away carry a low but
+                # NON-ZERO alpha (antialiasing residue), which MToon discards
+                # at a cutoff and Cycles instead renders as ~10% opaque. One
+                # card like that is invisible; a head of long hair stacks
+                # dozens of them, and they add up into grey sheets hanging
+                # over the face and chest -- which show up mainly as shadow,
+                # because shadow rays cross the most layers. Re-impose the
+                # cutoff explicitly so the cut-away parts are truly gone.
+                cutoff = nt.nodes.new("ShaderNodeMath")
+                cutoff.operation = "GREATER_THAN"
+                cutoff.inputs[1].default_value = max(mat.alpha_threshold, 0.5)
+                cutoff.location = (tex_node.location.x + 150, tex_node.location.y - 200)
+                nt.links.new(alpha_out, cutoff.inputs[0])
+                nt.links.new(cutoff.outputs[0], bsdf.inputs["Alpha"])
+            else:
+                # BLEND materials (eyelashes, eyeline, brows, eye highlights)
+                # genuinely want soft alpha -- leave those smooth.
+                nt.links.new(alpha_out, bsdf.inputs["Alpha"])
 
     nt.links.new(bsdf.outputs["BSDF"], output.inputs["Surface"])
     return True

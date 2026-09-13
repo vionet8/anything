@@ -211,6 +211,23 @@ def load_character(force_fallback=False):
     return blender_character.build_character()
 
 
+def silence_hair_shadows(root):
+    """Stop the hair casting shadows, which is what the grey veils were.
+
+    VRoid hair is dozens of overlapping transparent cards. Cycles traces every
+    layer honestly, so the stack shadows itself into broad grey sheets that
+    hang down her face and chest -- they survived a hard alpha cutoff on the
+    cards because they were never a surface problem, and switching shadow
+    casting off on the hair alone removes them completely (checked both ways).
+    Nothing of value is lost: this is anime hair, whose shading is painted into
+    the texture, and raytraced self-shadowing of stacked cards fights that
+    rather than adding to it.
+    """
+    for obj in bpy.data.objects:
+        if obj.type == "MESH" and any(k in obj.name for k in ("Hair", "Ear")):
+            obj.visible_shadow = False
+
+
 def apply_pose(arm, pose):
     missing = []
     for bone_name, rotation in pose.items():
@@ -412,6 +429,7 @@ def main():
             blender_scene.build_lighting()
 
     root, arm = load_character(force_fallback="--fallback" in args)
+    silence_hair_shadows(root)
     if arm is None:
         raise SystemExit("character has no armature -- cannot pose")
     centre = place(root, arm, lying="--lying" in args)

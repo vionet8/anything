@@ -598,10 +598,10 @@ def _blur(field, iterations):
 
 
 # How much warmer than the arms the legs are allowed to get, and where.
-LEG_SAT_BASE_FROM_ARM = 1.15   # x the arms' own p90 saturation
-LEG_SAT_WARM = 0.26            # at knees, ankles and form creases
-LEG_VALUE_BASE = 0.975         # off the clipping point, unlike the arms
-LEG_VALUE_CREASE = 0.90
+LEG_SAT_BASE_FROM_ARM = 1.00   # x the arms' own p90 saturation
+LEG_SAT_WARM = 0.195           # at knees, ankles and form creases
+LEG_VALUE_BASE = 0.986         # a hair off the clipping point, unlike the arms
+LEG_VALUE_CREASE = 0.930
 WARMTH_BLUR = 6
 
 
@@ -788,7 +788,7 @@ def recolour_outfit_summer():
     else:
         log("WARNING: Bottoms_01 image not found, skipping shorts recolour")
     if body:
-        bare_legs(body)
+        bare_legs(body, bpy.data.objects.get("Body"))
     remove_shoes()
     remove_subankle_garment()
 

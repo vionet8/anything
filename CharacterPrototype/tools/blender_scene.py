@@ -536,7 +536,16 @@ def build_materials():
     mixw.inputs["Fac"].default_value = 0.45
     nt.links.new(cross.outputs["Color"], mixw.inputs["Color1"])
     nt.links.new(n1.outputs["Fac"], mixw.inputs["Color2"])
-    add_bump(m, mixw.outputs["Color"], strength=0.42, distance=0.045)
+    swell = nt.nodes.new("ShaderNodeTexNoise")
+    swell.inputs["Scale"].default_value = 1.15
+    swell.inputs["Detail"].default_value = 3.0
+    nt.links.new(mp.outputs["Vector"], swell.inputs["Vector"])
+    mixs2 = nt.nodes.new("ShaderNodeMixRGB")
+    mixs2.inputs["Fac"].default_value = 0.42
+    nt.links.new(mixw.outputs["Color"], mixs2.inputs["Color1"])
+    nt.links.new(swell.outputs["Fac"], mixs2.inputs["Color2"])
+    mixw = mixs2
+    add_bump(m, mixw.outputs["Color"], strength=0.58, distance=0.075)
     # A transmissive BSDF is opaque to Cycles' shadow rays, so with refractive
     # caustics off the pond bed and the koi received *no* direct sunlight at
     # all and the whole pond rendered black. Swap the surface for a plain
@@ -600,6 +609,10 @@ def build_materials():
     # --- Foliage.
     M["leaf_bamboo"] = _leaf_material("EngawaBambooLeaf", (0.055, 0.190, 0.038),
                                       (0.145, 0.360, 0.070))
+    M["leaf_bamboo_fg"] = _leaf_material("EngawaBambooLeafFG",
+                                         (0.020, 0.062, 0.018),
+                                         (0.070, 0.170, 0.042),
+                                         translucency=0.22)
     M["leaf_far"] = _leaf_material("EngawaFarLeaf", (0.060, 0.185, 0.055),
                                    (0.190, 0.420, 0.105))
     M["leaf_bonsai"] = _leaf_material("EngawaBonsaiLeaf", (0.035, 0.130, 0.030),
@@ -1051,9 +1064,13 @@ def add_twig(bm_leaf, bm_stem, start, direction, length, n_leaves,
 
 def build_bamboo():
     bm_leaf, bm_stem, bm_culm = bmesh.new(), bmesh.new(), bmesh.new()
+    # Foreground framing greenery is kept in its own mesh (see below).
+    bm_fleaf, bm_fstem, bm_fculm = bmesh.new(), bmesh.new(), bmesh.new()
+    _culm_default, _leaf_default, _stem_default = bm_culm, bm_leaf, bm_stem
     rng = random.Random(77)
 
-    def culm(base, top, r0, r1, nodes=6):
+    def culm(base, top, r0, r1, nodes=6, tgt=None):
+        bm_culm = tgt if tgt is not None else _culm_default
         b, t = Vector(base), Vector(top)
         d = t - b
         for i in range(nodes):
@@ -1107,7 +1124,11 @@ def build_bamboo():
     # composition. Each arcs out from a culm and hangs its foliage into a top
     # corner of the hero frame, just in front of the eave fascia -- the dark
     # leafy intrusions the reference uses to close off the top of the picture.
-    def arch(start, end, sag, r0, r1, n_twigs, leaf_len, tw_scale, seed_dir):
+    def arch(start, end, sag, r0, r1, n_twigs, leaf_len, tw_scale, seed_dir,
+             tgt=None):
+        bm_culm, bm_leaf, bm_stem = (tgt if tgt is not None
+                                     else (_culm_default, _leaf_default,
+                                           _stem_default))
         r0, r1 = r0 * 0.55, r1 * 0.62
         a, b = Vector(start), Vector(end)
         ctrl = (a + b) / 2 + Vector((0, 0, sag))
@@ -1148,6 +1169,26 @@ def build_bamboo():
     arch((2.82, -1.70, 3.48), (1.72, -1.28, 3.02), 0.09, 0.023, 0.012,
          12, 0.145, 0.28, (-1.0, 0.10, -0.12))
 
+    # --- foreground framing for the low shipping camera ------------------
+    # The compose-shot camera sits at z=1.15 and its top edge only reaches
+    # z ~= 1.28 out over the water, so the tall canopy above is far overhead
+    # and out of shot. These two slim canes stand just outside the frame on
+    # either side and droop their foliage down to z ~= 1.05-1.30 at y ~= -1.25,
+    # which is where that camera's top corners actually are.
+    FG = (bm_fculm, bm_fleaf, bm_fstem)
+    culm((1.98, -1.46, -1.9), (1.88, -1.32, 2.55), 0.030, 0.021, nodes=5,
+         tgt=bm_fculm)
+    arch((1.86, -1.30, 2.28), (0.74, -1.24, 1.22), 0.09, 0.022, 0.011,
+         16, 0.100, 0.34, (-1.0, 0.05, -0.25), tgt=FG)
+    arch((1.88, -1.36, 1.84), (1.02, -1.30, 1.08), 0.05, 0.019, 0.010,
+         11, 0.092, 0.28, (-1.0, 0.05, -0.30), tgt=FG)
+    culm((-1.48, -1.62, -1.9), (-1.34, -1.48, 2.35), 0.028, 0.020, nodes=5,
+         tgt=bm_fculm)
+    arch((-1.32, -1.46, 2.08), (-0.36, -1.28, 1.24), 0.08, 0.020, 0.010,
+         15, 0.098, 0.32, (1.0, 0.05, -0.25), tgt=FG)
+    arch((-1.34, -1.52, 1.70), (-0.62, -1.36, 1.06), 0.05, 0.018, 0.010,
+         10, 0.090, 0.26, (1.0, 0.05, -0.30), tgt=FG)
+
     for (bx, by, z0, z1, sgn) in [(-2.36, -1.46, 0.45, 3.90, 1.0),
                                   (2.92, -1.74, 0.40, 3.80, -1.0),
                                   (2.80, -2.80, 0.10, 1.45, -1.0)]:
@@ -1166,7 +1207,21 @@ def build_bamboo():
     stems.data.materials.append(MATS["stem"])
     culms = obj_from_bmesh("Engawa_Bamboo_Culms", bm_culm, smooth=True)
     culms.data.materials.append(MATS["bamboo_culm"])
-    return [leaves, stems, culms]
+
+    # The two low canes exist purely to close off the top corners of the
+    # shipping camera, a metre and a half from the lens. Left casting, their
+    # shadows fall straight across the middle of the deck -- i.e. across the
+    # character -- so this group is excluded from shadow rays. The overhead
+    # canopy and the gobo still supply all the dapple.
+    fg_leaves = obj_from_bmesh("Engawa_Bamboo_FG_Leaves", bm_fleaf)
+    fg_leaves.data.materials.append(MATS["leaf_bamboo_fg"])
+    fg_stems = obj_from_bmesh("Engawa_Bamboo_FG_Stems", bm_fstem)
+    fg_stems.data.materials.append(MATS["stem"])
+    fg_culms = obj_from_bmesh("Engawa_Bamboo_FG_Culms", bm_fculm, smooth=True)
+    fg_culms.data.materials.append(MATS["bamboo_culm"])
+    for o in (fg_leaves, fg_stems, fg_culms):
+        o.visible_shadow = False
+    return [leaves, stems, culms, fg_leaves, fg_stems, fg_culms]
 
 
 def build_garden_beyond():
@@ -1239,7 +1294,7 @@ def loft_tube(bm, pts, radii, segments=12, cap_start=True, cap_end=True,
 def build_water():
     objs = []
     x0, x1 = -11.0, 11.0
-    y0, y1 = -13.0, DECK_FRONT + 0.35      # tucks under the deck lip
+    y0, y1 = -13.0, 0.60      # tucks under the deck lip
     # Closed body of water so Volume Absorption has an interior to colour.
     bm = bmesh.new()
     bm_box(bm, ((x0 + x1) / 2, (y0 + y1) / 2, (WATER_LEVEL + POND_FLOOR) / 2),
@@ -1268,7 +1323,7 @@ def build_water():
     objs.append(bank)
     # stone coping along the near lip of the pond, under the house
     bm = bmesh.new()
-    bm_box(bm, (0, y1 - 0.10, bank_top - 0.30), (x1 * 2, 0.30, 0.70))
+    bm_box(bm, (0, y1 - 0.10, bank_top - 0.34), (x1 * 2, 0.30, 0.78))
     coping = obj_from_bmesh("Engawa_Pond_Coping", bm)
     coping.data.materials.append(MATS["stone"])
     objs.append(coping)
@@ -1323,10 +1378,11 @@ def _koi(bm_body, bm_fin, origin, heading_deg, length, z):
 def build_koi():
     bm_a, bm_fin = bmesh.new(), bmesh.new()
     bm_pale = bmesh.new()
-    for (x, y, hd, ln, z) in [(-0.85, -1.20, 18, 0.44, -0.19),
-                              (0.95, -1.80, 162, 0.40, -0.27)]:
+    for (x, y, hd, ln, z) in [(-1.05, -1.28, 18, 0.44, -0.19),
+                              (0.95, -1.80, 162, 0.40, -0.27),
+                              (-0.80, -0.70, 6, 0.36, -0.045)]:
         _koi(bm_a, bm_fin, (x, y, 0), hd, ln, WATER_LEVEL + z)
-    _koi(bm_pale, bm_fin, (-0.55, -1.88, 0), 74, 0.38, WATER_LEVEL - 0.38)
+    _koi(bm_pale, bm_fin, (-0.30, -1.78, 0), 74, 0.38, WATER_LEVEL - 0.30)
     koi = obj_from_bmesh("Engawa_Koi", bm_a, smooth=True)
     koi.data.materials.append(MATS["koi"])
     pale = obj_from_bmesh("Engawa_Koi_Pale", bm_pale, smooth=True)
@@ -1339,10 +1395,10 @@ def build_koi():
 def build_lilies():
     bm = bmesh.new()
     rng = random.Random(41)
-    pads = [(-1.35, -1.24, 0.145), (-1.02, -1.72, 0.105), (-1.70, -1.64, 0.170),
+    pads = [(-1.48, -1.34, 0.145), (-1.06, -1.78, 0.105), (-1.82, -1.70, 0.170),
             (1.58, -1.48, 0.135), (1.30, -1.86, 0.155), (2.00, -1.16, 0.100),
-            (-0.18, -1.92, 0.150), (0.28, -1.58, 0.115), (-2.20, -1.02, 0.125),
-            (0.92, -2.02, 0.130), (-0.72, -1.42, 0.095)]
+            (-0.18, -1.98, 0.150), (0.34, -1.52, 0.115), (-2.20, -1.02, 0.125),
+            (0.92, -2.02, 0.130), (0.66, -1.18, 0.095)]
     for (x, y, r) in pads:
         z = WATER_LEVEL + 0.006
         n = 22
@@ -1386,9 +1442,9 @@ def build_lilies():
 # ==========================================================================
 
 def build_floating_bucket():
-    cx, cy = 0.66, -1.44
+    cx, cy = -0.58, -0.86
     r_out, h = 0.255, 0.27
-    rim_z = WATER_LEVEL + 0.135          # rides ~half out of the water
+    rim_z = WATER_LEVEL + 0.170          # rides ~half out of the water
     bot_z = rim_z - h
     objs = []
 
@@ -2077,8 +2133,8 @@ def build_cat():
     root.empty_display_size = 0.2
     bpy.context.scene.collection.objects.link(root)
     _register(root)
-    root.location = (1.54, 0.30, 0.0)
-    root.rotation_euler = (0.0, 0.0, math.radians(58))
+    root.location = (0.36, -0.12, 0.0)
+    root.rotation_euler = (0.0, 0.0, math.radians(35))
     for o in (body_obj, pinks, eyes, whisk):
         o.parent = root
     return root
@@ -2171,15 +2227,15 @@ def build_lighting(dappled=True):
         tcg = gnt.nodes.new("ShaderNodeTexCoord")
         mpg = gnt.nodes.new("ShaderNodeMapping")
         mpg.inputs["Scale"].default_value = (1.0, 1.0, 1.0)
-        mpg.inputs["Location"].default_value = (2.6, -1.1, 0.0)
+        mpg.inputs["Location"].default_value = (1.06, 0.87, 0.0)
         mpg.inputs["Rotation"].default_value = (0, 0, math.radians(38))
         gnt.links.new(tcg.outputs["Object"], mpg.inputs["Vector"])
         vor = gnt.nodes.new("ShaderNodeTexVoronoi")
         vor.feature = "F1"
-        vor.inputs["Scale"].default_value = 1.15
+        vor.inputs["Scale"].default_value = 2.30
         gnt.links.new(mpg.outputs["Vector"], vor.inputs["Vector"])
         nzg = gnt.nodes.new("ShaderNodeTexNoise")
-        nzg.inputs["Scale"].default_value = 2.1
+        nzg.inputs["Scale"].default_value = 4.2
         nzg.inputs["Detail"].default_value = 6.0
         gnt.links.new(mpg.outputs["Vector"], nzg.inputs["Vector"])
         mixg = gnt.nodes.new("ShaderNodeMixRGB")
@@ -2188,7 +2244,7 @@ def build_lighting(dappled=True):
         gnt.links.new(nzg.outputs["Fac"], mixg.inputs["Color2"])
         rampg = gnt.nodes.new("ShaderNodeValToRGB")
         rampg.color_ramp.elements[0].position = 0.38
-        rampg.color_ramp.elements[1].position = 0.49
+        rampg.color_ramp.elements[1].position = 0.52
         gnt.links.new(mixg.outputs["Color"], rampg.inputs["Fac"])
         mixs = gnt.nodes.new("ShaderNodeMixShader")
         gnt.links.new(rampg.outputs["Color"], mixs.inputs["Fac"])
@@ -2233,6 +2289,12 @@ def build_lighting(dappled=True):
     # cool skylight fill from over the water -- keeps shadows blue, not black
     area("Engawa_Water_Fill", (-1.5, -6.0, 4.6), (0.0, 0.4, -0.3),
          55.0, 9.0, (0.78, 0.89, 1.0), size_y=7.0)
+    # The strip of pond tucked under the deck lip is the only water the
+    # shipping camera can see, and it sits in the deck's own shadow. A low,
+    # warm bounce standing in for light kicking off the bright boards keeps
+    # it (and the koi in it) from going to black.
+    area("Engawa_Underdeck_Bounce", (-0.9, -1.9, -0.30), (-0.7, -0.55, -0.75),
+         34.0, 2.4, (1.0, 0.90, 0.76), size_y=0.9)
 
     # Gather the rig under its own empty, itself a child of Scene_Engawa when
     # that exists: the whole set still moves and hides as one, but a
