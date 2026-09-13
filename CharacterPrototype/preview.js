@@ -148,6 +148,24 @@ loader.load(
       }
       root = vrm.scene;
     }
+    if (!isVrm) {
+      // A plain glTF export (e.g. out of Blender) carries none of VRMUtils'
+      // convention handling and none of VRMHumanoid's normalized-bone pose
+      // sync — it loads facing whichever way its source armature happened to
+      // face (here: away from the camera, back to it) and in its literal
+      // bind pose (T-pose; a pose-mode adjustment upstream doesn't move the
+      // bind pose unless it was explicitly applied/baked before export).
+      // Both are fixed by hand here, by raw bone name, so this file can be
+      // judged standing naturally and facing forward like the VRM path.
+      root.rotation.y = Math.PI;
+      const left = root.getObjectByName('J_Bip_L_UpperArm');
+      const right = root.getObjectByName('J_Bip_R_UpperArm');
+      // Sign checked by rendering, same as the VRM path above.
+      if (left) left.rotation.z = 1.3;
+      if (right) right.rotation.z = -1.3;
+      root.updateMatrixWorld(true);
+    }
+
     root.traverse((obj) => {
       if (obj.isMesh) {
         obj.castShadow = true;
