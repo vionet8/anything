@@ -378,6 +378,12 @@ if __name__ == "__main__":
     bpy.ops.wm.read_factory_settings(use_empty=True)
     import blender_character
     root, arm = blender_character.build_character()
+    # The cardigan comes off for this comparison. It is a bulky garment and it
+    # hides the silhouette these renders exist to show -- judging a body shape
+    # through it is guesswork.
+    import blender_garment
+    blender_garment.strip_garment()
+
     for obj in bpy.data.objects:
         if obj.type == "MESH" and any(k in obj.name for k in NOT_BODY):
             obj.visible_shadow = False
