@@ -579,11 +579,67 @@ def build_materials():
     nt.links.new(addv.outputs[0], nt.nodes["Material Output"].inputs["Volume"])
     M["water"] = m
 
-    # --- Pond bed: dark silty green-brown.
+    # --- Pond bed: dark silty green-brown, with a caustic web laid over it.
+    # Cycles will not give us real caustics here (refractive caustics are off,
+    # because through a rippled surface they are a firefly factory), and
+    # without them the pond reads as flat green depth rather than as water
+    # with light moving in it. A Voronoi distance-to-edge web, brightened and
+    # very slightly emissive so it survives the volume absorption on the way
+    # back up, is the cheap stand-in -- and it is the single biggest thing
+    # that makes the water look lit rather than tinted.
     m = make_mat("EngawaPondBed", rough=0.95, spec=0.05)
-    add_noise_color(m, (0.150, 0.180, 0.120), (0.320, 0.330, 0.215),
-                    scale=(1, 1, 1), noise_scale=11.0, detail=8.0,
-                    ramp_lo=0.35, ramp_hi=0.70)
+    nt, _, _ = add_noise_color(m, (0.150, 0.180, 0.120), (0.320, 0.330, 0.215),
+                               scale=(1, 1, 1), noise_scale=11.0, detail=8.0,
+                               ramp_lo=0.35, ramp_hi=0.70)
+    bsdf = nt.nodes["Principled BSDF"]
+    base_link = bsdf.inputs["Base Color"].links[0]
+    silt = base_link.from_socket
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    tc.location = (-1100, -600)
+    cmap = nt.nodes.new("ShaderNodeMapping")
+    cmap.location = (-900, -600)
+    cmap.inputs["Scale"].default_value = (1.0, 1.0, 1.0)
+    nt.links.new(tc.outputs["Object"], cmap.inputs["Vector"])
+    vor = nt.nodes.new("ShaderNodeTexVoronoi")
+    vor.location = (-700, -600)
+    vor.feature = "DISTANCE_TO_EDGE"
+    vor.inputs["Scale"].default_value = 3.4
+    if "Randomness" in vor.inputs:
+        vor.inputs["Randomness"].default_value = 1.0
+    nt.links.new(cmap.outputs["Vector"], vor.inputs["Vector"])
+    # a second, finer web so the pattern is not one regular size
+    vor2 = nt.nodes.new("ShaderNodeTexVoronoi")
+    vor2.location = (-700, -800)
+    vor2.feature = "DISTANCE_TO_EDGE"
+    vor2.inputs["Scale"].default_value = 7.5
+    if "Randomness" in vor2.inputs:
+        vor2.inputs["Randomness"].default_value = 1.0
+    nt.links.new(cmap.outputs["Vector"], vor2.inputs["Vector"])
+    cmin = nt.nodes.new("ShaderNodeMath")
+    cmin.operation = "MINIMUM"
+    cmin.location = (-500, -700)
+    nt.links.new(vor.outputs["Distance"], cmin.inputs[0])
+    nt.links.new(vor2.outputs["Distance"], cmin.inputs[1])
+    cramp = nt.nodes.new("ShaderNodeValToRGB")
+    cramp.location = (-320, -700)
+    cramp.color_ramp.elements[0].position = 0.0
+    cramp.color_ramp.elements[0].color = (1.0, 1.0, 0.92, 1.0)
+    cramp.color_ramp.elements[1].position = 0.055
+    cramp.color_ramp.elements[1].color = (0.0, 0.0, 0.0, 1.0)
+    nt.links.new(cmin.outputs["Value"], cramp.inputs["Fac"])
+    cadd = nt.nodes.new("ShaderNodeMixRGB")
+    cadd.blend_type = "ADD"
+    cadd.location = (-120, -500)
+    cadd.inputs["Fac"].default_value = 0.50
+    nt.links.new(silt, cadd.inputs["Color1"])
+    nt.links.new(cramp.outputs["Color"], cadd.inputs["Color2"])
+    nt.links.new(cadd.outputs["Color"], bsdf.inputs["Base Color"])
+    for key in ("Emission Color", "Emission"):
+        if key in bsdf.inputs:
+            nt.links.new(cramp.outputs["Color"], bsdf.inputs[key])
+            break
+    if "Emission Strength" in bsdf.inputs:
+        bsdf.inputs["Emission Strength"].default_value = 0.22
     M["pondbed"] = m
 
     # --- Koi.
@@ -2025,14 +2081,27 @@ def build_cat():
 
     # --- head, muzzle, cheeks
     head_c = Vector((-0.262, 0.004, 0.119))
+    # neck: without it the skull sat straight on the shoulders and the whole
+    # animal read as one loaf from above
+    bmesh_icosphere(bm, 3, 1.0,
+                    Matrix.Translation(Vector((-0.218, 0.003, 0.100)))
+                    @ Matrix.Diagonal(Vector((0.046, 0.048, 0.046, 1.0))))
+    # skull: narrower and a touch taller, so the ears sit on a dome
     bmesh_icosphere(bm, 3, 1.0, Matrix.Translation(head_c)
-                    @ Matrix.Diagonal(Vector((0.066, 0.058, 0.056, 1.0))))
-    bmesh_icosphere(bm, 3, 1.0, Matrix.Translation(head_c + Vector((-0.044, 0, -0.017)))
-                    @ Matrix.Diagonal(Vector((0.035, 0.037, 0.026, 1.0))))
+                    @ Matrix.Diagonal(Vector((0.060, 0.055, 0.057, 1.0))))
+    # brow ridge over the closed eyes
+    bmesh_icosphere(bm, 2, 1.0,
+                    Matrix.Translation(head_c + Vector((-0.034, 0.0, 0.013)))
+                    @ Matrix.Diagonal(Vector((0.029, 0.043, 0.025, 1.0))))
+    # muzzle + chin, shorter and narrower than the old blunt snout
+    bmesh_icosphere(bm, 3, 1.0, Matrix.Translation(head_c + Vector((-0.046, 0, -0.021)))
+                    @ Matrix.Diagonal(Vector((0.029, 0.032, 0.023, 1.0))))
+    bmesh_icosphere(bm, 2, 1.0, Matrix.Translation(head_c + Vector((-0.038, 0, -0.038)))
+                    @ Matrix.Diagonal(Vector((0.022, 0.024, 0.013, 1.0))))
     for s in (-1, 1):
         bmesh_icosphere(bm, 2, 1.0,
-                        Matrix.Translation(head_c + Vector((-0.024, s * 0.037, -0.010)))
-                        @ Matrix.Diagonal(Vector((0.030, 0.024, 0.026, 1.0))))
+                        Matrix.Translation(head_c + Vector((-0.020, s * 0.040, -0.016)))
+                        @ Matrix.Diagonal(Vector((0.030, 0.025, 0.024, 1.0))))
     # ears: solid pyramids standing proud of the skull, canted outward
     for s in (-1, 1):
         bc = head_c + Vector((0.000, s * 0.036, 0.030))
@@ -2048,21 +2117,26 @@ def build_cat():
 
     # --- front legs stretched out past the nose, paws relaxed
     for s in (-1, 1):
-        leg = [Vector((-0.140, s * 0.050, 0.060)),
-               Vector((-0.200, s * 0.046, 0.040)),
-               Vector((-0.268, s * 0.042, 0.024)),
-               Vector((-0.330, s * 0.040, 0.019)),
-               Vector((-0.362, s * 0.040, 0.018))]
-        loft_tube(bm, leg, [(0.037, 0.036), (0.029, 0.028), (0.022, 0.021),
-                            (0.019, 0.017), (0.018, 0.016)], segments=10)
-        bmesh_icosphere(bm, 3, 1.0,
-                        Matrix.Translation(Vector((-0.373, s * 0.040, 0.017)))
-                        @ Matrix.Diagonal(Vector((0.022, 0.019, 0.015, 1.0))))
-        for t in (-1, 0, 1):          # toes
+        # shoulder -> elbow -> wrist -> paw, forearms angling in so the paws
+        # lie almost together, the way a cat folds them when loafing
+        leg = [Vector((-0.132, s * 0.055, 0.070)),
+               Vector((-0.186, s * 0.052, 0.046)),
+               Vector((-0.244, s * 0.046, 0.026)),
+               Vector((-0.306, s * 0.039, 0.020)),
+               Vector((-0.352, s * 0.034, 0.018))]
+        loft_tube(bm, leg, [(0.040, 0.040), (0.032, 0.031), (0.024, 0.022),
+                            (0.020, 0.018), (0.019, 0.017)], segments=10)
+        bmesh_icosphere(bm, 3, 1.0,          # elbow against the ribcage
+                        Matrix.Translation(Vector((-0.178, s * 0.056, 0.050)))
+                        @ Matrix.Diagonal(Vector((0.034, 0.026, 0.032, 1.0))))
+        bmesh_icosphere(bm, 3, 1.0,          # paw, broader than the forearm
+                        Matrix.Translation(Vector((-0.370, s * 0.033, 0.017)))
+                        @ Matrix.Diagonal(Vector((0.026, 0.022, 0.016, 1.0))))
+        for t in (-1, 0, 1):                 # toes
             bmesh_icosphere(bm, 2, 1.0,
-                            Matrix.Translation(Vector((-0.390, s * 0.040 + t * 0.012,
-                                                       0.014)))
-                            @ Matrix.Diagonal(Vector((0.011, 0.009, 0.008, 1.0))))
+                            Matrix.Translation(Vector((-0.390, s * 0.033 + t * 0.0125,
+                                                       0.0145)))
+                            @ Matrix.Diagonal(Vector((0.013, 0.0098, 0.0090, 1.0))))
 
     # --- haunches, and one back foot tucked under the near flank
     for s in (-1, 1):
@@ -2088,7 +2162,7 @@ def build_cat():
     # --- pink nose and inner ears
     bm = bmesh.new()
     bmesh_icosphere(bm, 2, 1.0,
-                    Matrix.Translation(head_c + Vector((-0.068, 0.0, -0.013)))
+                    Matrix.Translation(head_c + Vector((-0.070, 0.0, -0.017)))
                     @ Matrix.Diagonal(Vector((0.008, 0.011, 0.007, 1.0))))
     for s in (-1, 1):
         bc = head_c + Vector((0.000, s * 0.040, 0.032))
@@ -2103,7 +2177,7 @@ def build_cat():
     # --- shut eyes: two shallow creased slits
     bm = bmesh.new()
     for s in (-1, 1):
-        c = head_c + Vector((-0.044, s * 0.031, 0.010))
+        c = head_c + Vector((-0.041, s * 0.030, 0.006))
         for i in range(6):
             u0, u1 = i / 6, (i + 1) / 6
             def arc(u):
@@ -2122,7 +2196,7 @@ def build_cat():
     bm = bmesh.new()
     for s in (-1, 1):
         for k in range(2):
-            b = head_c + Vector((-0.052, s * 0.024, -0.004 + k * 0.009))
+            b = head_c + Vector((-0.054, s * 0.022, -0.010 + k * 0.008))
             e = b + Vector((-0.050 - k * 0.008, s * (0.056 + k * 0.010),
                             0.006 - k * 0.010))
             loft_tube(bm, [b, (b + e) / 2, e],

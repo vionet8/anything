@@ -357,6 +357,16 @@ def report_joints(arm):
         log(f"  {name:<20} ({w.x:+.2f}, {w.y:+.2f}, {w.z:+.2f})")
 
 
+# A rim light behind her was tried here and removed. Her skin and the sunlit
+# boards sit in the same luminance band (face 205, deck 202 on a 0-255 median,
+# with nothing clipping anywhere), so the frame's flatness is a separation
+# problem rather than an exposure one -- but a rim cannot fix it in this set.
+# The boards fill the space between her and the house, so any light placed to
+# graze her edge lights them too: high and broad it raised both together, and
+# low and tight behind her it put the deck AHEAD of her face (224 against 216).
+# Her colours are what separate her here, not her value.
+
+
 def add_camera(loc, aim, lens):
     cam_data = bpy.data.cameras.new("Camera")
     cam_data.lens = lens
