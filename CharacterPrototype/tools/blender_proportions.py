@@ -52,6 +52,135 @@ def log(*a):
     print("[proportions]", *a)
 
 
+# --- Silhouette width --------------------------------------------------------
+# Head-count alone does not stop a figure reading as a child, because a child is
+# not just a short adult -- a child's torso is narrow and straight, and an adult
+# woman's is wider at the shoulder and wider again at the hip with a waist drawn
+# in between them. That contrast is what the eye reads as grown, so it is a
+# profile of width against height rather than one number.
+#
+# Measured in the rest pose, in metres of height, as (z, width multiplier):
+WIDTH_PROFILE = [
+    (1.320, 1.00),   # neck -- untouched, or she gets a wrestler's collar
+    (1.245, 1.15),   # shoulder
+    (1.150, 1.08),   # ribs
+    (1.020, 0.98),   # waist, drawn in against the two either side of it
+    (0.900, 1.20),   # hip -- the widest point
+    (0.820, 1.14),   # where the legs part; below this the torso rule stops
+]
+# Depth follows width at a fraction of it: a body that widens without deepening
+# reads as flattened, like a figure pressed in a book.
+DEPTH_SHARE = 0.55
+
+# Below this the body is two legs rather than one torso, and the rule changes.
+LEG_TOP_Z = 0.820
+# Legs are thickened about their OWN axis, not about the body's. Scaling a leg
+# outward from the centre line only moves it sideways -- it was doing nothing
+# for the stick-thin look, which is a large part of why she still read as a
+# doll. This is roughly where each leg's axis sits in the rest pose.
+LEG_AXIS_X = 0.072
+LEG_THICKEN = [
+    (0.820, 1.38),   # top of the thigh
+    (0.520, 1.24),   # knee
+    (0.230, 1.20),   # calf
+    (0.060, 1.04),   # ankle
+]
+
+# Arms, thickened about their own axis too. Untouched they stay stick-thin
+# while the body fills out, which reads worse than either on its own -- the
+# base model's arms are the narrowest thing on her. In the rest pose they lie
+# along x at about this height, so the cross-section to scale is (y, z).
+ARM_AXIS_Z = 1.222
+ARM_START_X = 0.205
+ARM_THICKEN = [
+    (0.640, 1.10),   # wrist -- the far end, in |x| rather than z
+    (0.205, 1.26),   # shoulder end
+]
+
+# The profile is applied to the torso only. In the rest pose her arms lie along
+# x at roughly shoulder height, so scaling x there would stretch the arms
+# outward -- lengthening them rather than thickening the body. The scaling
+# fades out between these two, which puts the blend in the shoulder.
+TORSO_HALF_WIDTH = 0.175
+ARM_BLEND_END = 0.265
+# Widening the body without widening what it wears pushes her through her own
+# clothes, so this runs over every mesh that is not part of her head.
+WIDEN_EXCLUDE = ("Face", "Hair", "Ear", "Braid")
+
+
+def _profile_at(z, profile=WIDTH_PROFILE):
+    """Linear interpolation down the table, flat outside its ends."""
+    if z >= profile[0][0]:
+        return profile[0][1]
+    if z <= profile[-1][0]:
+        return profile[-1][1]
+    for (z0, w0), (z1, w1) in zip(profile, profile[1:]):
+        if z1 <= z <= z0:
+            t = (z0 - z) / (z0 - z1)
+            return w0 + (w1 - w0) * t
+    return 1.0
+
+
+def widen_silhouette(arm, profile=WIDTH_PROFILE, depth_share=DEPTH_SHARE,
+                     strength=1.0):
+    """Give her an adult's width, as an edit to the rest mesh.
+
+    Applied as an offset that fades out toward the arms rather than a flat
+    multiply, so the torso broadens while the arms keep their length.
+    """
+    moved = 0
+    for obj in character_meshes(arm):
+        if any(k in obj.name for k in WIDEN_EXCLUDE):
+            continue
+        mesh = obj.data
+        for vert in mesh.vertices:
+            x, y, z = vert.co
+            if z < LEG_TOP_Z:
+                # Thicken each leg about its own axis, so it gets rounder
+                # instead of merely moving further from its twin.
+                gain = (_profile_at(z, LEG_THICKEN) - 1.0) * strength
+                if abs(gain) < 1e-5:
+                    continue
+                axis = LEG_AXIS_X if x >= 0 else -LEG_AXIS_X
+                vert.co = (axis + (x - axis) * (1 + gain),
+                           y * (1 + gain),
+                           z)
+                moved += 1
+                continue
+
+            reach = abs(x)
+            if reach >= ARM_START_X:
+                # Arm: scale its cross-section about the arm's own axis. The
+                # profile is read against |x| here, since an arm in the rest
+                # pose runs along x rather than up z.
+                span = (ARM_THICKEN[0][0] - reach) / (ARM_THICKEN[0][0] - ARM_THICKEN[1][0])
+                span = min(max(span, 0.0), 1.0)
+                arm_gain = (ARM_THICKEN[0][1] + span *
+                            (ARM_THICKEN[1][1] - ARM_THICKEN[0][1]) - 1.0) * strength
+                vert.co = (x,
+                           y * (1 + arm_gain),
+                           ARM_AXIS_Z + (z - ARM_AXIS_Z) * (1 + arm_gain))
+                moved += 1
+                continue
+
+            gain = (_profile_at(z, profile) - 1.0) * strength
+            if abs(gain) < 1e-5:
+                continue
+            if reach >= ARM_BLEND_END:
+                continue
+            if reach > TORSO_HALF_WIDTH:
+                fade = 1.0 - (reach - TORSO_HALF_WIDTH) / (ARM_BLEND_END - TORSO_HALF_WIDTH)
+            else:
+                fade = 1.0
+            vert.co = (x * (1 + gain * fade),
+                       y * (1 + gain * depth_share * fade),
+                       z)
+            moved += 1
+        mesh.update()
+    log(f"widened {moved} vertices toward an adult silhouette")
+    return moved
+
+
 def character_meshes(arm):
     """Only the meshes that belong to this character.
 
@@ -185,9 +314,13 @@ def fit_height(root, arm, target_height):
     bpy.context.view_layer.update()
 
 
-def restyle(root, arm, target="bishoujo", head_share=0.55):
+def restyle(root, arm, target="bishoujo", head_share=0.55, widen=True):
     before = measure(arm)
     report("before", before)
+    if widen:
+        # Width first: it edits the rest mesh, and the head-count solve that
+        # follows measures the figure it actually produces.
+        widen_silhouette(arm)
     head_scale, leg_scale = solve(arm, target, head_share)
     fit_height(root, arm, TARGETS[target][0])
     after = measure(arm)

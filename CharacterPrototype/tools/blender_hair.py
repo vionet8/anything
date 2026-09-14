@@ -28,6 +28,8 @@ OUT_DIR = os.path.join(PROJECT, "assets", "blender")
 
 TAU = math.pi * 2
 
+HEAD_BONE_FALLBACK = "J_Bip_C_Head"
+
 # Fraction of a braid's length over which the strands converge at the root.
 ROOT_GATHER = 0.10
 
@@ -264,6 +266,53 @@ def build_ribbon_tie(name, centre, tangent, radius=0.026, thickness=0.011):
     obj.scale = (1, 1, 1)
     bpy.context.scene.collection.objects.link(obj)
     return obj
+
+
+# --- Repairing the grafted hair ---------------------------------------------
+
+def repair_grafted_weights(armature, fallback_bone=HEAD_BONE_FALLBACK):
+    """Re-home skin weights that point at bones the graft left behind.
+
+    Measured on the grafted hair: 125 vertex groups, of which exactly ONE
+    matches a bone in this armature. The other twenty name the donor's own hair
+    joints, which came across as group names but not as bones, and they carry
+    6098 of weight against 3378 on the one real bone -- nearly twice as much.
+    Over half the hair's vertices (5320 of 9476) have no weight on a real bone
+    at all.
+
+    The visible result is hair that sits crooked and tears away from the head,
+    because a vertex weighted only to absent bones is not deformed at all while
+    its neighbours follow the skull. It also explains why this hair never
+    responded to posing: the joints that were supposed to move it do not exist.
+
+    Handing that weight to the head bone makes the whole mass move as one
+    rigid piece, which is what it was already pretending to be.
+    """
+    bones = {b.name for b in armature.data.bones}
+    repaired_verts = 0
+    for obj in bpy.data.objects:
+        if obj.type != "MESH" or not any(k in obj.name for k in ("Hair", "Ear")):
+            continue
+        dead = [g for g in obj.vertex_groups if g.name not in bones]
+        if not dead:
+            continue
+        dead_indices = {g.index for g in dead}
+        target = obj.vertex_groups.get(fallback_bone) or obj.vertex_groups.new(
+            name=fallback_bone)
+
+        for vert in obj.data.vertices:
+            stray = sum(g.weight for g in vert.groups if g.group in dead_indices)
+            if stray <= 0:
+                continue
+            held = next((g.weight for g in vert.groups if g.group == target.index), 0.0)
+            target.add([vert.index], held + stray, "REPLACE")
+            repaired_verts += 1
+
+        for group in dead:
+            obj.vertex_groups.remove(group)
+        print(f"[hair] {obj.name}: re-homed {len(dead)} orphaned groups "
+              f"onto {fallback_bone}")
+    return repaired_verts
 
 
 # --- Attaching to a head ----------------------------------------------------

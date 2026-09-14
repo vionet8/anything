@@ -816,6 +816,13 @@ def build_character():
     log(f"character bounds (pre feet-to-zero shift): {tuple(mn)} {tuple(mx)}; "
         f"root lifted by {-mn.z:.4f}")
 
+    # The graft brings the donor's hair mesh across but not the donor's hair
+    # bones, leaving two thirds of its skin weight pointing at joints that do
+    # not exist in this armature -- which is why the hair sat crooked and never
+    # answered to posing. Re-home that weight before handing the character over.
+    import blender_hair
+    blender_hair.repair_grafted_weights(armature)
+
     return root, armature
 
 
