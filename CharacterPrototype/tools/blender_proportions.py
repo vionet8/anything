@@ -52,11 +52,36 @@ def log(*a):
     print("[proportions]", *a)
 
 
-def _mesh_bounds(pred):
+def character_meshes(arm):
+    """Only the meshes that belong to this character.
+
+    Explicitly, rather than by scanning the scene: measure() originally walked
+    every mesh in bpy.data, which is correct exactly as long as the character
+    is alone. Dropped into the engawa set it measured the deck, the house and
+    the bamboo too and reported her as 8.7 m tall at 38.87 head-counts, and the
+    solver then dutifully drove the scales to their clamps trying to fix it.
+    """
+    found = []
+    for obj in bpy.data.objects:
+        if obj.type != "MESH":
+            continue
+        if any(m.type == "ARMATURE" and m.object == arm for m in obj.modifiers):
+            found.append(obj)
+            continue
+        parent = obj.parent
+        while parent is not None:
+            if parent == arm:
+                found.append(obj)
+                break
+            parent = parent.parent
+    return found
+
+
+def _mesh_bounds(objects, pred):
     deps = bpy.context.evaluated_depsgraph_get()
     lo = hi = None
-    for obj in bpy.data.objects:
-        if obj.type != "MESH" or not pred(obj.name):
+    for obj in objects:
+        if not pred(obj.name):
             continue
         ev = obj.evaluated_get(deps)
         mesh = ev.to_mesh()
@@ -74,8 +99,10 @@ def _mesh_bounds(pred):
 
 def measure(arm):
     """Height, head height, head-count and leg ratio, from the posed mesh."""
-    body_lo, body_hi = _mesh_bounds(lambda n: not any(k in n for k in NOT_BODY))
-    face_lo, face_hi = _mesh_bounds(lambda n: n == "Face")
+    meshes = character_meshes(arm)
+    body_lo, body_hi = _mesh_bounds(
+        meshes, lambda n: not any(k in n for k in NOT_BODY))
+    face_lo, face_hi = _mesh_bounds(meshes, lambda n: n == "Face")
     height = float(body_hi[2] - body_lo[2])
     head = float(face_hi[2] - face_lo[2])
     hips = (arm.matrix_world @ arm.pose.bones["J_Bip_C_Hips"].head).z

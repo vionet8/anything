@@ -280,10 +280,15 @@ BRAID_PATHS = {
     # root is hidden under the hair already there instead of hanging off it.
     # Held wide of the jaw on purpose. Run closer in and the braid crosses her
     # cheek from the shot camera's angle, which costs the face to gain a braid.
-    "L": [(0.054, -0.006, 1.404), (0.101, 0.040, 1.320), (0.104, 0.064, 1.224),
-          (0.096, 0.072, 1.118), (0.086, 0.066, 1.012)],
-    "R": [(-0.054, -0.006, 1.404), (-0.101, 0.038, 1.320), (-0.104, 0.062, 1.224),
-          (-0.096, 0.070, 1.118), (-0.086, 0.064, 1.012)],
+    #
+    # Wider than looks necessary at stock size, because the proportion pass
+    # shrinks the head bone by about 9% afterwards and these ride it: scaling
+    # about the head joint pulls a path at x=0.104 in to x=0.094, which was
+    # enough to put the braid back on her cheek once already.
+    "L": [(0.058, -0.006, 1.404), (0.116, 0.038, 1.320), (0.120, 0.062, 1.224),
+          (0.111, 0.070, 1.118), (0.099, 0.064, 1.012)],
+    "R": [(-0.058, -0.006, 1.404), (-0.116, 0.036, 1.320), (-0.120, 0.060, 1.224),
+          (-0.111, 0.068, 1.118), (-0.099, 0.062, 1.012)],
 }
 HEAD_BONE = "J_Bip_C_Head"
 

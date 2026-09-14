@@ -237,6 +237,40 @@ def add_braids(arm):
     )
 
 
+# Which body-type target from the proportion chart she is built to. The stock
+# VRoid sample measures 6.90 head-counts, which is a child's proportion and
+# most of why she read younger than the reference art.
+PROPORTION_TARGET = "bishoujo"
+
+
+def apply_proportions(root, arm, target=PROPORTION_TARGET):
+    """Retarget her head-count, then let the usual grounding put her back down.
+
+    Called after the braids exist and before she is posed. After, because the
+    braids hang off the head bone and so shrink with the head as they should --
+    built afterwards they would be sized for a head that no longer exists.
+    Before, because posing only writes rotations, so the scales set here
+    survive it untouched.
+
+    Only the bone scaling and the overall height scale are taken from
+    blender_proportions; where her feet end up is left to place(), which
+    already grounds her by hip height and now simply does it at her new size.
+    """
+    import blender_proportions
+
+    before = blender_proportions.measure(arm)
+    blender_proportions.solve(arm, target)
+    height_goal = blender_proportions.TARGETS[target][0]
+    mid = blender_proportions.measure(arm)
+    root.scale = tuple(v * (height_goal / mid["height"]) for v in root.scale)
+    bpy.context.view_layer.update()
+    after = blender_proportions.measure(arm)
+    log(f"proportions '{target}': {before['head_count']:.2f} -> "
+        f"{after['head_count']:.2f} head-counts, "
+        f"legs {before['leg_ratio'] * 100:.1f}% -> {after['leg_ratio'] * 100:.1f}%, "
+        f"height {after['height']:.3f} m")
+
+
 def silence_hair_shadows(root):
     """Stop the hair casting shadows, which is what the grey veils were.
 
@@ -468,6 +502,8 @@ def main():
     root, arm = load_character(force_fallback="--fallback" in args)
     if "--fallback" not in args:
         add_braids(arm)
+        if "--stock-body" not in args:
+            apply_proportions(root, arm)
     silence_hair_shadows(root)
     if arm is None:
         raise SystemExit("character has no armature -- cannot pose")
