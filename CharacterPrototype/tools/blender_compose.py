@@ -211,6 +211,32 @@ def load_character(force_fallback=False):
     return blender_character.build_character()
 
 
+# Her braids are grown rather than grafted: blender_hair generates them along a
+# path, so they need no bones and no draping -- for a different pose the path
+# is simply written differently. The colours match the silver the rest of her
+# hair was recoloured to, and the ties pick up the blue already in her outfit.
+BRAID_SILVER = (0.80, 0.81, 0.84)
+BRAID_RIBBON = (0.16, 0.26, 0.58)
+
+
+def _flat_material(name, colour, roughness=0.34):
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes["Principled BSDF"]
+    bsdf.inputs["Base Color"].default_value = (*colour, 1)
+    bsdf.inputs["Roughness"].default_value = roughness
+    return mat
+
+
+def add_braids(arm):
+    import blender_hair
+    return blender_hair.attach_braids(
+        arm,
+        _flat_material("BraidSilver", BRAID_SILVER),
+        _flat_material("BraidRibbon", BRAID_RIBBON, roughness=0.45),
+    )
+
+
 def silence_hair_shadows(root):
     """Stop the hair casting shadows, which is what the grey veils were.
 
@@ -224,7 +250,8 @@ def silence_hair_shadows(root):
     rather than adding to it.
     """
     for obj in bpy.data.objects:
-        if obj.type == "MESH" and any(k in obj.name for k in ("Hair", "Ear")):
+        if obj.type == "MESH" and any(k in obj.name
+                                      for k in ("Hair", "Ear", "Braid")):
             obj.visible_shadow = False
 
 
@@ -439,6 +466,8 @@ def main():
             blender_scene.build_lighting()
 
     root, arm = load_character(force_fallback="--fallback" in args)
+    if "--fallback" not in args:
+        add_braids(arm)
     silence_hair_shadows(root)
     if arm is None:
         raise SystemExit("character has no armature -- cannot pose")
