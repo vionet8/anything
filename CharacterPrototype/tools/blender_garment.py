@@ -237,6 +237,82 @@ def strip_garment(material_substring=TOPS_MATERIAL):
     return removed
 
 
+# --- Reshaping her own cardigan ---------------------------------------------
+# Measured off the base model in the rest pose: the tops are 1758 vertices,
+# every one of them exclusive to the garment (not a single vertex shared with
+# the skin), so they can be moved freely without tearing her open. The body of
+# the cardigan sits inside |x| < 0.20 spanning z 0.79-1.38; beyond that it is
+# the sleeve, a tube about 13cm across running out to the wrist at x = 0.567.
+#
+# Reshaping that beats replacing it. The cardigan is real cloth geometry --
+# it fits the body, it has topology and UVs and weights, and it deforms with
+# the pose because it is skinned. Geometry built from scratch to stand in for
+# it has none of that, which is exactly why the first yukata read as cut card.
+ARM_CENTRE_Z = 1.222      # the sleeve tube's centreline in the rest pose
+SLEEVE_START_X = 0.200    # outboard of this, the tops are sleeve rather than body
+SLEEVE_END_X = 0.567
+HEM_START_Z = 0.900       # below this, the hem is stretched downward
+
+SLEEVE_FLARE = 2.10       # how much the sleeve's cross-section grows at the cuff
+SLEEVE_HANG = 0.360       # how far the underside drops -- this is the tamoto
+SLEEVE_DEPTH = 0.60       # front-to-back widening, so it is a pouch not a fin
+HEM_DROP = 0.230
+
+
+def reshape_tops_into_yukata(material_substring=TOPS_MATERIAL,
+                             flare=SLEEVE_FLARE, hang=SLEEVE_HANG,
+                             depth=SLEEVE_DEPTH, hem_drop=HEM_DROP):
+    """Pull her cardigan into the shape of a yukata, vertex by vertex.
+
+    Two changes carry it. The sleeve's cross-section is flared as it runs
+    outboard and its underside is dragged down, which turns a fitted tube into
+    the hanging pouch a yukata sleeve actually is. The hem is then stretched
+    downward so the garment falls past the hip instead of stopping at it.
+
+    Edits the rest mesh, so the armature goes on deforming it as usual and the
+    result still moves with the pose.
+    """
+    moved = 0
+    for obj in bpy.data.objects:
+        if obj.type != "MESH":
+            continue
+        slots = [i for i, sl in enumerate(obj.material_slots)
+                 if sl.material and material_substring in sl.material.name]
+        if not slots:
+            continue
+
+        mesh = obj.data
+        garment, other = set(), set()
+        for poly in mesh.polygons:
+            (garment if poly.material_index in slots else other).update(poly.vertices)
+        # Only vertices this garment owns outright. A vertex shared with the
+        # skin would drag her body with the cloth.
+        own = garment - other
+
+        for index in own:
+            vert = mesh.vertices[index]
+            x, y, z = vert.co
+            reach = abs(x)
+            if reach > SLEEVE_START_X:
+                t = min((reach - SLEEVE_START_X) / (SLEEVE_END_X - SLEEVE_START_X), 1.0)
+                offset = z - ARM_CENTRE_Z
+                z = ARM_CENTRE_Z + offset * (1 + flare * t)
+                if offset < 0:
+                    # Only the underside falls; the top stays on the shoulder.
+                    z -= hang * t
+                y *= 1 + depth * t
+            elif z < HEM_START_Z:
+                u = (HEM_START_Z - z) / max(HEM_START_Z - 0.790, 1e-6)
+                z -= hem_drop * min(u, 1.0)
+            else:
+                continue
+            vert.co = (x, y, z)
+            moved += 1
+        mesh.update()
+    log(f"reshaped {moved} cardigan vertices into a yukata")
+    return moved
+
+
 def parent_to_bone(obj, armature, bone_name):
     """Hang a piece off a bone without it jumping when the parent is set."""
     world = obj.matrix_world.copy()
@@ -262,7 +338,18 @@ OBI_CLOTH = (0.16, 0.22, 0.48)
 
 
 def build_yukata(armature, cloth=None, collar=None, obi=None):
-    """Every piece, parented to the bone it hangs from. Returns the objects."""
+    """Add the pieces her reshaped cardigan cannot provide: collar and obi.
+
+    Deliberately small. Once the cardigan itself is pulled into a yukata it
+    already supplies the sleeves, the body and the hem -- as real cloth, with
+    folds and weights and a texture -- and generated stand-ins for those only
+    competed with it. An earlier version built both, and she ended up with two
+    sets of sleeves: the cardigan's on her arms, and a pair of pale boxes
+    floating where her arms had been before she was posed.
+
+    What a cardigan does not have is the crossed collar, which is the single
+    feature that makes a robe read as a yukata, and a sash to close it.
+    """
     cloth = cloth or cloth_material("YukataCloth", YUKATA_CLOTH)
     collar = collar or cloth_material("YukataCollar", YUKATA_CLOTH, 0.66)
     obi = obi or cloth_material("YukataObi", OBI_CLOTH, 0.66)
@@ -275,17 +362,6 @@ def build_yukata(armature, cloth=None, collar=None, obi=None):
                            material=collar, taper_end=0.85)
         parent_to_bone(piece, armature, BONES["collar"])
         made.append(piece)
-
-    for key, path in SLEEVES.items():
-        piece = build_sleeve(f"Yukata_Sleeve{key}", path, SLEEVE_RADIUS,
-                             material=cloth)
-        parent_to_bone(piece, armature, BONES[f"sleeve{key}"])
-        made.append(piece)
-
-    back = build_back_panel("Yukata_Back", BACK_PANEL_TOP, BACK_PANEL_DROP,
-                            BACK_PANEL_FLARE, material=cloth)
-    parent_to_bone(back, armature, BONES["back"])
-    made.append(back)
 
     sash = build_band("Yukata_Obi",
                       [(0.115, 0.060, 0.975), (0.0, 0.105, 0.968),
@@ -306,14 +382,17 @@ if __name__ == "__main__":
     import blender_compose
 
     root, arm = blender_character.build_character()
-    strip_garment()
+    reshape_tops_into_yukata()
     # Pose her BEFORE judging the garment. In the T-pose her arms are
     # horizontal, so a sleeve running along the arm is seen end-on and reads as
     # a flat slab -- which sent the first pass chasing a shape problem that
     # only existed in the bind pose. The sleeves hang off the arm bones and
     # follow them down as soon as she is actually sitting.
-    blender_compose.apply_pose(arm, blender_compose.POSE_SEATED)
     build_yukata(arm)
+    # Pose AFTER building. The paths above are rest-pose measurements, and the
+    # pieces hang off bones, so the rig carries them into the pose. Built the
+    # other way round they land where her arms used to be.
+    blender_compose.apply_pose(arm, blender_compose.POSE_SEATED)
     for obj in bpy.data.objects:
         if obj.type == "MESH" and any(k in obj.name for k in ("Hair", "Ear")):
             obj.visible_shadow = False
