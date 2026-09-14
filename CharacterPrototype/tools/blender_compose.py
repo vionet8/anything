@@ -240,7 +240,7 @@ def add_braids(arm):
 # Which body-type target from the proportion chart she is built to. The stock
 # VRoid sample measures 6.90 head-counts, which is a child's proportion and
 # most of why she read younger than the reference art.
-PROPORTION_TARGET = "bishoujo"
+PROPORTION_TARGET = "model"
 
 
 def apply_proportions(root, arm, target=PROPORTION_TARGET):

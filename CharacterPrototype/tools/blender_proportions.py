@@ -314,7 +314,7 @@ def fit_height(root, arm, target_height):
     bpy.context.view_layer.update()
 
 
-def restyle(root, arm, target="bishoujo", head_share=0.55, widen=True):
+def restyle(root, arm, target="model", head_share=0.55, widen=True):
     before = measure(arm)
     report("before", before)
     if widen:
@@ -390,5 +390,5 @@ if __name__ == "__main__":
     _studio()
     report("stock", measure(arm))
     _render(os.path.join(OUT_DIR, "proportions_before.png"))
-    restyle(root, arm, "bishoujo")
+    restyle(root, arm, "model")
     _render(os.path.join(OUT_DIR, "proportions_after.png"))
