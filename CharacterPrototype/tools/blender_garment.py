@@ -262,10 +262,14 @@ SHOULDER_TOP_Z = 1.376    # the highest vertex of the collar
 SHOULDER_SLIP = 0.135     # how far the neckline falls
 SHOULDER_SPREAD = 0.60    # how much wider the opening gets as it falls
 
-SLEEVE_FLARE = 2.10       # how much the sleeve's cross-section grows at the cuff
-SLEEVE_HANG = 0.360       # how far the underside drops -- this is the tamoto
-SLEEVE_DEPTH = 0.60       # front-to-back widening, so it is a pouch not a fin
-HEM_DROP = 0.230
+# Tuned down from 2.10/0.36/0.60 after seeing them in the shot: at those values
+# the sleeve outgrew the figure and the whole garment read as a flared yellow
+# dress rather than a robe. A tamoto is wide against the arm, not against the
+# body, so the flare stops where the sleeve is still narrower than her hips.
+SLEEVE_FLARE = 1.35       # how much the sleeve's cross-section grows at the cuff
+SLEEVE_HANG = 0.260       # how far the underside drops -- this is the tamoto
+SLEEVE_DEPTH = 0.42       # front-to-back widening, so it is a pouch not a fin
+HEM_DROP = 0.300          # a robe falls past the hip; a cardigan stops at it
 
 
 def reshape_tops_into_yukata(material_substring=TOPS_MATERIAL,
@@ -329,6 +333,147 @@ def reshape_tops_into_yukata(material_substring=TOPS_MATERIAL,
     return moved
 
 
+# --- painting the trim onto the cloth itself ---------------------------------
+# Modelled trim was tried twice and failed twice. Sitting at the body surface
+# it vanished inside the cardigan; pushed clear of the cardigan it stopped
+# looking like cloth and became a pale board floating over her lap. Both are
+# the same mistake: a yukata's collar and obi are not objects laid on the robe,
+# they are PART of the robe, with its folds and its shading. So they are
+# painted here -- the cardigan's own faces along the collar line and around the
+# waist are simply given a different material. Nothing is added, nothing can
+# float, and the trim creases exactly as the cloth under it does.
+# Narrow, and confined to one face of the cloth. The first pass matched purely
+# on the path's shadow in x and z, which takes no view of which SIDE of her the
+# face is on -- so the front bands claimed her back, the back band claimed her
+# shoulders, and 1181 faces came out cream: she was wearing a white top.
+COLLAR_PAINT_WIDTH = 0.026   # half-width of the band, measured across the cloth
+COLLAR_FRONT_Y = 0.030       # front bands only paint cloth in front of this
+COLLAR_BACK_Y = 0.010        # the back band only paints cloth behind this
+# An open cardigan has two surfaces along its front edge -- the outside and the
+# lining folded behind it -- and the band's shadow in x and z catches both, so
+# a narrow collar still painted as a broad panel. Only cloth actually facing
+# the viewer is trim; the lining behind it keeps the robe's colour.
+COLLAR_FACING = 0.25
+OBI_BAND = (0.940, 1.028)    # z range of the sash
+OBI_MAX_REACH = 0.285        # outboard of this it is sleeve, not waist
+
+
+def _segment_distance(px, pz, ax, az, bx, bz):
+    dx, dz = bx - ax, bz - az
+    length = dx * dx + dz * dz
+    t = 0.0 if length < 1e-9 else max(0.0, min(1.0, ((px - ax) * dx + (pz - az) * dz) / length))
+    return math.hypot(px - (ax + dx * t), pz - (az + dz * t))
+
+
+def _near_path(px, pz, path, width):
+    return any(_segment_distance(px, pz, a[0], a[2], b[0], b[2]) < width
+               for a, b in zip(path, path[1:]))
+
+
+def _slot_for(obj, material):
+    for i, slot in enumerate(obj.material_slots):
+        if slot.material == material:
+            return i
+    obj.data.materials.append(material)
+    return len(obj.data.materials) - 1
+
+
+def paint_trim(collar_material, obi_material, material_substring=TOPS_MATERIAL,
+               width=COLLAR_PAINT_WIDTH):
+    """Recolour the cardigan's own faces into a crossed collar and an obi."""
+    # (path, does this face belong to it?) -- the side test is what keeps each
+    # band on its own face of the garment.
+    collar_paths = (
+        (COLLAR_LEFT, lambda c, n: c.y > COLLAR_FRONT_Y and n.y > COLLAR_FACING),
+        (COLLAR_RIGHT, lambda c, n: c.y > COLLAR_FRONT_Y and n.y > COLLAR_FACING),
+        (COLLAR_BACK, lambda c, n: c.y < COLLAR_BACK_Y and n.y < -COLLAR_FACING),
+    )
+    painted_collar = painted_obi = 0
+    for obj in bpy.data.objects:
+        if obj.type != "MESH":
+            continue
+        slots = [i for i, sl in enumerate(obj.material_slots)
+                 if sl.material and material_substring in sl.material.name]
+        if not slots:
+            continue
+        mesh = obj.data
+        collar_slot = _slot_for(obj, collar_material)
+        obi_slot = _slot_for(obj, obi_material)
+        for poly in mesh.polygons:
+            if poly.material_index not in slots:
+                continue
+            centre = poly.center
+            if (OBI_BAND[0] <= centre.z <= OBI_BAND[1]
+                    and abs(centre.x) < OBI_MAX_REACH):
+                poly.material_index = obi_slot
+                painted_obi += 1
+            elif any(side(centre, poly.normal)
+                     and _near_path(centre.x, centre.z, path, width)
+                     for path, side in collar_paths):
+                poly.material_index = collar_slot
+                painted_collar += 1
+        mesh.update()
+    log(f"painted {painted_collar} faces as collar, {painted_obi} as obi")
+    return painted_collar, painted_obi
+
+
+def cloth_points(material_substring=TOPS_MATERIAL):
+    """Every vertex the garment owns outright, in world space."""
+    pts = []
+    for obj in bpy.data.objects:
+        if obj.type != "MESH":
+            continue
+        slots = [i for i, sl in enumerate(obj.material_slots)
+                 if sl.material and material_substring in sl.material.name]
+        if not slots:
+            continue
+        mesh = obj.data
+        garment, other = set(), set()
+        for poly in mesh.polygons:
+            (garment if poly.material_index in slots else other).update(poly.vertices)
+        matrix = obj.matrix_world
+        pts.extend(matrix @ mesh.vertices[i].co for i in garment - other)
+    return pts
+
+
+def drape(path, cloth, clearance=0.026, radius=0.080):
+    """Lift an authored path out of whatever cloth is under it.
+
+    The collar and sash were authored against the bare body, and then the
+    widening pass and the sleeve flare moved the cardigan out past them -- so
+    both ended up buried inside the robe they were meant to close, which is
+    exactly the failure this file already hit once against the skin. Rather
+    than re-guessing a y for every control point each time the body changes,
+    each point is pushed to just clear of the nearest cloth surface found
+    around it in x and z. The result is then smoothed, so a point whose
+    neighbourhood happens to be crowded does not kink the band.
+    """
+    lifted = []
+    for point in path:
+        near = [c for c in cloth
+                if (c.x - point[0]) ** 2 + (c.z - point[2]) ** 2 < radius ** 2]
+        if not near:
+            lifted.append(tuple(point))
+            continue
+        front, back = max(c.y for c in near), min(c.y for c in near)
+        # Which face of the cloth this point belongs to, decided by which one
+        # it was authored nearer to.
+        if point[1] >= (front + back) * 0.5:
+            y = max(point[1], front + clearance)
+        else:
+            y = min(point[1], back - clearance)
+        lifted.append((point[0], y, point[2]))
+
+    if len(lifted) < 3:
+        return lifted
+    smoothed = [lifted[0]]
+    for i in range(1, len(lifted) - 1):
+        y = (lifted[i - 1][1] + 2 * lifted[i][1] + lifted[i + 1][1]) / 4
+        smoothed.append((lifted[i][0], y, lifted[i][2]))
+    smoothed.append(lifted[-1])
+    return smoothed
+
+
 def parent_to_bone(obj, armature, bone_name):
     """Hang a piece off a bone without it jumping when the parent is set."""
     world = obj.matrix_world.copy()
@@ -354,7 +499,7 @@ OBI_CLOTH = (0.16, 0.22, 0.48)
 
 
 def build_yukata(armature, cloth=None, collar=None, obi=None):
-    """Add the pieces her reshaped cardigan cannot provide: collar and obi.
+    """Give the reshaped cardigan the two things that make it read as a yukata.
 
     Deliberately small. Once the cardigan itself is pulled into a yukata it
     already supplies the sleeves, the body and the hem -- as real cloth, with
@@ -363,32 +508,15 @@ def build_yukata(armature, cloth=None, collar=None, obi=None):
     sets of sleeves: the cardigan's on her arms, and a pair of pale boxes
     floating where her arms had been before she was posed.
 
-    What a cardigan does not have is the crossed collar, which is the single
-    feature that makes a robe read as a yukata, and a sash to close it.
+    What a cardigan does not have is the crossed collar -- the single feature
+    that makes a robe read as a yukata -- and a sash to close it. Both are
+    painted onto the cardigan's own faces rather than modelled on top of it;
+    see paint_trim for why the modelled version was abandoned.
     """
-    cloth = cloth or cloth_material("YukataCloth", YUKATA_CLOTH)
-    collar = collar or cloth_material("YukataCollar", YUKATA_CLOTH, 0.66)
+    del cloth, armature  # the robe supplies its own cloth, and nothing is parented
+    collar = collar or cloth_material("YukataCollar", YUKATA_COLLAR, 0.66)
     obi = obi or cloth_material("YukataObi", OBI_CLOTH, 0.66)
-
-    made = []
-    for name, path in (("Yukata_CollarBack", COLLAR_BACK),
-                       ("Yukata_CollarL", COLLAR_LEFT),
-                       ("Yukata_CollarR", COLLAR_RIGHT)):
-        piece = build_band(name, path, COLLAR_WIDTH, COLLAR_THICK,
-                           material=collar, taper_end=0.85)
-        parent_to_bone(piece, armature, BONES["collar"])
-        made.append(piece)
-
-    sash = build_band("Yukata_Obi",
-                      [(0.115, 0.060, 0.975), (0.0, 0.105, 0.968),
-                       (-0.115, 0.060, 0.975)],
-                      OBI_WIDTH, OBI_THICK, material=obi)
-    parent_to_bone(sash, armature, BONES["obi"])
-    made.append(sash)
-
-    log(f"built {len(made)} pieces: "
-        + ", ".join(o.name.replace("Yukata_", "") for o in made))
-    return made
+    return paint_trim(collar, obi)
 
 
 if __name__ == "__main__":

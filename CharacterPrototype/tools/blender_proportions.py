@@ -45,7 +45,7 @@ FOOT_BONES = ("J_Bip_L_Foot", "J_Bip_R_Foot")
 # Hair, ears and braids ride the head and must not count toward her height --
 # measuring to the top of the hair makes a tall hairstyle read as a tall
 # character, and every head-count derived from it is wrong.
-NOT_BODY = ("Hair", "Ear", "Braid")
+NOT_BODY = ("Hair", "Ear", "Braid", "Yukata")
 
 
 def log(*a):
@@ -105,7 +105,7 @@ TORSO_HALF_WIDTH = 0.175
 ARM_BLEND_END = 0.265
 # Widening the body without widening what it wears pushes her through her own
 # clothes, so this runs over every mesh that is not part of her head.
-WIDEN_EXCLUDE = ("Face", "Hair", "Ear", "Braid")
+WIDEN_EXCLUDE = ("Face", "Hair", "Ear", "Braid", "Yukata")
 
 
 def _profile_at(z, profile=WIDTH_PROFILE):

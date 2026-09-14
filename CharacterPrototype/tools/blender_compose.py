@@ -7,6 +7,10 @@ Run:
     --quick       low samples / small frame, for looking at a change
     --front       a second camera straight down the deck, to check the pose reads
                   from another angle before committing to a long render
+    --bare        strip the garment instead of dressing her, so the silhouette
+                  itself can be judged without cloth in the way
+    --stock-body  skip the width and head-count work and use the sample's own
+                  proportions
 
 The pose is data at the top of this file rather than code, because getting a
 lying-down pose right without a viewport is a loop of nudge-render-look and
@@ -241,6 +245,36 @@ def add_braids(arm):
 # VRoid sample measures 6.90 head-counts, which is a child's proportion and
 # most of why she read younger than the reference art.
 PROPORTION_TARGET = "model"
+
+
+def widen_body(arm):
+    """Broaden the torso and limbs, as an edit to the rest mesh.
+
+    Split out from apply_proportions and run first because everything after it
+    is measured against the body it produces: the garment reshape reads
+    rest-mesh coordinates, and the head-count solve measures the figure that
+    actually exists. Width only moves x and y, so the garment's z landmarks
+    (shoulder line, arm centreline, hem) survive it unchanged -- which is why
+    this runs before the cloth rather than after it.
+    """
+    import blender_proportions
+
+    return blender_proportions.widen_silhouette(arm)
+
+
+def dress(arm):
+    """Pull the cardigan into a yukata and add what a cardigan cannot supply.
+
+    Run before the head-count solve and before the pose. Before the solve
+    because build_yukata authors its collar and sash in rest-pose world
+    coordinates, and the solve rescales the figure around them -- built after,
+    they would be sized for the body she used to have. Before the pose because
+    the pieces hang off bones, so the rig carries them into it.
+    """
+    import blender_garment
+
+    blender_garment.reshape_tops_into_yukata()
+    return blender_garment.build_yukata(arm)
 
 
 def apply_proportions(root, arm, target=PROPORTION_TARGET):
@@ -502,6 +536,13 @@ def main():
     root, arm = load_character(force_fallback="--fallback" in args)
     if "--fallback" not in args:
         add_braids(arm)
+        if "--stock-body" not in args:
+            widen_body(arm)
+        if "--bare" in args:
+            import blender_garment
+            blender_garment.strip_garment()
+        else:
+            dress(arm)
         if "--stock-body" not in args:
             apply_proportions(root, arm)
     silence_hair_shadows(root)
