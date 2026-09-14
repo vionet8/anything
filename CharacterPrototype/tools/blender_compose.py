@@ -259,7 +259,11 @@ def widen_body(arm):
     """
     import blender_proportions
 
-    return blender_proportions.widen_silhouette(arm)
+    widened = blender_proportions.widen_silhouette(arm)
+    # The jaw goes with it. Rounding only widens, never shortens, so the head
+    # height the head-count solve measures against is left alone.
+    blender_proportions.round_face(arm)
+    return widened
 
 
 def dress(arm):

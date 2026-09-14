@@ -121,6 +121,84 @@ def _profile_at(z, profile=WIDTH_PROFILE):
     return 1.0
 
 
+# --- the face ----------------------------------------------------------------
+# The sample's head tapers from a 0.095 half-width at the cheekbone to 0.035 at
+# the chin over 7 cm, which is a sharply pointed chin and reads young and thin.
+# Rounding it means filling the jaw so that taper becomes a curve, WITHOUT
+# touching the height: head height is the unit the head-count is measured in,
+# so widening keeps the 8.5 target valid while changing the shape.
+FACE_MESH = "Face"
+JAW_TOP_SHARE = 0.36        # how far up the head the jaw work reaches
+# Keyed on height up the jaw, 0 at the chin and 1 where it fades out. The chin
+# itself gets less than the jaw above it: blunting a chin is rounding, but
+# squaring one is a different face.
+JAW_ROUND = ((0.00, 1.17), (0.30, 1.26), (0.60, 1.17), (1.00, 1.00))
+# Width alone barely showed: the hair covers the sides of the face, so most of
+# what is visible of the jaw is its lower edge. Raising the chin is the other
+# half of roundness -- it shortens the lower face, which is what turns a long
+# oval into a round one, and it costs nothing because it runs before the
+# head-count solve, which simply measures the shorter head and rescales it.
+CHIN_LIFT = 0.11            # of the jaw band's height, at the chin tip
+# Cheeks fill out backwards, not forwards. The same gain applied to y in both
+# directions would push the chin out into a snout.
+JAW_DEPTH_SHARE = 0.45
+
+
+def _lerp_table(u, table):
+    """Interpolate an ascending table, flat outside its ends."""
+    if u <= table[0][0]:
+        return table[0][1]
+    if u >= table[-1][0]:
+        return table[-1][1]
+    for (u0, v0), (u1, v1) in zip(table, table[1:]):
+        if u0 <= u <= u1:
+            return v0 + (v1 - v0) * (u - u0) / (u1 - u0)
+    return 1.0
+
+
+def round_face(arm, profile=JAW_ROUND, top_share=JAW_TOP_SHARE,
+               depth_share=JAW_DEPTH_SHARE, lift=CHIN_LIFT, strength=1.0):
+    """Round the jaw, in the head's own measurements rather than fixed numbers.
+
+    The band is found by measuring this head, so the same call works after the
+    head has been rescaled or on a different base model: the chin is the mesh's
+    lowest point and the work fades out a fraction of the head's height above
+    it. Only the Face mesh is touched -- the hair covers the skull, so anything
+    above the cheekbone would be invisible anyway.
+    """
+    faces = [o for o in character_meshes(arm) if o.name == FACE_MESH]
+    if not faces:
+        log(f"WARNING: no '{FACE_MESH}' mesh -- face left as it is")
+        return 0
+
+    moved = 0
+    for obj in faces:
+        mesh = obj.data
+        zs = [v.co.z for v in mesh.vertices]
+        chin, crown = min(zs), max(zs)
+        band = (crown - chin) * top_share
+        mid_y = sum(v.co.y for v in mesh.vertices) / len(mesh.vertices)
+        for vert in mesh.vertices:
+            x, y, z = vert.co
+            u = (z - chin) / band
+            if u > 1.0:
+                continue
+            gain = (_lerp_table(u, profile) - 1.0) * strength
+            rise = band * lift * strength * (1.0 - u)
+            if abs(gain) < 1e-5 and rise < 1e-5:
+                continue
+            z += rise
+            # Depth only for the cheek behind the face's mid-line; the chin and
+            # jaw in front of it keep their profile.
+            if y < mid_y:
+                y = mid_y + (y - mid_y) * (1 + gain * depth_share)
+            vert.co = (x * (1 + gain), y, z)
+            moved += 1
+        mesh.update()
+    log(f"rounded {moved} face vertices at the jaw")
+    return moved
+
+
 def widen_silhouette(arm, profile=WIDTH_PROFILE, depth_share=DEPTH_SHARE,
                      strength=1.0):
     """Give her an adult's width, as an edit to the rest mesh.
@@ -321,6 +399,7 @@ def restyle(root, arm, target="model", head_share=0.55, widen=True):
         # Width first: it edits the rest mesh, and the head-count solve that
         # follows measures the figure it actually produces.
         widen_silhouette(arm)
+        round_face(arm)
     head_scale, leg_scale = solve(arm, target, head_share)
     fit_height(root, arm, TARGETS[target][0])
     after = measure(arm)
