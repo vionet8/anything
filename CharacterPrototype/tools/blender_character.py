@@ -598,10 +598,25 @@ def _blur(field, iterations):
 
 
 # How much warmer than the arms the legs are allowed to get, and where.
-LEG_SAT_BASE_FROM_ARM = 1.00   # x the arms' own p90 saturation
-LEG_SAT_WARM = 0.195           # at knees, ankles and form creases
-LEG_VALUE_BASE = 0.986         # a hair off the clipping point, unlike the arms
-LEG_VALUE_CREASE = 0.930
+# Measured off the finished render rather than judged by eye, because the first
+# pass matched the arm texture exactly and the legs still read as white tights.
+# In the shot the shin came out at RGB 243/240/232 against an upper arm at
+# 223/214/192: brighter than the arm, and with a red-blue spread of 11 against
+# the arm's 32, so it was both lighter and far less warm than the skin it was
+# copied from. That is what a bare leg cannot survive -- a large, flat, almost
+# neutral, almost clipping surface has no skin in it at all. So value comes
+# down to sit under the arms rather than a hair off clipping, and saturation
+# goes up rather than merely matching the arms' own washed-out p90.
+# The numbers are this far from the arms' own because the legs are not lit
+# like the arms. In the shot her arms are in the shade of her own hair and the
+# deck, while her legs hang out over the water in full sun -- so dropping the
+# leg texture 7% only moved the rendered shin from 243 to 240. The texture has
+# to go considerably darker and warmer than the arm's for the two to arrive at
+# the same place once the light is on them.
+LEG_SAT_BASE_FROM_ARM = 1.80   # x the arms' own p90 saturation
+LEG_SAT_WARM = 0.330           # at knees, ankles and form creases
+LEG_VALUE_BASE = 0.840
+LEG_VALUE_CREASE = 0.770
 WARMTH_BLUR = 6
 
 
