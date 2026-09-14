@@ -253,6 +253,15 @@ SLEEVE_START_X = 0.200    # outboard of this, the tops are sleeve rather than bo
 SLEEVE_END_X = 0.567
 HEM_START_Z = 0.900       # below this, the hem is stretched downward
 
+# Slipping it off the shoulders. The neckline is dropped and spread at the same
+# time: dropped alone it slides down her front still gripping her neck, which
+# reads as a garment that has been pulled on badly rather than one worn open.
+# Spreading it is what puts the opening out around the upper arms.
+SHOULDER_Z = 1.235        # above this, the tops are neckline and shoulder
+SHOULDER_TOP_Z = 1.376    # the highest vertex of the collar
+SHOULDER_SLIP = 0.135     # how far the neckline falls
+SHOULDER_SPREAD = 0.60    # how much wider the opening gets as it falls
+
 SLEEVE_FLARE = 2.10       # how much the sleeve's cross-section grows at the cuff
 SLEEVE_HANG = 0.360       # how far the underside drops -- this is the tamoto
 SLEEVE_DEPTH = 0.60       # front-to-back widening, so it is a pouch not a fin
@@ -261,13 +270,16 @@ HEM_DROP = 0.230
 
 def reshape_tops_into_yukata(material_substring=TOPS_MATERIAL,
                              flare=SLEEVE_FLARE, hang=SLEEVE_HANG,
-                             depth=SLEEVE_DEPTH, hem_drop=HEM_DROP):
+                             depth=SLEEVE_DEPTH, hem_drop=HEM_DROP,
+                             slip=SHOULDER_SLIP, spread=SHOULDER_SPREAD):
     """Pull her cardigan into the shape of a yukata, vertex by vertex.
 
-    Two changes carry it. The sleeve's cross-section is flared as it runs
+    Three changes carry it. The sleeve's cross-section is flared as it runs
     outboard and its underside is dragged down, which turns a fitted tube into
-    the hanging pouch a yukata sleeve actually is. The hem is then stretched
-    downward so the garment falls past the hip instead of stopping at it.
+    the hanging pouch a yukata sleeve actually is. The hem is stretched
+    downward so the garment falls past the hip instead of stopping at it. And
+    the neckline is dropped and spread together, which is what slips the whole
+    thing off her shoulders.
 
     Edits the rest mesh, so the armature goes on deforming it as usual and the
     result still moves with the pose.
@@ -301,6 +313,10 @@ def reshape_tops_into_yukata(material_substring=TOPS_MATERIAL,
                     # Only the underside falls; the top stays on the shoulder.
                     z -= hang * t
                 y *= 1 + depth * t
+            elif z > SHOULDER_Z:
+                u = min((z - SHOULDER_Z) / max(SHOULDER_TOP_Z - SHOULDER_Z, 1e-6), 1.0)
+                z -= slip * u
+                x *= 1 + spread * u
             elif z < HEM_START_Z:
                 u = (HEM_START_Z - z) / max(HEM_START_Z - 0.790, 1e-6)
                 z -= hem_drop * min(u, 1.0)
