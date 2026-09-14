@@ -358,6 +358,57 @@ OBI_BAND = (0.940, 1.028)    # z range of the sash
 OBI_MAX_REACH = 0.285        # outboard of this it is sleeve, not waist
 
 
+def _cut_garment(obj, slots, planes, dist=1e-5):
+    """Slice the garment's faces along each plane, leaving a clean edge.
+
+    Choosing whole faces by where their centres fall makes the trim's boundary
+    follow the mesh's own triangulation, which at this density is a visible
+    sawtooth -- in a preview it passes, at full resolution the obi looked
+    pinked with shears. Cutting first means the boundary is an edge the mesh
+    actually has, so the band ends in a straight line.
+
+    Only the garment is cut: bisect takes the geometry to work on, so the skin
+    and the swimsuit underneath keep their own topology.
+    """
+    mesh = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    for plane_co, plane_no in planes:
+        faces = [f for f in bm.faces if f.material_index in slots]
+        if not faces:
+            break
+        geom = set(faces)
+        for face in faces:
+            geom.update(face.verts)
+            geom.update(face.edges)
+        bmesh.ops.bisect_plane(bm, geom=list(geom), dist=dist,
+                               plane_co=plane_co, plane_no=plane_no,
+                               clear_inner=False, clear_outer=False)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+
+
+def _band_planes(path, width):
+    """The two cutting planes that bound a band running along a path.
+
+    Each is vertical in y -- the band is defined by its shape seen from the
+    front, which is how it was authored -- and offset sideways from the
+    segment by the band's half-width.
+    """
+    planes = []
+    for (ax, _, az), (bx, _, bz) in zip(path, path[1:]):
+        dx, dz = bx - ax, bz - az
+        length = math.hypot(dx, dz)
+        if length < 1e-6:
+            continue
+        normal = Vector((dz / length, 0.0, -dx / length))
+        centre = Vector(((ax + bx) / 2, 0.0, (az + bz) / 2))
+        planes.append((centre + normal * width, normal))
+        planes.append((centre - normal * width, normal))
+    return planes
+
+
 def _segment_distance(px, pz, ax, az, bx, bz):
     dx, dz = bx - ax, bz - az
     length = dx * dx + dz * dz
@@ -396,6 +447,14 @@ def paint_trim(collar_material, obi_material, material_substring=TOPS_MATERIAL,
                  if sl.material and material_substring in sl.material.name]
         if not slots:
             continue
+        # Cut before choosing. Every boundary the trim will have is made into
+        # a real edge first, so the choice below can only ever fill a region
+        # the mesh already has a clean outline for.
+        cuts = [(Vector((0.0, 0.0, z)), Vector((0.0, 0.0, 1.0))) for z in OBI_BAND]
+        for path in (COLLAR_LEFT, COLLAR_RIGHT, COLLAR_BACK):
+            cuts.extend(_band_planes(path, width))
+        _cut_garment(obj, slots, cuts)
+
         mesh = obj.data
         collar_slot = _slot_for(obj, collar_material)
         obi_slot = _slot_for(obj, obi_material)
