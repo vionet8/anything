@@ -541,4 +541,5 @@ def main():
                            f"compose-{tag}{'-front' if front else ''}{suffix}.png"))
 
 
-main()
+if __name__ == "__main__":
+    main()
