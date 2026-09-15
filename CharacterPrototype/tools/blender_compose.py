@@ -450,13 +450,18 @@ def dress(arm, lying=False):
     import blender_garment
 
     # The tamoto is shortened for the lying shot rather than simulated. Giving
-    # the garment to the cloth solver was tried and does fix the sleeve, but it
-    # wrecks everything else: the robe stretches into flat ribbons, and once
-    # the garment is its own object the holes VRoid leaves in the body
-    # underneath it -- there is no skin modelled under clothes -- open up as
-    # black gashes across her hip wherever the cloth has moved. A sleeve that
-    # is 10 cm deep instead of 26 simply does not reach the boards from an
-    # outstretched arm, and the robe keeps the folds it already had.
+    # the garment to the cloth solver was tried and does fix the sleeve, but at
+    # full resolution the robe had stretched into flat ribbons, which is reason
+    # enough on its own. A sleeve 10 cm deep instead of 26 simply does not
+    # reach the boards from an outstretched arm, and the robe keeps the folds
+    # it already had.
+    #
+    # An earlier version of this comment also blamed holes in the body under
+    # the garment. That was wrong and worth correcting here, since it would
+    # mis-steer anyone picking the simulation back up: the black marks by her
+    # hip were the shoji lattice showing between her leg and the boards, plus
+    # ordinary shadow, and deleting every Tops face lowers the open-edge count
+    # in the torso rather than raising it. There is a body under the clothes.
     blender_garment.reshape_tops_into_yukata(
         hang=blender_garment.SLEEVE_HANG_LYING if lying
         else blender_garment.SLEEVE_HANG)
