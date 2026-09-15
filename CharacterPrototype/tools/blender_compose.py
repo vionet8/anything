@@ -117,7 +117,7 @@ POSE_SEATED = {
     "J_Bip_C_Head": (D(-5), 0, D(-12)),
 }
 
-POSE_LYING = {
+_POSE_LYING_LEFT_DOWN = {
     # Lying on her side, so the legs stack rather than splay: the underneath
     # leg is nearly straight and the top one is drawn up over it.
     #
@@ -174,6 +174,32 @@ POSE_LYING = {
 }
 
 
+def mirror_pose(pose):
+    """Swap her left and right.
+
+    Flexion is about X and keeps its sign; twist and abduction are about Y and
+    Z and flip. That is just what mirroring a body does, and doing it in code
+    beats doing it by hand: the pose above was solved with her LEFT side down,
+    and the shot needs her rolled the other way so the bamboo overhanging the
+    right of the frame is not across her face. Rolling her over without
+    mirroring the pose swaps which leg is underneath while leaving the top
+    leg's abduction pointing down -- the right shin went 19 cm into the boards.
+    """
+    mirrored = {}
+    for name, (x, y, z) in pose.items():
+        if "_L_" in name:
+            other = name.replace("_L_", "_R_")
+        elif "_R_" in name:
+            other = name.replace("_R_", "_L_")
+        else:
+            other = name
+        mirrored[other] = (x, -y, -z)
+    return mirrored
+
+
+POSE_LYING = mirror_pose(_POSE_LYING_LEFT_DOWN)
+
+
 # --- Where she lies ---------------------------------------------------------
 # X=-90 lays her on her back (her front, -Y, rotates to face +Z); Z=180 then
 # spins her about the vertical so her head points at the water and the camera
@@ -192,8 +218,8 @@ POSE_LYING = {
 # On her side, facing the camera along the deck, the face comes within about
 # 10 degrees with the neck barely doing anything, and the hair falls sideways
 # onto the boards instead of onto her.
-LYING_HEAD_DIR = (1.0, 0.0, 0.0)   # her head toward +X, the camera's side
-LYING_ROLL = D(88)                 # 0 is on her back, 90 is fully on her side
+LYING_HEAD_DIR = (-1.0, 0.0, 0.0)  # head toward -X, out from under the bamboo
+LYING_ROLL = D(-90)                 # 0 is on her back, 90 is fully on her side
 
 
 def lying_rotation(head_dir=LYING_HEAD_DIR, roll=LYING_ROLL):
@@ -226,11 +252,12 @@ ROOT_ROTATION_LYING = lying_rotation()
 # Seated she stays upright; she already faces -Y, which is the water and the
 # camera, so she needs no yaw either.
 ROOT_ROTATION_SEATED = (0, 0, D(180))
-# She lies along the boards with her head toward +X, so the root -- whose
-# origin is at her soles -- goes a body-length back along -X to centre her in
-# front of the camera, and close to the deck's front edge rather than back by
-# the house.
-ROOT_XY_LYING = (-0.70, 0.10)
+# She lies along the boards with her head toward -X, so the root -- whose
+# origin is at her soles -- sits a body-length along +X to centre her in front
+# of the camera, and close to the deck's front edge rather than back by the
+# house. Her head is at -X rather than +X because the bamboo overhangs the
+# right of the frame and was hanging directly across her face.
+ROOT_XY_LYING = (0.75, 0.10)
 ROOT_XY_SEATED = (-0.10, -0.62)
 HIP_HEIGHT = 0.12            # hip joint above the boards, pelvis resting on them
 # Meshes allowed through the boards without the figure being lifted off them:
@@ -254,9 +281,35 @@ CAM_FRONT_AIM = (0.0, 0.30, 0.30)
 # seated figure's chest and looks down past a lying one entirely. Lower, closer
 # and turned along the boards, which is also the angle that puts her face
 # rather than the top of her head toward the lens.
-CAM_LYING_LOC = (1.45, -2.05, 0.92)
-CAM_LYING_AIM = (0.05, 0.10, 0.26)
-CAM_LYING_LENS = 50
+# Measured off where she actually ends up: lying along the boards she spans
+# 1.94 m in x, and the first attempt at 2.4 m on a 50 mm lens covered 1.7 m of
+# that, in a portrait frame -- so she was cropped at both ends and the camera
+# was down at deck level looking along her. A figure lying down wants a
+# landscape frame and a camera far enough back and high enough to look across
+# her rather than down the length of her.
+CAM_LYING_LOC = (0.30, -2.60, 1.40)
+CAM_LYING_AIM = (0.00, 0.12, 0.18)
+CAM_LYING_LENS = 42
+RES_LYING = (1500, 1000)
+QUICK_RES_LYING = (930, 620)
+
+# The cat sleeps where she now lies, so it moves down the deck past her feet
+# for this shot. Its own empty carries the whole animal.
+CAT_LYING_XY = (1.02, -0.34)
+CAT_LYING_YAW = D(200)
+
+
+def move_cat(xy=CAT_LYING_XY, yaw=CAT_LYING_YAW):
+    cat = bpy.data.objects.get("Cat")
+    if cat is None:
+        log("no Cat empty in the scene -- nothing to move")
+        return None
+    cat.location.x, cat.location.y = xy
+    cat.rotation_mode = "XYZ"
+    cat.rotation_euler.z = yaw
+    bpy.context.view_layer.update()
+    log(f"cat moved to ({xy[0]:+.2f}, {xy[1]:+.2f}) so she is not lying on it")
+    return cat
 
 RES = (1000, 1500)
 SAMPLES = 220
@@ -427,6 +480,64 @@ def drape_hair(root, arm, pose):
                                  colliders=colliders)
 
 
+# The garment lives in the Body mesh, so "the lowest part of Body" is not her.
+GARMENT_MATERIALS = ("Tops",)
+
+def settle_cloth_on_deck(deck_z=0.0, materials=GARMENT_MATERIALS):
+    """Stop the garment hanging through the boards.
+
+    The yukata is rigid geometry following the arm bones, so the sleeve on her
+    outstretched arm carries on downward when the arm reaches the deck -- about
+    210 of its vertices end up 10-30 cm inside the planks. The hair had exactly
+    this problem and the cloth solver answered it, but the garment is faces of
+    the Body mesh rather than its own object, and a solver cannot be given half
+    a mesh.
+
+    So this is the cheap answer, and it is worth being plain about that: the
+    posed result is baked down and any garment vertex below the boards is
+    lifted onto them. Cloth lying on a floor really does flatten out against
+    it, so a still frame reads correctly -- but nothing here is simulated, it
+    will not pool or fold, and it is only valid for the frame it is run on.
+    Splitting the garment into its own object and giving it to the solver is
+    the real fix.
+
+    Runs last, after the pose and the hair drape, because it applies modifiers.
+    """
+    deps = bpy.context.evaluated_depsgraph_get()
+    lifted = 0
+    for name in ("Body",):
+        obj = bpy.data.objects.get(name)
+        if obj is None or obj.type != "MESH":
+            continue
+        evaluated = obj.evaluated_get(deps)
+        baked = bpy.data.meshes.new_from_object(evaluated)
+        cloth = {i for i, slot in enumerate(obj.material_slots)
+                 if slot.material and any(k in slot.material.name
+                                          for k in materials)}
+        garment = set()
+        for poly in baked.polygons:
+            if poly.material_index in cloth:
+                garment.update(poly.vertices)
+
+        matrix = obj.matrix_world
+        inverse = matrix.inverted()
+        for index in garment:
+            vert = baked.vertices[index]
+            world = matrix @ vert.co
+            if world.z < deck_z:
+                world.z = deck_z
+                vert.co = inverse @ world
+                lifted += 1
+        baked.update()
+
+        old = obj.data
+        obj.data = baked
+        obj.modifiers.clear()
+        bpy.data.meshes.remove(old)
+    log(f"lifted {lifted} garment vertices out of the deck")
+    return lifted
+
+
 def silence_hair_shadows(root):
     """Stop the hair casting shadows, which is what the grey veils were.
 
@@ -516,9 +627,6 @@ def report_sinking(deck_z=0.0, tolerance=0.005):
     else:
         log("  nothing sinks below the deck")
 
-
-# The garment lives in the Body mesh, so "the lowest part of Body" is not her.
-GARMENT_MATERIALS = ("Tops",)
 
 # What she rests ON. Lying down it is her torso that meets the boards, and only
 # the torso is a reliable answer: the lowest point of her whole body was, in
@@ -695,7 +803,7 @@ def bare_stage():
     bpy.context.scene.world = world
 
 
-def configure_render(quick):
+def configure_render(quick, lying=False):
     scene = bpy.context.scene
     scene.render.engine = "CYCLES"
     scene.cycles.device = "CPU"
@@ -703,7 +811,12 @@ def configure_render(quick):
     # hard RuntimeError here, not a warning, so noise is fought with samples.
     scene.cycles.use_denoising = False
     scene.cycles.samples = QUICK_SAMPLES if quick else SAMPLES
-    scene.render.resolution_x, scene.render.resolution_y = QUICK_RES if quick else RES
+    if lying:
+        scene.render.resolution_x, scene.render.resolution_y = (
+            QUICK_RES_LYING if quick else RES_LYING)
+    else:
+        scene.render.resolution_x, scene.render.resolution_y = (
+            QUICK_RES if quick else RES)
     scene.render.image_settings.file_format = "PNG"
     scene.view_settings.view_transform = "Filmic"
 
@@ -746,8 +859,11 @@ def main():
     if arm is None:
         raise SystemExit("character has no armature -- cannot pose")
     centre = place(root, arm, lying="--lying" in args)
+    if "--lying" in args:
+        move_cat()
     if "--lying" in args and "--no-sim" not in args:
         drape_hair(root, arm, POSE_LYING)
+        settle_cloth_on_deck()
         lo, hi = evaluated_bounds(root)
         centre = (lo + hi) / 2
         log(f"after the drape  x [{lo.x:+.2f} {hi.x:+.2f}]  "
@@ -767,7 +883,7 @@ def main():
         # numbers converges far faster than rendering each guess and squinting.
         return
 
-    configure_render(quick)
+    configure_render(quick, lying="--lying" in args)
 
     tag = "head" if "--head" in args else ("pose" if pose_only else "shot")
     suffix = "-quick" if quick else ""
