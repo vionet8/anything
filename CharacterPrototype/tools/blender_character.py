@@ -808,6 +808,52 @@ def recolour_outfit_summer():
     remove_subankle_garment()
 
 
+# --- skin warmth -------------------------------------------------------------
+# build_model.py's skin lift leaves her complexion almost flat white: measured
+# in the finished frame her face came out RGB 236/231/228, a red-blue spread of
+# 7, against a body at 31 and a sunlit deck at 52. That is not pale skin, it is
+# paper. The legs were already corrected in their own repaint; this is the same
+# correction for the rest of her, and it is applied to the MATERIAL rather than
+# to the texture because the face texture is shared with the body and with the
+# eyes, mouth and brows -- which have their own slots, and must not be touched.
+# Face only. The body's skin already carries the leg repaint's correction, and
+# stacking this on top of it took her thighs to a red-blue spread of 94 against
+# a sunlit deck at 52 -- she went orange. The face is the part that never got a
+# repaint, because the legs were repainted as a region of the texture and her
+# face was not in it.
+FACE_SKIN_MATERIALS = ("Face_00_SKIN",)
+SKIN_SATURATION = 1.85
+SKIN_VALUE = 0.90
+
+
+def warm_skin(materials=FACE_SKIN_MATERIALS, saturation=SKIN_SATURATION,
+              value=SKIN_VALUE):
+    """Put some blood back in her, via a hue/saturation node per skin material."""
+    touched = []
+    for mat in bpy.data.materials:
+        if not any(k in mat.name for k in materials) or not mat.use_nodes:
+            continue
+        tree = mat.node_tree
+        bsdf = next((n for n in tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+        if bsdf is None:
+            continue
+        base = bsdf.inputs["Base Color"]
+        if not base.is_linked:
+            continue
+        source = base.links[0].from_socket
+        if source.node.type == "HUE_SAT":
+            continue    # already corrected
+        hsv = tree.nodes.new("ShaderNodeHueSaturation")
+        hsv.location = (source.node.location.x + 200, source.node.location.y)
+        hsv.inputs["Saturation"].default_value = saturation
+        hsv.inputs["Value"].default_value = value
+        tree.links.new(hsv.inputs["Color"], source)
+        tree.links.new(base, hsv.outputs["Color"])
+        touched.append(mat.name)
+    log(f"skin warmed on {len(touched)} materials: {', '.join(touched) or 'none'}")
+    return touched
+
+
 def build_character():
     """Build the finished character into the current scene. No lighting,
     world, camera, or posing -- the caller (a composition step, or this
@@ -837,6 +883,8 @@ def build_character():
     # answered to posing. Re-home that weight before handing the character over.
     import blender_hair
     blender_hair.repair_grafted_weights(armature)
+
+    warm_skin()
 
     return root, armature
 

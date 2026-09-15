@@ -293,14 +293,14 @@ CAM_FRONT_AIM = (0.0, 0.30, 0.30)
 # landscape frame and a camera far enough back and high enough to look across
 # her rather than down the length of her.
 CAM_LYING_LOC = (0.35, -2.60, 1.40)
-CAM_LYING_AIM = (0.12, 0.12, 0.18)
+CAM_LYING_AIM = (0.26, 0.12, 0.18)
 CAM_LYING_LENS = 42
 RES_LYING = (1500, 1000)
 QUICK_RES_LYING = (930, 620)
 
 # The cat sleeps where she now lies, so it moves down the deck past her feet
 # for this shot. Its own empty carries the whole animal.
-CAT_LYING_XY = (-1.05, -0.48)
+CAT_LYING_XY = (-0.80, -0.52)
 CAT_LYING_YAW = D(25)
 
 
@@ -438,7 +438,7 @@ def widen_body(arm):
     return widened
 
 
-def dress(arm):
+def dress(arm, lying=False):
     """Pull the cardigan into a yukata and add what a cardigan cannot supply.
 
     Run before the head-count solve and before the pose. Before the solve
@@ -449,13 +449,18 @@ def dress(arm):
     """
     import blender_garment
 
-    blender_garment.reshape_tops_into_yukata()
-    trim = blender_garment.build_yukata(arm)
-    # Split last: reshaping and painting both work on faces of the Body mesh,
-    # and the garment only needs to be its own object from here on, so that the
-    # cloth solver can be handed it.
-    blender_garment.split_garment()
-    return trim
+    # The tamoto is shortened for the lying shot rather than simulated. Giving
+    # the garment to the cloth solver was tried and does fix the sleeve, but it
+    # wrecks everything else: the robe stretches into flat ribbons, and once
+    # the garment is its own object the holes VRoid leaves in the body
+    # underneath it -- there is no skin modelled under clothes -- open up as
+    # black gashes across her hip wherever the cloth has moved. A sleeve that
+    # is 10 cm deep instead of 26 simply does not reach the boards from an
+    # outstretched arm, and the robe keeps the folds it already had.
+    blender_garment.reshape_tops_into_yukata(
+        hang=blender_garment.SLEEVE_HANG_LYING if lying
+        else blender_garment.SLEEVE_HANG)
+    return blender_garment.build_yukata(arm)
 
 
 def apply_proportions(root, arm, target=PROPORTION_TARGET):
@@ -506,14 +511,6 @@ def drape_hair(root, arm, pose):
     deck = blender_hairsim.deck_collider()
     colliders = [deck] + [o for o in bpy.data.objects
                           if o.type == "MESH" and o.name in ("Body", "Face")]
-    deck_only = blender_hairsim.collider_collection("DeckOnly", [deck])
-
-    # The yukata goes into the same solve as the hair. Its sleeves are the only
-    # part left free; the rest is held against her by her own body, which is
-    # also what stops the robe sliding off her during the fall.
-    garment = bpy.data.objects.get("Yukata")
-    if garment is not None:
-        blender_hairsim.add_garment_cloth(garment, colliders=deck_only)
 
     return blender_hairsim.drape(root, arm, pose, rotation, location,
                                  colliders=colliders)
@@ -909,7 +906,7 @@ def main():
             import blender_garment
             blender_garment.strip_garment()
         else:
-            dress(arm)
+            dress(arm, lying="--lying" in args)
         if "--stock-body" not in args:
             apply_proportions(root, arm)
     silence_hair_shadows(root)

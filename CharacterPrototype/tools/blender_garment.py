@@ -270,6 +270,10 @@ SLEEVE_FLARE = 1.35       # how much the sleeve's cross-section grows at the cuf
 SLEEVE_HANG = 0.260       # how far the underside drops -- this is the tamoto
 SLEEVE_DEPTH = 0.42       # front-to-back widening, so it is a pouch not a fin
 HEM_DROP = 0.300          # a robe falls past the hip; a cardigan stops at it
+# Lying down, an arm stretched along the boards puts the sleeve's underside at
+# deck level, and a 26 cm tamoto then hangs through the planks. Shortening it
+# for that shot costs a little drama and keeps the robe out of the floor.
+SLEEVE_HANG_LYING = 0.100
 
 
 def reshape_tops_into_yukata(material_substring=TOPS_MATERIAL,
