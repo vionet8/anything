@@ -633,3 +633,54 @@ if __name__ == "__main__":
     scene.render.filepath = os.path.join(OUT_DIR, "garment_test.png")
     bpy.ops.render.render(write_still=True)
     log("wrote", scene.render.filepath)
+
+
+def _delete_faces(obj, drop):
+    """Remove faces for which drop(material_index) is true, and loose verts."""
+    mesh = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    doomed = [f for f in bm.faces if drop(f.material_index)]
+    bmesh.ops.delete(bm, geom=doomed, context="FACES")
+    loose = [v for v in bm.verts if not v.link_faces]
+    if loose:
+        bmesh.ops.delete(bm, geom=loose, context="VERTS")
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+
+
+def split_garment(body_name="Body", material_substring=TOPS_MATERIAL,
+                  name="Yukata"):
+    """Move the yukata out of the Body mesh and into its own object.
+
+    It has to be its own object to be simulated, and it has to be simulated
+    because it is cloth: rigid, it follows the arm bones, so the sleeve on an
+    outstretched arm carries on down and ends up inside the deck. Lifting the
+    offending vertices onto the boards instead -- which is what this replaced
+    -- pulls each one away from its neighbours and tears long black slivers
+    across the faces between them, which is worse than the clipping was.
+
+    The copy keeps the armature modifier and the vertex groups, so the parts
+    that are not simulated still deform with her exactly as before.
+    """
+    body = bpy.data.objects.get(body_name)
+    if body is None or body.type != "MESH":
+        log(f"no '{body_name}' mesh -- garment not split")
+        return None
+    slots = {i for i, sl in enumerate(body.material_slots)
+             if sl.material and material_substring in sl.material.name}
+    if not slots:
+        log(f"no '{material_substring}' material on {body_name} -- nothing to split")
+        return None
+
+    garment = body.copy()
+    garment.data = body.data.copy()
+    garment.name = name
+    body.users_collection[0].objects.link(garment)
+
+    _delete_faces(garment, lambda index: index not in slots)
+    _delete_faces(body, lambda index: index in slots)
+    log(f"split {len(garment.data.vertices)} garment vertices out of {body_name}; "
+        f"{len(body.data.vertices)} left on the body")
+    return garment

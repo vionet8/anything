@@ -197,7 +197,13 @@ def mirror_pose(pose):
     return mirrored
 
 
-POSE_LYING = mirror_pose(_POSE_LYING_LEFT_DOWN)
+# Not mirrored. Rolling her onto the other side was tried, to get her head out
+# from under the foreground bamboo, and it cost the face: her hairstyle is not
+# symmetric, so the side that carries the long hair ended up on top and it fell
+# straight across her face. The bamboo is a framing device placed for the
+# SEATED camera -- with a different camera it simply lands in the wrong place,
+# so the bamboo moves and the pose stays as solved.
+POSE_LYING = dict(_POSE_LYING_LEFT_DOWN)
 
 
 # --- Where she lies ---------------------------------------------------------
@@ -218,8 +224,8 @@ POSE_LYING = mirror_pose(_POSE_LYING_LEFT_DOWN)
 # On her side, facing the camera along the deck, the face comes within about
 # 10 degrees with the neck barely doing anything, and the hair falls sideways
 # onto the boards instead of onto her.
-LYING_HEAD_DIR = (-1.0, 0.0, 0.0)  # head toward -X, out from under the bamboo
-LYING_ROLL = D(-90)                 # 0 is on her back, 90 is fully on her side
+LYING_HEAD_DIR = (1.0, 0.0, 0.0)   # head toward +X
+LYING_ROLL = D(88)                 # 0 is on her back, 90 is fully on her side
 
 
 def lying_rotation(head_dir=LYING_HEAD_DIR, roll=LYING_ROLL):
@@ -252,12 +258,11 @@ ROOT_ROTATION_LYING = lying_rotation()
 # Seated she stays upright; she already faces -Y, which is the water and the
 # camera, so she needs no yaw either.
 ROOT_ROTATION_SEATED = (0, 0, D(180))
-# She lies along the boards with her head toward -X, so the root -- whose
-# origin is at her soles -- sits a body-length along +X to centre her in front
-# of the camera, and close to the deck's front edge rather than back by the
-# house. Her head is at -X rather than +X because the bamboo overhangs the
-# right of the frame and was hanging directly across her face.
-ROOT_XY_LYING = (0.75, 0.10)
+# She lies along the boards with her head toward +X, so the root -- whose
+# origin is at her soles -- goes a body-length back along -X to centre her in
+# front of the camera, and close to the deck's front edge rather than back by
+# the house.
+ROOT_XY_LYING = (-0.70, 0.10)
 ROOT_XY_SEATED = (-0.10, -0.62)
 HIP_HEIGHT = 0.12            # hip joint above the boards, pelvis resting on them
 # Meshes allowed through the boards without the figure being lifted off them:
@@ -287,16 +292,36 @@ CAM_FRONT_AIM = (0.0, 0.30, 0.30)
 # was down at deck level looking along her. A figure lying down wants a
 # landscape frame and a camera far enough back and high enough to look across
 # her rather than down the length of her.
-CAM_LYING_LOC = (0.30, -2.60, 1.40)
-CAM_LYING_AIM = (0.00, 0.12, 0.18)
+CAM_LYING_LOC = (0.35, -2.60, 1.40)
+CAM_LYING_AIM = (0.12, 0.12, 0.18)
 CAM_LYING_LENS = 42
 RES_LYING = (1500, 1000)
 QUICK_RES_LYING = (930, 620)
 
 # The cat sleeps where she now lies, so it moves down the deck past her feet
 # for this shot. Its own empty carries the whole animal.
-CAT_LYING_XY = (1.02, -0.34)
-CAT_LYING_YAW = D(200)
+CAT_LYING_XY = (-1.05, -0.48)
+CAT_LYING_YAW = D(25)
+
+
+# The foreground bamboo is framing, placed to reach into the corners of the
+# SEATED shot. The lying camera is lower, wider and looking the other way along
+# the deck, and the same branches then hang straight across her head instead of
+# framing anything.
+BAMBOO_LYING_SHIFT = (-2.30, 0.0, 0.35)
+
+
+def move_framing_bamboo(shift=BAMBOO_LYING_SHIFT):
+    moved = 0
+    for obj in bpy.data.objects:
+        if obj.name.startswith("Engawa_Bamboo_FG"):
+            obj.location.x += shift[0]
+            obj.location.y += shift[1]
+            obj.location.z += shift[2]
+            moved += 1
+    bpy.context.view_layer.update()
+    log(f"moved {moved} foreground bamboo pieces clear of her head")
+    return moved
 
 
 def move_cat(xy=CAT_LYING_XY, yaw=CAT_LYING_YAW):
@@ -425,7 +450,12 @@ def dress(arm):
     import blender_garment
 
     blender_garment.reshape_tops_into_yukata()
-    return blender_garment.build_yukata(arm)
+    trim = blender_garment.build_yukata(arm)
+    # Split last: reshaping and painting both work on faces of the Body mesh,
+    # and the garment only needs to be its own object from here on, so that the
+    # cloth solver can be handed it.
+    blender_garment.split_garment()
+    return trim
 
 
 def apply_proportions(root, arm, target=PROPORTION_TARGET):
@@ -473,9 +503,18 @@ def drape_hair(root, arm, pose):
 
     rotation = tuple(root.rotation_euler)
     location = tuple(root.location)
-    colliders = [blender_hairsim.deck_collider()]
-    colliders += [o for o in bpy.data.objects
-                  if o.type == "MESH" and o.name in ("Body", "Face")]
+    deck = blender_hairsim.deck_collider()
+    colliders = [deck] + [o for o in bpy.data.objects
+                          if o.type == "MESH" and o.name in ("Body", "Face")]
+    deck_only = blender_hairsim.collider_collection("DeckOnly", [deck])
+
+    # The yukata goes into the same solve as the hair. Its sleeves are the only
+    # part left free; the rest is held against her by her own body, which is
+    # also what stops the robe sliding off her during the fall.
+    garment = bpy.data.objects.get("Yukata")
+    if garment is not None:
+        blender_hairsim.add_garment_cloth(garment, colliders=deck_only)
+
     return blender_hairsim.drape(root, arm, pose, rotation, location,
                                  colliders=colliders)
 
@@ -536,6 +575,24 @@ def settle_cloth_on_deck(deck_z=0.0, materials=GARMENT_MATERIALS):
         bpy.data.meshes.remove(old)
     log(f"lifted {lifted} garment vertices out of the deck")
     return lifted
+
+
+def grow_hair_spread(arm):
+    """Fan generated locks out from her head across the boards.
+
+    Runs after the drape, since it is authored in world space and needs her
+    head where it finally is. `away` is down-body from her head: the direction
+    the hair trails is the one her body is NOT in.
+    """
+    import blender_hair
+
+    head = arm.pose.bones["J_Bip_C_Head"]
+    hips = arm.pose.bones["J_Bip_C_Hips"]
+    origin = arm.matrix_world @ head.head
+    down_body = (arm.matrix_world @ hips.head) - origin
+    away = (-Vector((down_body.x, down_body.y, 0.0))).normalized()
+    return blender_hair.build_spread(
+        origin, away, material=_flat_material("SpreadSilver", BRAID_SILVER))
 
 
 def silence_hair_shadows(root):
@@ -861,9 +918,10 @@ def main():
     centre = place(root, arm, lying="--lying" in args)
     if "--lying" in args:
         move_cat()
+        move_framing_bamboo()
     if "--lying" in args and "--no-sim" not in args:
         drape_hair(root, arm, POSE_LYING)
-        settle_cloth_on_deck()
+        grow_hair_spread(arm)
         lo, hi = evaluated_bounds(root)
         centre = (lo + hi) / 2
         log(f"after the drape  x [{lo.x:+.2f} {hi.x:+.2f}]  "

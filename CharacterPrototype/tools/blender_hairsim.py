@@ -143,7 +143,28 @@ COLLISION_QUALITY = 3
 SELF_COLLISION_DISTANCE = 0.005
 
 
-def add_cloth(obj, pin_group=PIN_GROUP, settings=None):
+def collider_collection(name, objects):
+    """A collection the solver is allowed to collide against, and only that.
+
+    Cloth collides with every Collision object in the scene unless it is told
+    otherwise, and for a worn garment that is fatal: a robe rests ON her, so it
+    starts touching her skin along its whole length, and a solver asked to
+    resolve that pushes until the mesh leaves the building -- the first attempt
+    threw sleeve vertices 13 metres. The garment does not need to collide with
+    her at all, because the part that lies against her is pinned to her. It
+    needs to collide with the deck.
+    """
+    collection = bpy.data.collections.get(name) or bpy.data.collections.new(name)
+    if collection.name not in bpy.context.scene.collection.children:
+        bpy.context.scene.collection.children.link(collection)
+    for obj in objects:
+        if obj.name not in collection.objects:
+            collection.objects.link(obj)
+    return collection
+
+
+def add_cloth(obj, pin_group=PIN_GROUP, settings=None, self_collision=True,
+              colliders=None):
     modifier = obj.modifiers.new("HairCloth", "CLOTH")
     cloth = modifier.settings
     values = dict(CLOTH)
@@ -173,9 +194,11 @@ def add_cloth(obj, pin_group=PIN_GROUP, settings=None):
     # volume at all -- self-collision is what keeps a fanned-out mass of hair
     # looking like a mass rather than a stain. Only 28 cards simulate, so the
     # bill is affordable.
-    collision.use_self_collision = True
+    collision.use_self_collision = self_collision
     collision.self_distance_min = SELF_COLLISION_DISTANCE
     collision.self_friction = 6.0
+    if colliders is not None:
+        collision.collection = colliders
     return modifier
 
 
@@ -299,3 +322,59 @@ def deck_collider(name="HairDeck"):
     bpy.context.scene.collection.objects.link(obj)
     obj.hide_render = True
     return obj
+
+
+# Cloth, unlike hair, is allowed to behave like cloth: softer, with much less
+# bending resistance, so a sleeve hangs and gathers instead of holding its
+# shape like a length of pipe.
+GARMENT_CLOTH = dict(
+    CLOTH,
+    mass=0.20,
+    tension_stiffness=15.0,
+    compression_stiffness=15.0,
+    shear_stiffness=15.0,
+    bending_stiffness=0.20,
+    air_damping=1.2,
+    quality=10,
+)
+
+
+def pin_all_but(obj, loose_bones, group_name="ClothPins"):
+    """Pin every vertex except those the given bones carry.
+
+    A garment cannot be pinned the way hair is -- it has no roots. What it has
+    is a part that is held against her by her own body, and a part that hangs
+    free. Here the sleeves hang and everything else is held, which is the
+    smallest change that fixes the sleeve without risking the robe sliding off
+    her in the solver.
+    """
+    mesh = obj.data
+    group = obj.vertex_groups.get(group_name) or obj.vertex_groups.new(name=group_name)
+    names = [g.name for g in obj.vertex_groups]
+    loose, held = [], []
+    for vert in mesh.vertices:
+        heaviest, weight = None, 0.0
+        for entry in vert.groups:
+            if entry.weight > weight:
+                weight, heaviest = entry.weight, names[entry.group]
+        (loose if heaviest in loose_bones else held).append(vert.index)
+    group.add(held, 1.0, "REPLACE")
+    if loose:
+        group.add(loose, 0.0, "REPLACE")
+    log(f"{obj.name}: {len(loose)} vertices free to hang, {len(held)} held")
+    return group
+
+
+# Below the elbow only. Freeing the whole arm chain frees the shoulder seam
+# too, and a sleeve whose shoulder is not attached to anything does what a
+# sleeve would: it slid down her arm and off, and both of them ended up lying
+# on the deck as yellow puddles while she wore none.
+# The forearm only. With the hand free as well, the cuff has nothing holding
+# it and the solver draws the cloth out into spikes past her fingers.
+SLEEVE_BONES = ("J_Bip_L_LowerArm", "J_Bip_R_LowerArm")
+
+
+def add_garment_cloth(obj, loose_bones=SLEEVE_BONES, colliders=None):
+    pin_all_but(obj, loose_bones)
+    return add_cloth(obj, pin_group="ClothPins", settings=GARMENT_CLOTH,
+                     self_collision=False, colliders=colliders)

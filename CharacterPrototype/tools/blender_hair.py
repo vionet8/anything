@@ -16,6 +16,7 @@ Run standalone to render a test card of the shapes on their own:
     blender --background --python tools/blender_hair.py
 """
 import math
+import random
 import os
 
 import bmesh
@@ -460,3 +461,76 @@ def _test_card():
 
 if __name__ == "__main__":
     _test_card()
+
+
+# --- hair spread on the floor -------------------------------------------------
+# The grafted hair is 152 cards, and the 28 long ones are wide flat ribbons with
+# alpha-cut tips. Simulated, they genuinely fall and genuinely spread -- and
+# they read as shattered glass, because two dozen wide flat tapered shapes
+# splayed apart is what broken glass looks like. Nothing about the physics is
+# wrong; there just are not enough strands, and each one is far too wide.
+#
+# So the spread itself is grown. These are thin, flattened, tapered locks that
+# start at the scalp and run out across the boards: many, narrow, and fanned,
+# which is what a mass of hair on a floor actually is. They are authored
+# directly in world space AFTER she is posed, because where the floor is and
+# where her head is are both known by then -- and because a lock that is going
+# to lie still on a plank does not need a solver to work out that it does.
+SPREAD_SEED = 7
+
+
+def build_spread(origin, away, count=46, deck_z=0.0, reach=(0.30, 0.72),
+                 spread=0.085, wander=0.16, scalp=0.085, radius=0.019,
+                 material=None, name="HairSpread", seed=SPREAD_SEED):
+    """Locks flowing away from her head across the floor.
+
+    Modelled as FLOW, not as a fan. The first version drew every lock as a ray
+    from one point at its own angle, which is a description of a sunburst, and
+    that is exactly what it rendered as -- a white sea urchin behind her head,
+    with the widest rays crossing her face. Hair on a floor does not radiate
+    from a point: it leaves the head in a direction, spread across the width of
+    the head, and wanders sideways as it goes. So each lock starts at its own
+    place across the scalp, runs the same general way as its neighbours, and
+    drifts, by an amount that grows with distance.
+    """
+    rng = random.Random(seed)
+    origin = Vector(origin)
+    away = Vector((away[0], away[1], 0.0)).normalized()
+    side = Vector((-away.y, away.x, 0.0))
+
+    made = []
+    for index in range(count):
+        # Evenly placed across the head, then jittered: at this count pure
+        # random leaves visible clumps and bald patches.
+        across = ((index + 0.5) / count - 0.5) * 2.0
+        lateral = across * spread + rng.uniform(-0.012, 0.012)
+        length = rng.uniform(*reach) * (1.0 - 0.25 * abs(across))
+        drift = rng.uniform(-wander, wander) + across * wander * 0.7
+        lift = rng.uniform(0.005, 0.020)
+
+        # Behind the skull, not at the head joint. Started at the joint -- the
+        # base of the skull, which is the middle of her head -- the locks on
+        # the near side began level with her cheek and ran straight across her
+        # face, and the close-up came back with one eye showing.
+        start = (origin + away * (scalp * 1.25) + side * lateral
+                 + Vector((0, 0, rng.uniform(-0.03, 0.045))))
+        # Drops to the boards early and then runs along them, so what shows is
+        # length lying on wood rather than a spoke sticking out of her head.
+        path = [
+            start,
+            start + away * (length * 0.22) + side * (drift * 0.20)
+            + Vector((0, 0, deck_z + lift + 0.035 - start.z)),
+            start + away * (length * 0.58) + side * (drift * 0.62)
+            + Vector((0, 0, deck_z + lift - start.z)),
+            start + away * length + side * drift
+            + Vector((0, 0, deck_z + lift * 0.5 - start.z)),
+        ]
+        lock = build_lock(f"{name}_{index:03d}", path,
+                          root_radius=radius * rng.uniform(0.7, 1.35),
+                          tip_ratio=rng.uniform(0.18, 0.45), flatten=3.2)
+        if material is not None:
+            lock.data.materials.append(material)
+        lock.visible_shadow = False
+        made.append(lock)
+    print(f"[hair] grew {len(made)} locks spread across the floor", flush=True)
+    return made
