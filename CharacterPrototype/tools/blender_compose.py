@@ -25,8 +25,16 @@ Axis conventions below are measured, not guessed (a probe rotated each bone 40
 degrees per local axis and reported where the child joint moved in world space):
 
   she faces -Y standing, +Z is up, +X is her left as seen from the front
-  UpperLeg  -X swings the thigh forward/up (knee toward chest); +Z abducts
-  LowerLeg  +X bends the knee (heel toward seat) -- knees bend one way only
+  UpperLeg  +X swings the thigh forward/up (knee toward chest); +Z abducts
+  LowerLeg  -X bends the knee (heel toward seat) -- knees bend one way only
+
+  Both leg signs above were written down backwards, and stayed wrong long
+  enough to be trusted. POSE_SEATED was authored against renders and uses the
+  real signs (+78 thigh, -72 knee); POSE_LYING was authored against this
+  comment and came out with its thighs swung backwards and both knees
+  hyperextended past 115 degrees -- a doll, not a person. blender_anatomy.py
+  now checks this rather than a comment: it measures which way the far end of
+  each hinge travels and says so.
   UpperArm  +Z lowers the LEFT arm from T-pose, -Z lowers the RIGHT one
             +Y swings the left arm forward, -Y the right
   Neck/Head -X tips the head back (chin up); +X nods it forward
@@ -110,23 +118,44 @@ POSE_SEATED = {
 }
 
 POSE_LYING = {
-    # Knees up. The thigh swing is the big one; without the matching knee bend
-    # she reads as doing a leg raise rather than lying comfortably.
-    "J_Bip_L_UpperLeg": (D(-51), 0, D(6)),
-    "J_Bip_R_UpperLeg": (D(-58), 0, D(-10)),
-    "J_Bip_L_LowerLeg": (D(118), 0, 0),
-    "J_Bip_R_LowerLeg": (D(128), 0, 0),
-    # Feet flat-ish on the deck rather than pointed, which reads as resting.
-    "J_Bip_L_Foot": (D(18), 0, 0),
-    "J_Bip_R_Foot": (D(14), 0, 0),
+    # Lying on her side, so the legs stack rather than splay: the underneath
+    # leg is nearly straight and the top one is drawn up over it.
+    #
+    # Every number here used to be sign-flipped. The thighs were swung
+    # backwards and both knees bent the wrong way -- 116 and 126 degrees of
+    # hyperextension -- because this pose was authored from a comment that had
+    # both leg signs reversed. Check any change with blender_anatomy.audit().
+    "J_Bip_L_UpperLeg": (D(20), 0, D(2)),
+    # The top leg's Z is abduction, and its SIGN decides whether that leg
+    # rests on the lower one or is driven through the deck: at -6 the right
+    # shin ended 8 cm inside the boards, at +6 it lies 7 cm above them, on top
+    # of the leg underneath, where a top leg belongs.
+    "J_Bip_R_UpperLeg": (D(50), 0, D(6)),
+    "J_Bip_L_LowerLeg": (D(-20), 0, 0),
+    "J_Bip_R_LowerLeg": (D(-50), 0, 0),
+    # Feet relaxed rather than flexed, which is what resting feet do. The ankle
+    # angle barely moves the foot's lowest point, because that point is the
+    # heel and the heel sits on the ankle's own axis -- so this is chosen for
+    # how it looks, not to fix a contact.
+    "J_Bip_L_Foot": (D(-16), 0, 0),
+    "J_Bip_R_Foot": (D(-12), 0, 0),
 
-    # Arms. Left goes out and back along the deck past her head; right reaches
-    # out to the side toward where the cat lies.
-    "J_Bip_L_UpperArm": (0, D(-4), D(38)),
-    "J_Bip_L_LowerArm": (0, D(-30), D(20)),
-    "J_Bip_R_UpperArm": (0, D(-6), D(-64)),
-    "J_Bip_R_LowerArm": (0, D(14), D(-16)),
-    "J_Bip_L_Hand": (0, 0, D(10)),
+    # The underneath arm reaches up along the boards past her head; the top arm
+    # comes forward and rests across her front.
+    #
+    # On this rig the left arm's down-at-the-side is Z=+78 and the sign mirrors
+    # between sides, so up-past-the-head is a large NEGATIVE Z. The first
+    # version had +34 here, which is barely off the T-pose -- straight out
+    # sideways -- and rolled onto her side that is straight DOWN: she spent the
+    # whole shot balanced on that hand like a kickstand, hips and both legs
+    # floating 30 cm above boards she was supposed to be lying on. It takes -96
+    # rather than -80 for the forearm and hand to lie ON the deck instead of
+    # through it.
+    "J_Bip_L_UpperArm": (0, D(-20), D(-96)),
+    "J_Bip_L_LowerArm": (0, D(-18), D(4)),
+    "J_Bip_R_UpperArm": (0, D(12), D(-64)),
+    "J_Bip_R_LowerArm": (0, D(38), D(-10)),
+    "J_Bip_L_Hand": (0, 0, D(5)),
     "J_Bip_R_Hand": (0, 0, D(-8)),
 
     # Head lifted off the boards and turned toward the camera. Swept against
@@ -134,17 +163,16 @@ POSE_LYING = {
     # the camera is, and the height of her nose above the planks -- because
     # aiming the face alone aims a face that may be lying ON the deck, which is
     # what the first version did: 17 degrees off the camera, nose at z=0.004,
-    # and an ear 19 cm through the boards. Supine, this lands at 16 degrees
-    # with the nose 0.27 above them. Left at a slight three-quarter rather than
-    # driven to dead-on: a face square to the lens is the one angle that reads
-    # as a passport photograph.
+    # and an ear 19 cm through the boards. On her side this lands near 10
+    # degrees with the neck barely working.
     "J_Bip_C_Neck": (D(-10), 0, D(-10)),
     "J_Bip_C_Head": (D(-10), 0, D(-10)),
 
     # A little life in the torso: a slight arch and twist, so she isn't a plank.
-    "J_Bip_C_Spine": (D(-5), 0, D(4)),
-    "J_Bip_C_Chest": (D(-4), 0, D(3)),
+    "J_Bip_C_Spine": (D(4), 0, D(3)),
+    "J_Bip_C_Chest": (D(3), 0, D(2)),
 }
+
 
 # --- Where she lies ---------------------------------------------------------
 # X=-90 lays her on her back (her front, -Y, rotates to face +Z); Z=180 then
@@ -165,7 +193,7 @@ POSE_LYING = {
 # 10 degrees with the neck barely doing anything, and the hair falls sideways
 # onto the boards instead of onto her.
 LYING_HEAD_DIR = (1.0, 0.0, 0.0)   # her head toward +X, the camera's side
-LYING_ROLL = D(75)                 # 0 is on her back, 90 is fully on her side
+LYING_ROLL = D(88)                 # 0 is on her back, 90 is fully on her side
 
 
 def lying_rotation(head_dir=LYING_HEAD_DIR, roll=LYING_ROLL):
@@ -181,18 +209,28 @@ def lying_rotation(head_dir=LYING_HEAD_DIR, roll=LYING_ROLL):
         supine_face = Vector((0.0, 1.0, 0.0))
     supine_face = (supine_face - up * up.dot(supine_face)).normalized()
     facing = (Matrix.Rotation(roll, 3, up) @ supine_face).normalized()
-    left = -facing.cross(up).normalized()
-    # columns: where her standing left, forward and up end up
-    return Matrix(((left.x, facing.x, up.x),
-                   (left.y, facing.y, up.y),
-                   (left.z, facing.z, up.z))).to_euler("XYZ")
+    # Her RIGHT, not her left. Standing she faces +Y with her right hand at +X
+    # (blender_character's convention), and +X cross +Y is +Z -- so right,
+    # facing, up is the right-handed triple. Built from her left instead, the
+    # matrix has determinant -1, and to_euler() on a mirror is not a rotation:
+    # it put her head at -X when the caller asked for +X, and flipped her left
+    # and right with it.
+    right = facing.cross(up).normalized()
+    # columns: where her standing right, forward and up end up
+    return Matrix(((right.x, facing.x, up.x),
+                   (right.y, facing.y, up.y),
+                   (right.z, facing.z, up.z))).to_euler("XYZ")
 
 
 ROOT_ROTATION_LYING = lying_rotation()
 # Seated she stays upright; she already faces -Y, which is the water and the
 # camera, so she needs no yaw either.
 ROOT_ROTATION_SEATED = (0, 0, D(180))
-ROOT_XY_LYING = (-0.15, 0.82)
+# She lies along the boards with her head toward +X, so the root -- whose
+# origin is at her soles -- goes a body-length back along -X to centre her in
+# front of the camera, and close to the deck's front edge rather than back by
+# the house.
+ROOT_XY_LYING = (-0.70, 0.10)
 ROOT_XY_SEATED = (-0.10, -0.62)
 HIP_HEIGHT = 0.12            # hip joint above the boards, pelvis resting on them
 # Meshes allowed through the boards without the figure being lifted off them:
@@ -212,6 +250,13 @@ CAM_AIM = (-0.10, -0.50, 0.42)
 CAM_LENS = 45
 CAM_FRONT_LOC = (2.6, -1.5, 1.5)
 CAM_FRONT_AIM = (0.0, 0.30, 0.30)
+# Lying down needs its own camera: the seated one is aimed at the height of a
+# seated figure's chest and looks down past a lying one entirely. Lower, closer
+# and turned along the boards, which is also the angle that puts her face
+# rather than the top of her head toward the lens.
+CAM_LYING_LOC = (1.45, -2.05, 0.92)
+CAM_LYING_AIM = (0.05, 0.10, 0.26)
+CAM_LYING_LENS = 50
 
 RES = (1000, 1500)
 SAMPLES = 220
@@ -472,23 +517,66 @@ def report_sinking(deck_z=0.0, tolerance=0.005):
         log("  nothing sinks below the deck")
 
 
-def torso_floor(arm, percentile=1.0):
-    """Where her body actually meets the boards, ignoring skinning spikes."""
+# The garment lives in the Body mesh, so "the lowest part of Body" is not her.
+GARMENT_MATERIALS = ("Tops",)
+
+# What she rests ON. Lying down it is her torso that meets the boards, and only
+# the torso is a reliable answer: the lowest point of her whole body was, in
+# turn, a hanging sleeve, then a fingertip, then the shin of her top leg, and
+# each of those grounded her by something that should have been resting ON the
+# deck rather than defining where the deck is.
+TORSO_BONES = ("J_Bip_C_Hips", "J_Bip_C_Spine",
+               "J_Bip_C_Chest", "J_Bip_C_UpperChest")
+
+
+def torso_floor(arm, percentile=1.0, torso_only=True):
+    """Where her BODY meets the boards -- her skin, not what she is wearing.
+
+    The yukata is faces of the Body mesh, and it hangs. Measuring Body whole
+    made the lowest thing a dangling sleeve, so grounding lifted her until the
+    sleeve touched: hips, knees and both feet ended up floating 30-40 cm over
+    boards she was supposed to be lying on, while her shoulder pushed 14 cm
+    through them at the other end.
+
+    A low percentile rather than the outright minimum, which is what makes this
+    survive the linear-blend skinning spikes that defeated grounding twice
+    before.
+    """
     import numpy as np
 
     deps = bpy.context.evaluated_depsgraph_get()
     heights = []
-    for name in ("Body", "Face"):
+    for name in ("Body",) if torso_only else ("Body", "Face"):
         obj = bpy.data.objects.get(name)
         if obj is None or obj.type != "MESH":
             continue
         ev = obj.evaluated_get(deps)
         mesh = ev.to_mesh()
+        cloth = {i for i, slot in enumerate(ev.material_slots)
+                 if slot.material and any(k in slot.material.name
+                                          for k in GARMENT_MATERIALS)}
         co = np.empty(len(mesh.vertices) * 3)
         mesh.vertices.foreach_get("co", co)
         co = co.reshape(-1, 3)
         matrix = np.array(ev.matrix_world)
-        heights.append((co @ matrix[:3, :3].T + matrix[:3, 3])[:, 2])
+        world = co @ matrix[:3, :3].T + matrix[:3, 3]
+
+        keep = np.ones(len(mesh.vertices), dtype=bool)
+        for poly in mesh.polygons:
+            if poly.material_index in cloth:
+                keep[list(poly.vertices)] = False
+        if torso_only:
+            groups = [g.name for g in obj.vertex_groups]
+            for index, vert in enumerate(obj.data.vertices):
+                heaviest, weight = None, 0.0
+                for g in vert.groups:
+                    if g.weight > weight:
+                        weight, heaviest = g.weight, groups[g.group]
+                if heaviest not in TORSO_BONES:
+                    keep[index] = False
+        world = world[keep]
+        if len(world):
+            heights.append(world[:, 2])
         ev.to_mesh_clear()
     if not heights:
         return 0.0
@@ -684,23 +772,32 @@ def main():
     tag = "head" if "--head" in args else ("pose" if pose_only else "shot")
     suffix = "-quick" if quick else ""
     front = "--front" in args
-    loc, aim, lens = ((CAM_FRONT_LOC, CAM_FRONT_AIM, 45) if front
-                      else (CAM_LOC, CAM_AIM, CAM_LENS))
+    if front:
+        loc, aim, lens = CAM_FRONT_LOC, CAM_FRONT_AIM, 45
+    elif "--lying" in args:
+        loc, aim, lens = CAM_LYING_LOC, CAM_LYING_AIM, CAM_LYING_LENS
+    else:
+        loc, aim, lens = CAM_LOC, CAM_AIM, CAM_LENS
+    # Both re-aims below need the camera's DIRECTION, which is the vector from
+    # the shot's aim to the shot's position -- so it has to be taken before aim
+    # is reassigned to the new target. Taking it after (which is what the first
+    # version did) measures from the new target to the old camera, and put the
+    # lens half a metre from her ribs.
+    direction = Vector(loc) - Vector(aim)
     if "--head" in args and arm is not None:
         # Whether her face is visible is the one question a wide shot cannot
         # answer -- at full figure her head is 60 px across and half of that is
-        # hair. Aimed at the head joint, from the shot camera's direction so it
-        # is the same view the shot will have, just closer.
+        # hair. Same direction as the shot, just much closer.
         aim = tuple(arm.matrix_world @ arm.pose.bones["J_Bip_C_Head"].head)
-        direction = (Vector(loc) - Vector(CAM_AIM)).normalized()
-        loc = tuple(Vector(aim) + direction * 0.85)
+        loc = tuple(Vector(aim) + direction.normalized() * 0.85)
         lens = 70
     elif pose_only:
-        # Judging a pose means seeing all of her, so the bare stage aims itself
-        # at what she actually occupies rather than at the shot's framing.
+        # Judging a pose means seeing all of her, so the bare stage aims at
+        # what she actually occupies and stands back far enough to hold it.
+        lo, hi = evaluated_bounds(root)
+        span = max(hi.x - lo.x, hi.y - lo.y, hi.z - lo.z)
         aim = tuple(centre)
-        offset = Vector(loc) - Vector(CAM_AIM if not front else CAM_FRONT_AIM)
-        loc = tuple(Vector(aim) + offset * 0.85)
+        loc = tuple(Vector(aim) + direction.normalized() * max(span * 1.9, 1.6))
     add_camera(loc, aim, lens)
     render_to(os.path.join(OUT_DIR,
                            f"compose-{tag}{'-front' if front else ''}{suffix}.png"))
