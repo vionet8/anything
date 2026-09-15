@@ -30,6 +30,7 @@ spread comes out of the motion rather than having to be authored.
 import os
 import sys
 
+import bmesh
 import bpy
 from mathutils import Vector
 
@@ -53,7 +54,13 @@ ROOT_MARGIN = 0.030
 # quarters of them reach under 0.11 m, and the next ones up reach 0.54 m, with
 # nothing in between. That gap is the haircut on one side and the long hair on
 # the other, so it is where the line goes: 124 cards keep their shape, 28 fall.
-RIGID_REACH = 0.250
+# Lowered from 0.25 after seeing the full frame. At 0.25 the 124 "haircut"
+# cards included flaps reaching 18 cm from the scalp -- fine standing, where
+# they hang beside her head, and a pile of crumpled paper standing straight up
+# off her once she is on her side. Only the cards that genuinely cap the scalp
+# should be rigid; anything with real length has to be allowed to fall, which
+# is the whole point of lying her down.
+RIGID_REACH = 0.105
 
 
 def log(*a):
@@ -378,3 +385,44 @@ def add_garment_cloth(obj, loose_bones=SLEEVE_BONES, colliders=None):
     pin_all_but(obj, loose_bones)
     return add_cloth(obj, pin_group="ClothPins", settings=GARMENT_CLOTH,
                      self_collision=False, colliders=colliders)
+
+
+def shear_long_cards(obj, centre, rigid_reach=RIGID_REACH):
+    """Delete the cards that have real length, leaving the scalp cap.
+
+    Simulating them was the honest answer and it does work as physics -- they
+    fall, they spread, they collide. It does not work as a PICTURE: each card
+    is a wide flat ribbon with an alpha-cut tip, and a couple of dozen of those
+    falling onto each other and onto her shoulder buckle and knot into a pile
+    of crumpled paper with a spike standing out of it. No amount of stiffness
+    fixes that; the primitive is wrong.
+
+    So the long hair is deleted here and re-grown by blender_hair.build_spread,
+    which draws it as many thin locks instead of a few wide ribbons. What stays
+    is the cap and the fringe, which are what make the haircut, and which have
+    no length to fall with.
+    """
+    mesh = obj.data
+    matrix = obj.matrix_world
+    distance = [(matrix @ v.co - centre).length for v in mesh.vertices]
+
+    doomed = set()
+    cards = 0
+    for island in mesh_islands(mesh):
+        nearest = min(distance[i] for i in island)
+        if max(distance[i] for i in island) - nearest > rigid_reach:
+            doomed.update(island)
+            cards += 1
+    if not doomed:
+        return 0
+
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bm.verts.ensure_lookup_table()
+    bmesh.ops.delete(bm, geom=[bm.verts[i] for i in doomed], context="VERTS")
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    log(f"{obj.name}: sheared {cards} long cards ({len(doomed)} vertices); "
+        f"the spread replaces them")
+    return cards

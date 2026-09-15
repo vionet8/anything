@@ -479,8 +479,8 @@ if __name__ == "__main__":
 SPREAD_SEED = 7
 
 
-def build_spread(origin, away, count=46, deck_z=0.0, reach=(0.30, 0.72),
-                 spread=0.085, wander=0.16, scalp=0.085, radius=0.019,
+def build_spread(origin, away, count=58, deck_z=0.0, reach=(0.30, 0.72),
+                 spread=0.072, wander=0.16, scalp=0.085, radius=0.019,
                  material=None, name="HairSpread", seed=SPREAD_SEED):
     """Locks flowing away from her head across the floor.
 
@@ -518,8 +518,10 @@ def build_spread(origin, away, count=46, deck_z=0.0, reach=(0.30, 0.72),
         # length lying on wood rather than a spoke sticking out of her head.
         path = [
             start,
-            start + away * (length * 0.22) + side * (drift * 0.20)
-            + Vector((0, 0, deck_z + lift + 0.035 - start.z)),
+            start + away * (scalp * 0.75 + length * 0.12) + side * (drift * 0.12)
+            + Vector((0, 0, (start.z - origin.z) * 0.35)),
+            start + away * (scalp * 0.75 + length * 0.30) + side * (drift * 0.30)
+            + Vector((0, 0, deck_z + lift + 0.045 - start.z)),
             start + away * (length * 0.58) + side * (drift * 0.62)
             + Vector((0, 0, deck_z + lift - start.z)),
             start + away * length + side * drift

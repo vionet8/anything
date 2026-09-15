@@ -512,6 +512,12 @@ def drape_hair(root, arm, pose):
     colliders = [deck] + [o for o in bpy.data.objects
                           if o.type == "MESH" and o.name in ("Body", "Face")]
 
+    # The long cards are sheared rather than simulated -- see shear_long_cards
+    # -- and blender_hair.build_spread draws that hair back as thin locks.
+    centre = blender_hairsim.head_centre(arm)
+    for obj in blender_hairsim.hair_objects():
+        blender_hairsim.shear_long_cards(obj, centre)
+
     return blender_hairsim.drape(root, arm, pose, rotation, location,
                                  colliders=colliders)
 
