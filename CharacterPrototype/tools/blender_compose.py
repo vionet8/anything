@@ -7,6 +7,11 @@ Run:
     --quick       low samples / small frame, for looking at a change
     --front       a second camera straight down the deck, to check the pose reads
                   from another angle before committing to a long render
+    --lying       lay her on the deck instead of sitting her on the edge; the
+                  hair is simulated as she goes down, since rigid hair cannot
+                  lie down (--no-sim skips that, to see why)
+    --head        frame her head from the shot camera's direction, to check
+                  whether the face actually reads
     --bare        strip the garment instead of dressing her, so the silhouette
                   itself can be judged without cloth in the way
     --stock-body  skip the width and head-count work and use the sample's own
@@ -35,7 +40,7 @@ import shutil
 import sys
 
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(HERE)
@@ -124,10 +129,17 @@ POSE_LYING = {
     "J_Bip_L_Hand": (0, 0, D(10)),
     "J_Bip_R_Hand": (0, 0, D(-8)),
 
-    # Head tipped back and turned slightly toward the camera. Split across neck
-    # and head so the throat line curves instead of hinging at one joint.
-    "J_Bip_C_Neck": (D(-30), 0, D(-8)),
-    "J_Bip_C_Head": (D(-26), 0, D(-10)),
+    # Head lifted off the boards and turned toward the camera. Swept against
+    # two numbers at once -- the angle between where her face points and where
+    # the camera is, and the height of her nose above the planks -- because
+    # aiming the face alone aims a face that may be lying ON the deck, which is
+    # what the first version did: 17 degrees off the camera, nose at z=0.004,
+    # and an ear 19 cm through the boards. Supine, this lands at 16 degrees
+    # with the nose 0.27 above them. Left at a slight three-quarter rather than
+    # driven to dead-on: a face square to the lens is the one angle that reads
+    # as a passport photograph.
+    "J_Bip_C_Neck": (D(-10), 0, D(-10)),
+    "J_Bip_C_Head": (D(-10), 0, D(-10)),
 
     # A little life in the torso: a slight arch and twist, so she isn't a plank.
     "J_Bip_C_Spine": (D(-5), 0, D(4)),
@@ -139,7 +151,44 @@ POSE_LYING = {
 # spins her about the vertical so her head points at the water and the camera
 # rather than at the house. Blender's default XYZ euler applies X before Z,
 # which is the order that keeps her on her back rather than face-down.
-ROOT_ROTATION_LYING = (D(-90), 0, D(180))
+# How she lies, as the two things that are actually being decided: which way
+# along the deck her head points, and how far she is rolled from flat on her
+# back toward the camera. Euler triples are not decisions, they are the answer,
+# so the rotation is built from these and the euler falls out.
+#
+# This is the third orientation tried and the first that works. Prone put her
+# face 150 degrees from the camera and dropped every falling strand across it.
+# Supine got the hair out of the way but cannot aim the face: flat on her back
+# she looks at the sky, and the camera is not the sky -- the best the neck
+# could manage was 60 degrees off, at the cost of a chin driven into her chest.
+# On her side, facing the camera along the deck, the face comes within about
+# 10 degrees with the neck barely doing anything, and the hair falls sideways
+# onto the boards instead of onto her.
+LYING_HEAD_DIR = (1.0, 0.0, 0.0)   # her head toward +X, the camera's side
+LYING_ROLL = D(75)                 # 0 is on her back, 90 is fully on her side
+
+
+def lying_rotation(head_dir=LYING_HEAD_DIR, roll=LYING_ROLL):
+    """Root euler for: head pointing head_dir, rolled `roll` from supine.
+
+    Standing she is up +Z and faces +Y. Lying, her up becomes head_dir and her
+    facing starts at +Z -- flat on her back -- and rolling turns that about
+    head_dir.
+    """
+    up = Vector(head_dir).normalized()
+    supine_face = Vector((0.0, 0.0, 1.0))
+    if abs(up.dot(supine_face)) > 0.9:
+        supine_face = Vector((0.0, 1.0, 0.0))
+    supine_face = (supine_face - up * up.dot(supine_face)).normalized()
+    facing = (Matrix.Rotation(roll, 3, up) @ supine_face).normalized()
+    left = -facing.cross(up).normalized()
+    # columns: where her standing left, forward and up end up
+    return Matrix(((left.x, facing.x, up.x),
+                   (left.y, facing.y, up.y),
+                   (left.z, facing.z, up.z))).to_euler("XYZ")
+
+
+ROOT_ROTATION_LYING = lying_rotation()
 # Seated she stays upright; she already faces -Y, which is the water and the
 # camera, so she needs no yaw either.
 ROOT_ROTATION_SEATED = (0, 0, D(180))
@@ -309,6 +358,30 @@ def apply_proportions(root, arm, target=PROPORTION_TARGET):
         f"height {after['height']:.3f} m")
 
 
+def drape_hair(root, arm, pose):
+    """Lay her down with the solver running, so the hair falls as she does.
+
+    Called after place() has worked out where she finishes, because the drape
+    needs a destination to animate toward -- place() grounds her by hip height
+    and that answer is what the fall ends at.
+
+    Only worth doing lying down. Sitting up the hair hangs the way it was
+    modelled to hang, which is what the cards are for; it is lying down that
+    the rigid version cannot do, and it fails loudly -- the hair keeps the
+    shape it had standing and fans out into a white shell over her face and
+    half the deck.
+    """
+    import blender_hairsim
+
+    rotation = tuple(root.rotation_euler)
+    location = tuple(root.location)
+    colliders = [blender_hairsim.deck_collider()]
+    colliders += [o for o in bpy.data.objects
+                  if o.type == "MESH" and o.name in ("Body", "Face")]
+    return blender_hairsim.drape(root, arm, pose, rotation, location,
+                                 colliders=colliders)
+
+
 def silence_hair_shadows(root):
     """Stop the hair casting shadows, which is what the grey veils were.
 
@@ -399,6 +472,29 @@ def report_sinking(deck_z=0.0, tolerance=0.005):
         log("  nothing sinks below the deck")
 
 
+def torso_floor(arm, percentile=1.0):
+    """Where her body actually meets the boards, ignoring skinning spikes."""
+    import numpy as np
+
+    deps = bpy.context.evaluated_depsgraph_get()
+    heights = []
+    for name in ("Body", "Face"):
+        obj = bpy.data.objects.get(name)
+        if obj is None or obj.type != "MESH":
+            continue
+        ev = obj.evaluated_get(deps)
+        mesh = ev.to_mesh()
+        co = np.empty(len(mesh.vertices) * 3)
+        mesh.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3)
+        matrix = np.array(ev.matrix_world)
+        heights.append((co @ matrix[:3, :3].T + matrix[:3, 3])[:, 2])
+        ev.to_mesh_clear()
+    if not heights:
+        return 0.0
+    return float(np.percentile(np.concatenate(heights), percentile))
+
+
 def place(root, arm, lying):
     apply_pose(arm, POSE_LYING if lying else POSE_SEATED)
     root.rotation_mode = "XYZ"
@@ -422,8 +518,17 @@ def place(root, arm, lying):
     # it left the whole figure hanging in the air. Hip height does not care
     # what her limbs are doing, which is the point: sitting at the edge her
     # legs hang BELOW the deck on purpose.
-    hips = arm.pose.bones["J_Bip_C_Hips"]
-    root.location.z += HIP_HEIGHT - (arm.matrix_world @ hips.head).z
+    if lying:
+        # Lying down, what meets the boards is her back and her shoulder, and
+        # hip height says nothing about where those are: grounding this pose by
+        # the hip buried her 0.33 m into the deck. Her own lowest body vertices
+        # are the right answer here -- taken as a low percentile rather than an
+        # outright minimum, which is what makes it survive the skinning spikes
+        # that defeated this twice before.
+        root.location.z -= torso_floor(arm)
+    else:
+        hips = arm.pose.bones["J_Bip_C_Hips"]
+        root.location.z += HIP_HEIGHT - (arm.matrix_world @ hips.head).z
     bpy.context.view_layer.update()
 
     _lowest.update(z=1e9, name=None, at=(0, 0))
@@ -553,6 +658,12 @@ def main():
     if arm is None:
         raise SystemExit("character has no armature -- cannot pose")
     centre = place(root, arm, lying="--lying" in args)
+    if "--lying" in args and "--no-sim" not in args:
+        drape_hair(root, arm, POSE_LYING)
+        lo, hi = evaluated_bounds(root)
+        centre = (lo + hi) / 2
+        log(f"after the drape  x [{lo.x:+.2f} {hi.x:+.2f}]  "
+            f"y [{lo.y:+.2f} {hi.y:+.2f}]  z [{lo.z:+.2f} {hi.z:+.2f}]")
 
     if "--objects" in args:
         for obj in sorted(bpy.data.objects, key=lambda o: o.name):
@@ -570,12 +681,21 @@ def main():
 
     configure_render(quick)
 
-    tag = "pose" if pose_only else "shot"
+    tag = "head" if "--head" in args else ("pose" if pose_only else "shot")
     suffix = "-quick" if quick else ""
     front = "--front" in args
     loc, aim, lens = ((CAM_FRONT_LOC, CAM_FRONT_AIM, 45) if front
                       else (CAM_LOC, CAM_AIM, CAM_LENS))
-    if pose_only:
+    if "--head" in args and arm is not None:
+        # Whether her face is visible is the one question a wide shot cannot
+        # answer -- at full figure her head is 60 px across and half of that is
+        # hair. Aimed at the head joint, from the shot camera's direction so it
+        # is the same view the shot will have, just closer.
+        aim = tuple(arm.matrix_world @ arm.pose.bones["J_Bip_C_Head"].head)
+        direction = (Vector(loc) - Vector(CAM_AIM)).normalized()
+        loc = tuple(Vector(aim) + direction * 0.85)
+        lens = 70
+    elif pose_only:
         # Judging a pose means seeing all of her, so the bare stage aims itself
         # at what she actually occupies rather than at the shot's framing.
         aim = tuple(centre)

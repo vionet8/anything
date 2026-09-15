@@ -274,3 +274,28 @@ def drape(root, arm, pose, rotation, location, colliders=(),
 
     end = lay_down(root, arm, pose, rotation, location, fall=fall, hold=hold)
     return settle(end + settle_frames)
+
+
+# The engawa's own deck, as a plane. The built deck is planks with gaps and a
+# thickness, and handing all of that to a collision solver costs far more than
+# it returns -- what the hair needs to know is "there is a floor at z=0, and it
+# stops at the edge". The extent matters: a plane running to infinity would
+# hold hair up in mid-air out over the water, where it should fall past the
+# boards instead.
+DECK_Z = 0.0
+DECK_X_HALF = 4.30
+DECK_FRONT = -0.75
+DECK_BACK = 1.65
+
+
+def deck_collider(name="HairDeck"):
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(
+        [(-DECK_X_HALF, DECK_FRONT, DECK_Z), (DECK_X_HALF, DECK_FRONT, DECK_Z),
+         (DECK_X_HALF, DECK_BACK, DECK_Z), (-DECK_X_HALF, DECK_BACK, DECK_Z)],
+        [], [(0, 1, 2, 3)])
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    obj.hide_render = True
+    return obj
