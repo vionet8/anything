@@ -423,13 +423,30 @@ CARDIGAN_STRIPE_DEPTH = 0.07     # upright in this atlas, so this reads as a
 CAMISOLE_VALUE_MIN = 0.06
 CAMISOLE_VALUE_MAX = 0.50
 CAMISOLE_SAT_MAX = 0.12
-CAMISOLE_TARGET_HUE = 0.585      # ~211 deg, a cornflower/sky blue
-CAMISOLE_TARGET_SAT = 0.20
-CAMISOLE_VALUE_LIFT = 0.82       # dark charcoal -> near-white with a blue cast
-FLOWER_SPACING = 54.0            # px between motif centres
-FLOWER_RADIUS = 15.0             # px
-FLOWER_SAT = 0.50                # the printed flowers sit deeper/bluer
-FLOWER_VALUE = 0.72
+# --- the swimsuit ------------------------------------------------------------
+# She wears a swimsuit under the open yukata, as the reference illustration
+# does. It is painted rather than modelled because there is nothing to model:
+# the camisole is not a garment mesh at all, it is painted INTO the body's skin
+# atlas, so its cut is whatever the texture says it is.
+#
+# Saturated, because it has to survive being beside a gold robe and on top of
+# skin this model renders very pale: a pale suit on pale skin disappears. The
+# shading painted into the original cloth is carried through rather than
+# flattened, which is what keeps it reading as cloth on a body.
+SWIM_HUE = 0.555                 # ~200 deg, a marine blue
+SWIM_SAT = 0.62
+SWIM_VALUE_MIN = 0.26            # where the original cloth was in shadow
+SWIM_VALUE_MAX = 0.68            # ...and where it caught the light
+# A pale edge all round, taken from the garment's own outline by eroding the
+# mask, so the piping follows the real shape instead of a guessed path.
+SWIM_TRIM_PX = 2
+SWIM_TRIM_SAT = 0.16
+SWIM_TRIM_VALUE = 0.88
+# The neckline lace sits below the mask's value floor -- 2931 near-black pixels
+# scalloped along the top edge, measured on this atlas. Left alone it stays as
+# black filigree, the clearest "this is underwear" signal in the frame; folded
+# into the suit it becomes a clean edge.
+SWIM_LACE_REACH = 6              # px around the suit that count as its trim
 
 
 def _pixel_grid(shape):
@@ -455,50 +472,74 @@ def tint_cardigan_gold(img):
     return int(mask.sum())
 
 
-def _flower_field(shape):
-    """A tiled field of small five-petal motifs, as a boolean mask plus a
-    separate mask for their centres -- enough to read as a printed cotton
-    yukata fabric at render distance without hand-painting a texture."""
-    ys, xs = _pixel_grid(shape)
-    cy = (ys % FLOWER_SPACING) - FLOWER_SPACING / 2.0
-    cx = (xs % FLOWER_SPACING) - FLOWER_SPACING / 2.0
-    # offset every other row so the motifs sit in a half-drop repeat
-    row = np.floor(ys / FLOWER_SPACING)
-    cx = cx + np.where(row % 2 > 0, FLOWER_SPACING / 2.0, 0.0)
-    cx = ((cx + FLOWER_SPACING / 2.0) % FLOWER_SPACING) - FLOWER_SPACING / 2.0
-
-    r = np.sqrt(cx * cx + cy * cy)
-    theta = np.arctan2(cy, cx)
-    petal_r = FLOWER_RADIUS * (0.45 + 0.55 * np.abs(np.cos(2.5 * theta)))
-    return r <= petal_r, r <= FLOWER_RADIUS * 0.22
+def _dilate(mask, iterations):
+    grown = mask
+    for _ in range(iterations):
+        out = grown.copy()
+        for axis in (0, 1):
+            for d in (1, -1):
+                out |= np.roll(grown, d, axis=axis)
+        grown = out
+    return grown
 
 
-def recolour_camisole_blue(img):
+def _erode(mask, iterations):
+    shrunk = mask
+    for _ in range(iterations):
+        out = shrunk.copy()
+        for axis in (0, 1):
+            for d in (1, -1):
+                out &= np.roll(shrunk, d, axis=axis)
+        shrunk = out
+    return shrunk
+
+
+def recolour_swimsuit(img):
+    """Repaint the camisole/shorts cloth as a swimsuit.
+
+    The mask is the original one, untouched: it picks the cloth out by being
+    NEUTRAL and dark rather than by hue, because measured over this atlas the
+    legwear is a warm brown (hue 0-45, saturation 0.25-0.5) while the cloth is
+    a near-colourless charcoal. An earlier hue-band attempt at the same job
+    selected 319 pixels of the ~81k that are actually cloth.
+    """
     arr = bb.load_pixels(img)
     rgb, alpha = arr[..., :3], arr[..., 3]
     h, s, v = bb.rgb_to_hsv(rgb)
-    mask = ((alpha > 0.5) & (v >= CAMISOLE_VALUE_MIN) & (v <= CAMISOLE_VALUE_MAX)
-            & (s < CAMISOLE_SAT_MAX))
+    opaque = alpha > 0.5
+    cloth = (opaque & (v >= CAMISOLE_VALUE_MIN) & (v <= CAMISOLE_VALUE_MAX)
+             & (s < CAMISOLE_SAT_MAX))
 
-    petals, centres = _flower_field(rgb.shape[:2])
-    # Keep the garment's own shading by carrying `v` through the lift; the
-    # print only changes hue/saturation/brightness *within* the mask.
-    base_v = v + (1.0 - v) * CAMISOLE_VALUE_LIFT
-    h2 = np.where(mask, CAMISOLE_TARGET_HUE, h)
-    s2 = np.where(mask, CAMISOLE_TARGET_SAT, s)
-    v2 = np.where(mask, base_v, v)
-    flower = mask & petals
-    s2 = np.where(flower, FLOWER_SAT, s2)
-    v2 = np.where(flower, base_v * FLOWER_VALUE, v2)
-    heart = mask & centres
-    s2 = np.where(heart, 0.55, s2)
-    h2 = np.where(heart, 0.13, h2)   # a small warm yellow eye in each flower
-    v2 = np.where(heart, base_v, v2)
+    # The lace, but only where it borders the cloth -- taken globally it would
+    # also claim every other near-black pixel on the atlas.
+    lace = opaque & (v < CAMISOLE_VALUE_MIN) & _dilate(cloth, SWIM_LACE_REACH)
+    suit = cloth | lace
+    if not suit.any():
+        return 0, 0, 0
+
+    # Carry the cloth's painted shading into the suit's value range rather than
+    # flattening it, so the folds the original had survive.
+    span = max(CAMISOLE_VALUE_MAX - CAMISOLE_VALUE_MIN, 1e-6)
+    shade = np.clip((v - CAMISOLE_VALUE_MIN) / span, 0.0, 1.0)
+    suit_v = SWIM_VALUE_MIN + shade * (SWIM_VALUE_MAX - SWIM_VALUE_MIN)
+
+    # Piping taken from the CLOTH's outline, not the suit's. The reclaimed
+    # lace is the outermost band, so eroding the suit made all of it trim and
+    # she came back wearing a thick white scallop round the neckline -- which
+    # is the lingerie edge the lace was, in a different colour. Painted as
+    # plain suit it is just the shape of the neckline.
+    trim = cloth & ~_erode(cloth, SWIM_TRIM_PX)
+
+    h2 = np.where(suit, SWIM_HUE, h)
+    s2 = np.where(suit, SWIM_SAT, s)
+    v2 = np.where(suit, suit_v, v)
+    s2 = np.where(trim, SWIM_TRIM_SAT, s2)
+    v2 = np.where(trim, SWIM_TRIM_VALUE, v2)
 
     r, g, b = bb.hsv_to_rgb(h2, s2, v2)
-    final = np.where(mask[..., None], np.stack([r, g, b], axis=-1), rgb)
+    final = np.where(suit[..., None], np.stack([r, g, b], axis=-1), rgb)
     bb.store_pixels(img, np.concatenate([final, alpha[..., None]], axis=-1))
-    return int(mask.sum())
+    return int(suit.sum()), int(lace.sum()), int(trim.sum())
 
 
 # --- Bare legs / bare feet -------------------------------------------------
@@ -782,9 +823,9 @@ def remove_shoes():
 
 
 def recolour_outfit_summer():
-    """Cardigan -> warm gold robe; camisole and shorts -> one white-and-blue
-    floral under-layer, so they read as a single summer garment set rather
-    than three separate recoloured pieces. Then the legwear comes off."""
+    """Cardigan -> warm gold robe; camisole and shorts -> one swimsuit, so they
+    read as a single garment rather than two recoloured pieces. Then the
+    legwear comes off."""
     tops = bpy.data.images.get("F00_006_01_Tops_01")
     body = bpy.data.images.get("F00_000_00_Body_00")
     bottoms = bpy.data.images.get("F00_008_01_Bottoms_01")
@@ -793,13 +834,16 @@ def recolour_outfit_summer():
     else:
         log("WARNING: Tops_01 image not found, skipping cardigan tint")
     if body:
-        log(f"camisole -> white/blue floral: {recolour_camisole_blue(body)} px")
+        total, lace, trim = recolour_swimsuit(body)
+        log(f"swimsuit top: {total} px ({lace} reclaimed from lace), "
+            f"{trim} px trim")
     else:
         log("WARNING: Body_00 image not found, skipping camisole recolour")
     if bottoms:
         # Same neutral-dark mask: the shorts are black cloth, the belt is a
         # saturated tan and survives untouched.
-        log(f"shorts -> white/blue floral: {recolour_camisole_blue(bottoms)} px")
+        total, lace, trim = recolour_swimsuit(bottoms)
+        log(f"swimsuit bottom: {total} px ({lace} lace), {trim} px trim")
     else:
         log("WARNING: Bottoms_01 image not found, skipping shorts recolour")
     if body:
