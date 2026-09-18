@@ -41,3 +41,49 @@ Claude Docs / Claude Code Remote。**XもTypefullyも繋がっていない。**
 XとTypefullyについてはサーバの実体と認証を確認していないので、繋ぐ前に実在と
 権限を確かめること。FigmaとHyperFramesは公式のMCPがあることまでは確認済み
 (2026-09-18)だが、このリポジトリでは未接続。
+
+## 参考動画: MCP紹介まとめ (KEITO WEB&AI CH)
+
+スクリーンショットから書き起こし。チャプター一覧の上部は見切れていて、
+Gmail より前の項目は不明。URLとタイトルは未確認。
+
+| 時刻 | 項目 |
+|---|---|
+| (見切れ) | Gmail MCP |
+| 05:16 | Google カレンダー MCP |
+| 06:27 | Google ドライブ MCP |
+| 07:40 | Notion MCP |
+| 09:39 | Obsidian・ファイルシステム MCP |
+| 11:22 | Zoom MCP |
+| 12:50 | X MCP |
+| 14:45 | Typefully MCP |
+| 16:27 | Figma MCP |
+| 18:20 | Hyperframe MCP |
+| 20:08 | fal MCP |
+| 22:58 | Fiksfield MCP (表記が読み取りづらい。要確認) |
+| 24:17 | Cloudflare MCP |
+| 26:56 | Vercel MCP |
+| 27:43 | Playwright MCP |
+| 28:56 | freee・マネーフォワード MCP |
+| 31:12 | Zapier・Make MCP |
+| 34:14 | **Blender MCP** |
+| 35:32 | MCP運用の注意点・まとめ |
+
+上で「繋ぎたい」と書いた X / Typefully / Figma / Hyperframe は、いずれもこの
+動画で扱われている。
+
+### Blender MCP (34:14) について
+
+今回の縁側シーン制作で一番効いた制約が、これで解ける可能性がある。
+
+今回は `blender --background --python` で毎回プロセスを起動して捨てていたので、
+(1) シーンを毎回ゼロから組み直す (2) ビューポートが無いので確認は必ず
+レンダリング、という2点が固定費だった。動いているBlenderに接続する型のMCPなら
+セッションが永続するので、両方とも消える。
+
+ただし前提として、GUI付きのBlenderが動いている必要がある。このクラウド
+コンテナはヘッドレスなので、仮想ディスプレイ(xvfb)で動かせるかは未検証。
+ローカルのBlenderに繋ぐ使い方なら素直に効くはず。
+
+なお、MCPが無くても今回のループは40倍速くできた(Workbench 6.6秒 対 Cycles
+4分)。速いループが欲しいときに、まずMCPを探すのは順番が違う。
