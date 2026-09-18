@@ -60,7 +60,7 @@ Gmail より前の項目は不明。URLとタイトルは未確認。
 | 16:27 | Figma MCP |
 | 18:20 | Hyperframe MCP |
 | 20:08 | fal MCP |
-| 22:58 | Fiksfield MCP (表記が読み取りづらい。要確認) |
+| 22:58 | Higgsfield MCP (スクショでは「Fiksfield」に見えたが、Higgsfield AI の画像・動画生成MCPと思われる。fal の直後という並びとも整合) |
 | 24:17 | Cloudflare MCP |
 | 26:56 | Vercel MCP |
 | 27:43 | Playwright MCP |
@@ -87,3 +87,73 @@ Gmail より前の項目は不明。URLとタイトルは未確認。
 
 なお、MCPが無くても今回のループは40倍速くできた(Workbench 6.6秒 対 Cycles
 4分)。速いループが欲しいときに、まずMCPを探すのは順番が違う。
+
+
+## 調査: ClaudeでどのMCPが使えるか (2026-09-18 調べ)
+
+「ClaudeとCodexで使えるものが違うらしい」という話の確認。結論としては
+**「このサーバはClaudeで使えない」という単位ではなく、「この機能を使っている
+サーバはClaude Codeで動かない」という単位**で効いてくる。
+
+### Claude Code 側のMCP機能の穴 (ここが実質の制約)
+
+- **Sampling 非対応**。サーバ側が「推論はクライアントのLLMにやらせる」設計
+  (コストと制御をクライアントに委ねる型)だと動かない。これが一番はっきりした
+  非対応項目
+- **必須引数を持つ Prompts** が機能しない。サーバがPromptsに必須パラメータを
+  定義していても Claude Code がユーザに入力を求めないため、呼び出しが
+  タイムアウトして失敗する
+- **Elicitation は Claude Code CLI では使えるが、Claude Desktop では使えない**
+- Resources / Prompts 自体は一応使える(Promptsはスラッシュコマンド、Resources
+  は @ メンションとして出る)が、実装に listResources / readResource /
+  listPrompts / getPrompt / createMessage / elicit / listRoots が見当たらない
+  という報告がある
+- 動的更新が弱い。サーバが後から追加したスラッシュコマンドは再起動しないと
+  出てこないし、動的に増えたResourcesは @ の補完に出ない
+
+注意: 上記のうち後半はGitHubのissue報告ベースなので、既に直っている可能性が
+ある。実際に繋ぐときは現物で確かめること。
+
+### Claude と Codex の違い (設定が互換でない)
+
+- **設定ファイルが別物**。Claude Code / Claude Desktop は `.mcp.json` /
+  `claude_desktop_config.json`、Codex は `~/.codex/config.toml`。片方の設定を
+  そのまま持っていけない
+- **OAuthの流れが違う**。Claude Code は初回利用時にインラインでOAuthが走る。
+  Codex は登録と認証が分かれていて `codex mcp add` の後に
+  `codex mcp login <name>` でブラウザが開く
+- Codex CLI は**静的な clientId での OAuth に非対応**。事前登録済みのOAuth
+  クライアントを使う組織だとここで詰まる
+- 両方とも Dynamic Client Registration に直行するので、DCR非対応のサーバだと
+  どちらでも問題が出る
+- Codex には `/mcp verbose` という診断がある。Claude Code には無い
+
+### 個別に確認できたこと
+
+- **X**: 2026-06-30に公式のホスト型MCPが出ている (`https://api.x.com/mcp`、
+  xdevplatform/xmcp)。**Claudeは明示的に対応クライアントに入っている**。
+  X APIの200以上のエンドポイント(全文検索、トレンド、投稿操作、ブックマーク、
+  長文Articlesの下書きと公開)。接続は無料だが**呼び出しは従量課金**で、
+  投稿作成 $0.015 (URLを含むと $0.20)、投稿読み取り $0.005
+- **Typefully**: 公式MCPあり (`https://mcp.typefully.com/mcp`)。**OAuthなので
+  APIキー不要**。X / LinkedIn / Threads / Bluesky / Mastodon の下書き作成・
+  編集・予約・スレッド対応
+- **Figma**: Claude Code と Claude Desktop は対応クライアント。ただし
+  **Figmaの MCP Catalog に載っているクライアントしか接続できない**という
+  ゲートがあり、新規クライアントはwaitlist。有料プランの Dev/Full シートが
+  必要。Claude Code については、Figmaは生のMCP設定よりも**プラグインの方を
+  推奨**している(Agent Skills が同梱されるため)
+- **HyperFrames**: HeyGen公式のホスト型コネクタが「対応AIチャット製品」向けに
+  あるほか、CLIを包んだコミュニティ実装、レンダリング基盤に繋ぐ有料リモート
+  MCPがある
+- **Higgsfield**: Claude / Cursor / その他MCPクライアントで動くとされている
+- **Blender**: ahujasid/blender-mcp。もともとClaude Desktop前提で作られている。
+  要件は Blender 3.0以上 / Python 3.10以上 / uv、そして**GUIで動いているBlender
+  にアドオンを入れる**こと。クライアントは1つだけ動かす(CursorとClaude Desktop
+  を同時に繋がない)
+
+### この環境(クラウドのヘッドレスコンテナ)での可否
+
+Blender MCP は**ここでは使えない**。クライアント側の問題ではなく、GUIで動いて
+いるBlenderにアドオンを入れて接続する仕組みなので、ディスプレイの無いコンテナ
+には繋ぐ相手がいない。ローカルのMacなどで動かすなら素直に使えるはず。
