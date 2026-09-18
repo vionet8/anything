@@ -212,3 +212,40 @@ GUIで動いているBlenderにアドオン経由で繋ぐ仕組みなので、�
 **(c) 隔離VMかどうか(Cowork)** の組み合わせ。
 
 ローカルサーバはローカルで動くクライアントとしか繋がらない、が基本則。
+
+
+## 動画の18個: Claudeで接続できるか (2026-09-18 調べ)
+
+| # | MCP | Claude | 形態 / 備考 |
+|---|---|---|---|
+| 1 | Gmail | ○ | このセッションで実際に接続されている |
+| 2 | Googleカレンダー | ○ | 同上 |
+| 3 | Googleドライブ | ○ | 同上 |
+| 4 | Notion | ○ (未個別確認) | 定番だが公式の明示を拾えず |
+| 5 | Obsidian・ファイルシステム | △ | ローカルstdio型。Desktopコネクタ不可、Claude Code CLIなら可 |
+| 6 | Zoom | ○ | 公式リモート `mcp.zoom.us/mcp/zoom/streamable`。Desktop / Code(CLI) / Cowork に追加可 |
+| 7 | X | ○ | 公式 `api.x.com/mcp`。Claude明記。**従量課金**(投稿$0.015、URL付き$0.20、読取$0.005) |
+| 8 | Typefully | ○ | 公式 `mcp.typefully.com/mcp`。OAuth、APIキー不要 |
+| 9 | Figma | △ | **リモート `mcp.figma.com/mcp` を使うこと**。ローカル(3845)は不具合多数。有料Dev/Fullシート必須、カタログ掲載クライアントのみ |
+| 10 | Hyperframe | ○ | HeyGen公式ホスト型コネクタ + コミュニティ実装 |
+| 11 | fal | ○ | 公式 `mcp.fal.ai/mcp`。`claude mcp add --transport http fal-ai ... --header "Authorization: Bearer <KEY>"` |
+| 12 | Higgsfield | ○ | Claude / Cursor / 任意のMCPクライアント |
+| 13 | Cloudflare | ○ | 公式のマネージドリモートMCP群、OAuthでClaudeから接続 |
+| 14 | Vercel | ○ | 公式 `claude mcp add --transport http vercel https://mcp.vercel.com` |
+| 15 | Playwright | ○ (未個別確認) | Microsoft製、ローカルstdio型 |
+| 16 | freee | ○ | OSS公式。**Claude Codeはプラグイン導入でAgent Skills同梱** |
+| 17 | マネーフォワード | ○ | 公式リモートMCP(2026-03-26 β、全プラン)。環境構築不要 |
+| 18 | Zapier | ○ | 公式 `claude mcp add --transport http "Zapier-MCP" https://mcp.zapier.com/api/v1/connect` |
+| 18b | Make | ? | 検索で拾えず。要確認 |
+| 19 | Blender | △ | Claude Desktop向けに作られている。ただし**GUIで動くBlenderが必要**。ヘッドレス環境では不可 |
+
+**結論: サーバ単位で「Claudeでは無理」というものは無い。** ただし△の4つ
+(Obsidian/ファイルシステム、Figma、Blender、およびローカル型全般)は
+「どのClaudeか」で可否が変わる。ローカルに立つサーバは、ローカルで動く
+クライアント(Claude Code CLI)としか繋がらない。Claude Desktopのコネクタは
+クラウドから接続しに行くので `127.0.0.1` に届かない。
+
+なお18個全部を同時に繋ぐ話は別問題。ツール定義がコンテキストを食うので
+(4サーバで67,000トークンの報告あり)、実用上は5〜6個で3〜5割が埋まる。
+ツール定義がコンテキストの10%を超えるとClaude Codeが自動でTool Searchモードに
+切り替わり、全定義の先読みをやめる(51K→8.5K、46.9%削減の報告)。
