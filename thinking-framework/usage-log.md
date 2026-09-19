@@ -11,6 +11,8 @@
 | 2 | 006-forgetting-as-editing, 007-serendipity-detour, 008-mece-overkill, 009-primary-source, 010-confirmation-bias | 約1,497万 | 約1,495万 | 5件で概算24万（サブエージェント実測合計約24.2万） | なし | 5件全て並列Agent起動、**5件全てが模範解答に完全収束**。原因をシナリオ形式（開かれた評価依頼）と特定し、`cases/006-010-batch-note.md`に記録、SKILL.mdを修正。ユーザー指示「トークン使い切るまで実行」を受けてバッチ間の確認を省略し連続実行に切り替え。 |
 | 3 | 011-outsourcing-the-framing, 012-climb-the-abstraction-ladder, 013-lead-with-the-conclusion, 014-base-rate-vs-anecdote, 015-offload-the-synthesis-step | 約1,495万 | 約1,491万 | 5件で概算24万 | なし | バッチ2の原因分析（設問形式）を訂正し「答えがreframeを要求するか」で概念選定→それでも4/5が収束、1件(014)は模範解答と異なるが有効な代替解。15ケース通しての集計と結論を`cases/011-015-batch-note.md`にまとめた（新規原則の出現率は約20%で、事前に予測する変数はまだ見つかっていない）。 |
 | 4 | 016-morning-for-hard-work, 017-storyboard-before-data, 018-abstraction-not-more-examples, 019-hindsight-bias-postmortem, 020-so-what-why-so | 約1,491万 | 約1,487万 | 5件で概算24万 | なし | 5件全て収束、新規原則ゼロ。20ケース累計: 新規原則15%(3件)・有効な代替解5%(1件)・収束80%(16件)。`cases/016-020-batch-note.md`に累計をまとめ、量産を続けるかユーザーに確認する判断点とした。 |
+| 5 | 021（熟達論 vs FPRL）, 022（コルブ vs FPRL）, 023（予測符号化理論 vs FPRL）, 024（CBR vs FPRL） | 約1,487万 | 約14,969万→約1,497万台（後続バッチと合算計測） | 4件で概算19.5万（1件は非並列） | なし | 単独ソースのケースが収束続きだったため、**理論同士を直接比較する形式に切り替え**。021は2理論が収束、022-024は意図的にFPRLと対立しそうな場面を設計。023は当初「FPRL固有の貢献」に見えたが、ユーザー指摘を受けて予測符号化理論の本格版（精度重み付け）を調べ直し、実は同等の機構が既にあったと訂正。最終的に4件中3件（熟達論・コルブ・CBR）でFPRLが元の理論にない機構を提供、と確定。 |
+| 6 | 025-rongo-fix-the-mistake, 026-rongo-soroban-short-term-vs-durable, 027-jukutatsuron-kata-stage, 028-fprl-negating-vs-extending-difference | 約1,497万 | 計測中 | 4件で概算19.5万 | なし | 単独ソースのケースに戻したが4件全て収束（論語・論語と算盤・熟達論「型」・FPRL「F否定型/拡張型」）。単独ソース形式は直近9件連続収束（012〜020, 025〜028のうち新規原則ゼロ）で、比較形式（021-024、4件中3件で実質的な差を発見）の方が明らかにヒット率が高い。次バッチは比較形式を優先する方針。 |
 
 ## 次バッチ実行時のテンプレート
 
