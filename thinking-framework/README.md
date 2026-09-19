@@ -32,6 +32,9 @@
 ```
 thinking-framework/
   README.md          このファイル
+  ROUTINE.md          実行ペース配分・トークン予算の計画（新セッションはまずこれ）
+  backlog.md           本ごとの概念一覧と進捗状態（未着手/実施中/収束/要検証）
+  usage-log.md         バッチごとの実測トークン消費ログ
   principles.md       積み上がった「状況→誤り→原則」の一覧（本体）
   cases/
     001-xxx/
@@ -40,6 +43,10 @@ thinking-framework/
       prediction.md      文脈を持たないAgentが書いた素の解答
       diff.md            予測と模範解答のズレの分析
 ```
+
+新しいセッションでこのプロジェクトを再開するときは、`ROUTINE.md` →
+`backlog.md` → `principles.md` の順で読めば、それまでの会話を覚えていなくても
+続きから着手できる。
 
 ## ワークフロー（現状: 手動トリガー）
 
