@@ -10,6 +10,7 @@
 | 1 | 003-glider-vs-airplane, 004-hypothesis-first, 005-let-it-ferment | 約1,499万 | 約1,497万 | 3件で概算15〜20万 | なし | 3件を並列でAgent起動（各48,000〜48,400トークン）。003・004は模範解答にほぼ完全収束し新規原則なし（シナリオが一般知識と重複していたと判断）、005のみ新規原則[003]を追加。並列実行でウォールクロックは短縮できたが、トークン総量は直列と同程度。 |
 | 2 | 006-forgetting-as-editing, 007-serendipity-detour, 008-mece-overkill, 009-primary-source, 010-confirmation-bias | 約1,497万 | 約1,495万 | 5件で概算24万（サブエージェント実測合計約24.2万） | なし | 5件全て並列Agent起動、**5件全てが模範解答に完全収束**。原因をシナリオ形式（開かれた評価依頼）と特定し、`cases/006-010-batch-note.md`に記録、SKILL.mdを修正。ユーザー指示「トークン使い切るまで実行」を受けてバッチ間の確認を省略し連続実行に切り替え。 |
 | 3 | 011-outsourcing-the-framing, 012-climb-the-abstraction-ladder, 013-lead-with-the-conclusion, 014-base-rate-vs-anecdote, 015-offload-the-synthesis-step | 約1,495万 | 約1,491万 | 5件で概算24万 | なし | バッチ2の原因分析（設問形式）を訂正し「答えがreframeを要求するか」で概念選定→それでも4/5が収束、1件(014)は模範解答と異なるが有効な代替解。15ケース通しての集計と結論を`cases/011-015-batch-note.md`にまとめた（新規原則の出現率は約20%で、事前に予測する変数はまだ見つかっていない）。 |
+| 4 | 016-morning-for-hard-work, 017-storyboard-before-data, 018-abstraction-not-more-examples, 019-hindsight-bias-postmortem, 020-so-what-why-so | 約1,491万 | 約1,487万 | 5件で概算24万 | なし | 5件全て収束、新規原則ゼロ。20ケース累計: 新規原則15%(3件)・有効な代替解5%(1件)・収束80%(16件)。`cases/016-020-batch-note.md`に累計をまとめ、量産を続けるかユーザーに確認する判断点とした。 |
 
 ## 次バッチ実行時のテンプレート
 
