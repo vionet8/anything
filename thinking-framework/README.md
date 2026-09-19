@@ -33,9 +33,12 @@
 thinking-framework/
   README.md          このファイル
   ROUTINE.md          実行ペース配分・トークン予算の計画（新セッションはまずこれ）
+  FINDINGS.md          20ケース時点の正式な中間報告
   backlog.md           本ごとの概念一覧と進捗状態（未着手/実施中/収束/要検証）
   usage-log.md         バッチごとの実測トークン消費ログ
   principles.md       積み上がった「状況→誤り→原則」の一覧（本体）
+  sources/             ユーザーから提供された本文そのもの（grounding: quote用）
+    FPRL.md             ユーザー作成の学習理論、本文全体
   cases/
     001-xxx/
       case.md          シナリオ本文（本の名前・概念名は伏せる）
